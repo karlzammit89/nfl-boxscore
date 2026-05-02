@@ -646,63 +646,20 @@ elif st.session_state.view == "boxscore":
                 pass
         st.dataframe(df, use_container_width=True, hide_index=True)
 
-    # ── Debug expander ───────────────────────────────────────────────────────
-    with st.expander("🔍 Debug: Play-by-Play Data", expanded=False):
-        raw_summary = data.get("_debug_summary", {})
-        bp_debug    = by_period
-
-        st.markdown("**`by_period` keys:**")
-        if bp_debug:
-            for k, v in bp_debug.items():
-                cats = {c: len(v.get(c, [])) for c in ["passing","rushing","receiving"]}
-                st.write(f"  `{k}` → passing={cats['passing']} rows, rushing={cats['rushing']} rows, receiving={cats['receiving']} rows")
-        else:
-            st.write("by_period is EMPTY")
-
-        # Show raw drives info from the game summary
-        from nfl.api import get_game_summary as _gsum
-        _s = _gsum(game_id)
-        if _s:
-            _drives = _s.get("drives", {})
-            _prev   = _drives.get("previous", [])
-            _curr   = _drives.get("current")
-            _all    = _prev + ([_curr] if _curr else [])
-            st.markdown(f"**Raw drives:** {len(_all)} total ({len(_prev)} previous + {'1 current' if _curr else '0 current'})")
-
-            if _all:
-                _play_count = sum(len(d.get("plays", [])) for d in _all if d)
-                st.markdown(f"**Total plays across all drives:** {_play_count}")
-
-                # Show first 10 plays with type + text + statYardage
-                st.markdown("**Sample plays across all drives (pass/rush only):**")
-                shown = 0
-                for drv in _all:
-                    if not drv or shown >= 10: break
-                    for p in drv.get("plays", []):
-                        ptype = p.get("type", {}).get("text", "")
-                        text  = p.get("text", "")
-                        yds   = p.get("statYardage", 0)
-                        per   = p.get("period", {}).get("number", "?")
-                        if "pass" in ptype.lower() or "rush" in ptype.lower() or "scramble" in ptype.lower():
-                            st.write(f"  Q{per} `[{ptype}]` yds={yds} | `{text[:100]}`")
-                            shown += 1
-                        if shown >= 10: break
-        else:
-            st.write("Could not fetch game summary for debug")
-
     # ── Prop Checker ──────────────────────────────────────────────────────────
-    with st.expander("🎯 Prop Checker — did each player hit the threshold in every quarter?", expanded=False):
+    with st.expander("🎯 Prop Checker by Quarter", expanded=False):
         st.caption(
             "Set a minimum threshold. Each player shows their stat per quarter "
             "with ✅ (hit) or ❌ (missed). The final column shows if they hit it in ALL quarters."
         )
-        pc1, pc2, pc3, pc4, pc5, pc6 = st.columns(6)
-        with pc1: thr_pass_yds = st.number_input("Pass YDS ≥", min_value=0, value=0, step=1, key="thr_pass_yds")
-        with pc2: thr_pass_td  = st.number_input("Pass TD ≥",  min_value=0, value=0, step=1, key="thr_pass_td")
-        with pc3: thr_rush_yds = st.number_input("Rush YDS ≥", min_value=0, value=0, step=1, key="thr_rush_yds")
-        with pc4: thr_rush_td  = st.number_input("Rush TD ≥",  min_value=0, value=0, step=1, key="thr_rush_td")
-        with pc5: thr_recv_yds = st.number_input("Rec YDS ≥",  min_value=0, value=0, step=1, key="thr_recv_yds")
-        with pc6: thr_recv_rec = st.number_input("Receptions ≥", min_value=0, value=0, step=1, key="thr_recv_rec")
+        pc1, pc2, pc3, pc4, pc5, pc6, pc7 = st.columns(7)
+        with pc1: thr_pass_yds = st.number_input("Pass YDS ≥",   min_value=0, value=0, step=1, key="thr_pass_yds")
+        with pc2: thr_pass_td  = st.number_input("Pass TD ≥",    min_value=0, value=0, step=1, key="thr_pass_td")
+        with pc3: thr_rush_yds = st.number_input("Rush YDS ≥",   min_value=0, value=0, step=1, key="thr_rush_yds")
+        with pc4: thr_rush_td  = st.number_input("Rush TD ≥",    min_value=0, value=0, step=1, key="thr_rush_td")
+        with pc5: thr_recv_rec = st.number_input("Receptions ≥", min_value=0, value=0, step=1, key="thr_recv_rec")
+        with pc6: thr_recv_yds = st.number_input("Rec YDS ≥",    min_value=0, value=0, step=1, key="thr_recv_yds")
+        with pc7: thr_recv_td  = st.number_input("Rec TD ≥",     min_value=0, value=0, step=1, key="thr_recv_td")
 
     def build_prop_table(category: str) -> pd.DataFrame | None:
         """
@@ -728,11 +685,12 @@ elif st.session_state.view == "boxscore":
             stat_col = "YDS"
             td_col   = "TD"
         elif category == "receiving":
-            thr_yds, thr_td = thr_recv_yds, thr_recv_rec
-            if thr_yds == 0 and thr_td == 0:
+            thr_yds, thr_td = thr_recv_yds, thr_recv_td
+            thr_rec = thr_recv_rec
+            if thr_yds == 0 and thr_td == 0 and thr_rec == 0:
                 return None
             stat_col = "YDS"
-            td_col   = "REC"
+            td_col   = "TD"
         else:
             return None
 
@@ -764,19 +722,37 @@ elif st.session_state.view == "boxscore":
                         yds_val = int(pmatch.iloc[0].get(stat_col, 0))
                         td_val  = int(pmatch.iloc[0].get(td_col,  0))
 
-                yds_ok = (yds_val >= thr_yds) if thr_yds > 0 else True
-                td_ok  = (td_val  >= thr_td)  if thr_td  > 0 else True
-                hit    = yds_ok and td_ok
+                if category == "receiving":
+                    rec_val = 0
+                    if qdf is not None and not qdf.empty and "Player" in qdf.columns:
+                        pmatch2 = qdf[qdf["Player"] == player]
+                        if not pmatch2.empty:
+                            rec_val = int(pmatch2.iloc[0].get("REC", 0))
+                    yds_ok = (yds_val >= thr_yds) if thr_yds > 0 else True
+                    td_ok  = (td_val  >= thr_td)  if thr_td  > 0 else True
+                    rec_ok = (rec_val >= thr_recv_rec) if thr_recv_rec > 0 else True
+                    hit    = yds_ok and td_ok and rec_ok
+                else:
+                    yds_ok = (yds_val >= thr_yds) if thr_yds > 0 else True
+                    td_ok  = (td_val  >= thr_td)  if thr_td  > 0 else True
+                    hit    = yds_ok and td_ok
                 if not hit:
                     all_hit = False
 
                 # Format cell: show value + icon
-                if thr_yds > 0 and thr_td > 0:
-                    cell = f"{'✅' if hit else '❌'} {yds_val}yds / {td_val}"
+                icon = '✅' if hit else '❌'
+                if category == "receiving":
+                    parts = []
+                    if thr_recv_rec > 0: parts.append(f"{rec_val}rec")
+                    if thr_yds > 0:     parts.append(f"{yds_val}yds")
+                    if thr_td > 0:      parts.append(f"{td_val}td")
+                    cell = f"{icon} {' / '.join(parts)}" if parts else icon
+                elif thr_yds > 0 and thr_td > 0:
+                    cell = f"{icon} {yds_val}yds / {td_val}td"
                 elif thr_yds > 0:
-                    cell = f"{'✅' if hit else '❌'} {yds_val}yds"
+                    cell = f"{icon} {yds_val}yds"
                 else:
-                    cell = f"{'✅' if hit else '❌'} {td_val}"
+                    cell = f"{icon} {td_val}td"
                 row[q] = cell
 
             row["All Quarters"] = "✅ Won" if all_hit else "❌ Lost"
