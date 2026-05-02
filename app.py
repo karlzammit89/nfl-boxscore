@@ -806,7 +806,7 @@ elif st.session_state.view == "boxscore":
                 return ""
             cols_to_style = [c for c in prop_df.columns if c not in ("Player","Team")]
             st.dataframe(
-                prop_df.style.applymap(color_cells, subset=cols_to_style),
+                prop_df.style.map(color_cells, subset=cols_to_style),
                 use_container_width=True, hide_index=True
             )
         else:
