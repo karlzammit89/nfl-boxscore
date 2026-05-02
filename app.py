@@ -602,29 +602,12 @@ elif st.session_state.view == "boxscore":
     st.markdown("<div class='sec-div' style='margin-top:18px'>Player Stats</div>",
                 unsafe_allow_html=True)
 
-    available = ["Full Game"]
-    # Build period options from by_period keys (has actual stat data)
-    # Map internal keys to display labels
-    _period_display = {"1H":"1st Half","2H":"2nd Half"}
-    for pk, lbl in [("Q1","Q1"),("Q2","Q2"),("Q3","Q3"),("Q4","Q4"),
-                    ("1H","1st Half"),("2H","2nd Half")]:
-        bp = by_period.get(pk, {})
-        has_data = any(
-            isinstance(bp.get(cat), pd.DataFrame) and not bp.get(cat, pd.DataFrame()).empty
-            for cat in ["passing","rushing","receiving"]
-        )
-        if has_data and lbl not in available:
-            available.append(lbl)
+    # Always show all standard period options regardless of data availability
+    available = ["Full Game", "Q1", "Q2", "1st Half", "Q3", "Q4", "2nd Half"]
+    # Add OT if present in by_period
     for k in by_period:
-        if k.startswith("OT"):
-            lbl = k
-            bp = by_period.get(k, {})
-            has_data = any(
-                isinstance(bp.get(cat), pd.DataFrame) and not bp.get(cat, pd.DataFrame()).empty
-                for cat in ["passing","rushing","receiving"]
-            )
-            if has_data and lbl not in available:
-                available.append(lbl)
+        if k.startswith("OT") and k not in available:
+            available.append(k)
 
     period_filter = st.radio("Period:", options=available,
                              horizontal=True, label_visibility="collapsed")
@@ -632,60 +615,29 @@ elif st.session_state.view == "boxscore":
     def get_pbp_key(pf):
         return {"1st Half":"1H","2nd Half":"2H"}.get(pf, pf)
 
-    def filter_df(df, pf):
-        if pf == "Full Game" or df is None or df.empty:
-            return df
-        k = get_pbp_key(pf)
-        if k not in pbp or pbp[k].empty:
-            return pd.DataFrame()
-        teams = pbp[k]["Team"].dropna().unique().tolist()
-        if not teams or "Team" not in df.columns:
-            return df
-        out = df[df["Team"].isin(teams)]
-        return out if not out.empty else df
-
     def show_df(df, pf, sort=None):
         if df is None or df.empty:
             st.info("No data available.")
             return
-        out = filter_df(df, pf)
-        if out is None or out.empty:
-            st.info(f"No data for {pf}.")
-            return
-        if pf != "Full Game":
-            st.markdown(
-                '<div class="period-note">Showing players active in this period. '
-                'ESPN provides cumulative game totals — see Play-by-Play for '
-                'play-level detail.</div>',
-                unsafe_allow_html=True,
-            )
-        if sort and sort in out.columns:
+        if sort and sort in df.columns:
             try:
-                tmp = out.copy()
+                tmp = df.copy()
                 tmp[sort] = pd.to_numeric(tmp[sort], errors="coerce")
-                out = tmp.sort_values(sort, ascending=False)
+                df = tmp.sort_values(sort, ascending=False)
             except Exception:
                 pass
-        st.dataframe(out, use_container_width=True, hide_index=True)
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
-    # For passing / rushing / receiving we use true per-period stats
-    # derived from play-by-play participant data (accurate per-quarter splits).
-    # Defense, kicking, returning, team use ESPN cumulative totals (only source).
-    by_period = data.get("by_period", {})
-    pf_key    = get_pbp_key(period_filter)  # Q1/Q2/1H/Q3/Q4/2H/Full Game
+    # Key map: display label → internal key used in by_period
+    _PERIOD_KEY = {"1st Half":"1H","2nd Half":"2H"}
 
     def show_period_df(category: str, sort="YDS"):
         """Show per-period offensive stat from by_period dict."""
-        # Map display labels to stats.py internal keys
-        _key_map = {"1st Half": "1H", "2nd Half": "2H"}
-        _stats_key = _key_map.get(period_filter, period_filter)
-        period_data = by_period.get(_stats_key, {})
+        stats_key   = _PERIOD_KEY.get(period_filter, period_filter)
+        period_data = by_period.get(stats_key, {})
         df = period_data.get(category)
         if df is None or (hasattr(df, "empty") and df.empty):
-            # Fallback to ESPN cumulative with a note
-            st.info("No play-by-play data available for this period.")
-            fallback = data.get(category)
-            show_df(fallback, "Full Game", sort)
+            st.info(f"No {category} data available for {period_filter}.")
             return
         if sort and sort in df.columns:
             try:
@@ -709,53 +661,6 @@ elif st.session_state.view == "boxscore":
             st.dataframe(t, use_container_width=True, hide_index=True)
         else:
             st.info("No team data.")
-
-    # Scoring summary
-    st.markdown("<div class='sec-div' style='margin-top:18px'>Scoring Summary</div>",
-                unsafe_allow_html=True)
-    sdf = data["scoring"]
-    if sdf is not None and not sdf.empty:
-        pf = period_filter
-        if pf == "Full Game":               fsdf = sdf
-        elif pf in ("1st Half","2nd Half"): fsdf = sdf[sdf["Half"] == pf]
-        elif pf.startswith("OT"):           fsdf = sdf[sdf["Half"].str.startswith("OT", na=False)]
-        else:                               fsdf = sdf[sdf["Quarter"] == pf]
-        if fsdf.empty:
-            st.info(f"No scoring plays in {pf}.")
-        else:
-            for half in fsdf["Half"].unique():
-                hdf = fsdf[fsdf["Half"] == half]
-                st.markdown(f"**{half}**")
-                st.dataframe(hdf.drop(columns=["Half"]),
-                             use_container_width=True, hide_index=True)
-    else:
-        st.info("No scoring plays yet.")
-
-    # Play-by-play
-    st.markdown("<div class='sec-div' style='margin-top:18px'>Play-by-Play</div>",
-                unsafe_allow_html=True)
-    if pbp:
-        pf = period_filter
-        k  = get_pbp_key(pf)
-        if pf == "Full Game":
-            show = {x: pbp[x] for x in ["Q1","Q2","Q3","Q4"] if x in pbp}
-            show.update({x: pbp[x] for x in pbp if x.startswith("OT")})
-        elif pf == "1st Half": show = {x: pbp[x] for x in ["Q1","Q2"] if x in pbp}
-        elif pf == "2nd Half": show = {x: pbp[x] for x in ["Q3","Q4"] if x in pbp}
-        else:                  show = {k: pbp[k]} if k in pbp else {}
-        if show:
-            ptabs = st.tabs(list(show.keys()))
-            for tab, key in zip(ptabs, show.keys()):
-                with tab:
-                    df   = show[key]
-                    cols = [c for c in ["Clock","Team","Down & Distance",
-                                        "Description","Yards","Play Type"]
-                            if c in df.columns]
-                    st.dataframe(df[cols], use_container_width=True, hide_index=True)
-        else:
-            st.info(f"No play-by-play for {pf}.")
-    else:
-        st.info("Play-by-play not yet available.")
 
     st.divider()
     st.caption(
