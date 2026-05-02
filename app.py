@@ -254,26 +254,64 @@ if st.session_state.view == "calendar":
     for g in month_games:
         games_by_date.setdefault(et_date_str(g["date"]), []).append(g)
 
-    # ── Month navigation ──────────────────────────────────────────────────────
-    c1, c2, c3 = st.columns([1, 3, 1])
-    with c1:
-        if st.button("← Prev", use_container_width=True):
-            m, y = st.session_state.cal_month - 1, st.session_state.cal_year
-            if m < 1: m, y = 12, y - 1
-            st.session_state.cal_month, st.session_state.cal_year = m, y
-            st.rerun()
-    with c2:
-        st.markdown(
-            f"<div style='text-align:center;font-weight:700;font-size:1.05rem;"
-            f"padding-top:4px'>{MONTH_NAMES[month-1]} {year}</div>",
-            unsafe_allow_html=True,
-        )
-    with c3:
-        if st.button("Next →", use_container_width=True):
-            m, y = st.session_state.cal_month + 1, st.session_state.cal_year
-            if m > 12: m, y = 1, y + 1
-            st.session_state.cal_month, st.session_state.cal_year = m, y
-            st.rerun()
+    # ── Month navigation — pure HTML links, immune to st.button CSS ─────────
+    # Using st.button for Prev/Next causes them to be caught by the invisible-
+    # overlay CSS applied to calendar cells. HTML anchor buttons avoid this
+    # entirely — they communicate via query params which Streamlit reads below.
+    prev_m = month - 1 if month > 1 else 12
+    prev_y = year if month > 1 else year - 1
+    next_m = month + 1 if month < 12 else 1
+    next_y = year if month < 12 else year + 1
+
+    st.markdown(f"""
+    <style>
+    .nav-btn {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        padding: 8px 16px;
+        border-radius: 8px;
+        border: 1px solid rgba(128,128,128,0.4);
+        background: transparent;
+        font-size: 0.85rem;
+        font-weight: 600;
+        cursor: pointer;
+        text-decoration: none;
+        color: inherit;
+        box-sizing: border-box;
+        transition: border-color .15s, background .15s;
+    }}
+    .nav-btn:hover {{
+        border-color: rgba(128,128,128,0.7);
+        background: rgba(128,128,128,0.08);
+        color: inherit;
+        text-decoration: none;
+    }}
+    </style>
+    <div style="display:grid;grid-template-columns:1fr 3fr 1fr;gap:8px;align-items:center;margin-bottom:4px">
+      <div>
+        <a class="nav-btn" href="?nav=prev&py={prev_y}&pm={prev_m}">← Prev</a>
+      </div>
+      <div style="text-align:center;font-weight:700;font-size:1.05rem">
+        {MONTH_NAMES[month-1]} {year}
+      </div>
+      <div>
+        <a class="nav-btn" href="?nav=next&py={next_y}&pm={next_m}">Next →</a>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Handle nav query params
+    _qp = st.query_params
+    if "nav" in _qp:
+        try:
+            st.session_state.cal_month = int(_qp["pm"])
+            st.session_state.cal_year  = int(_qp["py"])
+        except Exception:
+            pass
+        st.query_params.clear()
+        st.rerun()
 
     # Day-of-week header row
     st.markdown(
