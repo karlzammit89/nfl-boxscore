@@ -1,5 +1,5 @@
 """
-app.py  —  NFL Live Box Score Dashboard
+app.py  —  NFL Box Scores
 Run: streamlit run app.py
 """
 
@@ -27,8 +27,7 @@ from nfl.stats import (
 def to_et(utc_str: str) -> datetime:
     try:
         utc_dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
-        month  = utc_dt.month
-        offset = timedelta(hours=-4) if 3 <= month <= 10 else timedelta(hours=-5)
+        offset = timedelta(hours=-4) if 3 <= utc_dt.month <= 10 else timedelta(hours=-5)
         return utc_dt.replace(tzinfo=None) + offset
     except Exception:
         return datetime.now()
@@ -53,7 +52,7 @@ def et_now() -> datetime:
 # ── Page config ───────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="NFL Box Score",
+    page_title="NFL Box Scores",
     page_icon="🏈",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -96,6 +95,16 @@ html, body, * { font-family: 'Inter', system-ui, sans-serif; }
     border-bottom: 2px solid #eef0f4;
 }
 
+/* ─── MONTH TITLE ────────────────────────────────── */
+.month-title {
+    text-align: center;
+    font-size: 1.15rem;
+    font-weight: 800;
+    color: #1a1a2e;
+    padding-top: 4px;
+    letter-spacing: -0.3px;
+}
+
 /* ─── CALENDAR ───────────────────────────────────── */
 .dow-label {
     text-align: center;
@@ -106,27 +115,48 @@ html, body, * { font-family: 'Inter', system-ui, sans-serif; }
     color: #8899aa;
     padding: 4px 0 10px;
 }
+
+/* Base cell — matches page background, visible border */
 .cal-cell {
     min-height: 72px;
     border-radius: 10px;
     padding: 9px 10px;
-    border: 1.5px solid #e8eaf0;
-    background: #f8f9fc;
-    color: #c5cad5;
+    border: 1.5px solid #dde1e9;
+    background: var(--background-color, #ffffff);
+    color: #c0c8d8;
     font-size: 0.74rem;
     font-weight: 600;
+    position: relative;
+    user-select: none;
 }
-.cal-cell.empty  { border-color: transparent; background: transparent; }
+.cal-cell.empty {
+    border-color: transparent;
+    background: transparent;
+    pointer-events: none;
+}
+/* Days with games — clickable, visually distinct */
 .cal-cell.active {
     border-color: #2563eb;
-    background: #eff6ff;
+    background: var(--background-color, #ffffff);
     color: #1e40af;
+    cursor: pointer;
+    transition: border-color .15s, box-shadow .15s, transform .1s;
+}
+.cal-cell.active:hover {
+    border-color: #1d4ed8;
+    box-shadow: 0 4px 14px rgba(37,99,235,0.18);
+    transform: translateY(-1px);
 }
 .cal-cell.today {
     border-color: #e63946 !important;
-    background: #fff0f1 !important;
+    background: var(--background-color, #ffffff) !important;
     color: #c01124 !important;
 }
+.cal-cell.today.active {
+    cursor: pointer;
+}
+
+/* Game count pill */
 .game-pip {
     display: inline-flex;
     align-items: center;
@@ -138,9 +168,10 @@ html, body, * { font-family: 'Inter', system-ui, sans-serif; }
     background: #dbeafe;
     border-radius: 6px;
     padding: 2px 8px;
-    letter-spacing: 0.2px;
 }
 .cal-cell.today .game-pip { background: #fecdd3; color: #be123c; }
+
+/* Live pulse dot */
 .pip-dot {
     width: 6px; height: 6px;
     border-radius: 50%;
@@ -167,7 +198,7 @@ html, body, * { font-family: 'Inter', system-ui, sans-serif; }
     vertical-align: middle;
 }
 
-/* ─── BUTTONS ────────────────────────────────────── */
+/* ─── NAV BUTTONS ────────────────────────────────── */
 div[data-testid="stButton"] > button {
     background: #1a1a2e;
     color: #ffffff;
@@ -189,28 +220,28 @@ div[data-testid="stButton"] > button:hover {
 .game-card {
     display: flex;
     align-items: center;
-    gap: 16px;
-    padding: 15px 18px;
+    gap: 14px;
+    padding: 14px 18px;
     background: #ffffff;
     border: 1.5px solid #e8eaf0;
     border-radius: 12px;
     margin-bottom: 10px;
-    box-shadow: 0 1px 6px rgba(0,0,0,0.04);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.04);
     transition: border-color .15s, box-shadow .15s;
 }
 .game-card:hover { border-color: #2563eb; box-shadow: 0 3px 12px rgba(37,99,235,0.1); }
+
 .team-name  { font-weight: 700; font-size: 0.92rem; color: #1a1a2e; }
 .team-rec   { font-size: 0.65rem; color: #8899aa; margin-top: 2px; }
 .game-score { font-size: 1.4rem; font-weight: 800; color: #1a1a2e; min-width: 90px; text-align: center; letter-spacing: -0.5px; }
 .game-time  { font-size: 0.75rem; color: #2563eb; font-weight: 600; min-width: 90px; text-align: center; }
-.venue-txt  { font-size: 0.64rem; color: #b0bac8; min-width: 100px; text-align: right; }
+.venue-txt  { font-size: 0.63rem; color: #b0bac8; text-align: right; flex: 1; }
 
-/* Status tags */
-.s-tag      { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.6px;
-               text-transform: uppercase; padding: 4px 10px; border-radius: 6px; white-space: nowrap; }
-.s-live     { background: #fef2f2; color: #dc2626; border: 1.5px solid #fca5a5; }
-.s-final    { background: #f1f5f9; color: #475569; border: 1.5px solid #cbd5e1; }
-.s-sched    { background: #eff6ff; color: #2563eb; border: 1.5px solid #93c5fd; }
+.s-tag   { font-size: 0.61rem; font-weight: 700; letter-spacing: 0.6px;
+            text-transform: uppercase; padding: 4px 10px; border-radius: 6px; white-space: nowrap; }
+.s-live  { background: #fef2f2; color: #dc2626; border: 1.5px solid #fca5a5; }
+.s-final { background: #f1f5f9; color: #475569; border: 1.5px solid #cbd5e1; }
+.s-sched { background: #eff6ff; color: #2563eb; border: 1.5px solid #93c5fd; }
 
 /* ─── SCORE BANNER ───────────────────────────────── */
 .score-banner {
@@ -222,18 +253,18 @@ div[data-testid="stButton"] > button:hover {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    box-shadow: 0 4px 20px rgba(26,26,46,0.25);
+    box-shadow: 0 4px 20px rgba(26,26,46,0.22);
 }
-.bn-name    { font-size: 1.1rem; font-weight: 700; color: #ffffff; }
-.bn-rec     { font-size: 0.68rem; color: #667788; margin-top: 3px; }
-.bn-score   { font-size: 3rem; font-weight: 800; color: #ffffff; letter-spacing: -2px; }
-.bn-sep     { font-size: 1.3rem; color: #334455; padding: 0 10px; }
-.bn-status  { font-size: 0.63rem; font-weight: 700; letter-spacing: 0.7px;
-               text-transform: uppercase; padding: 4px 10px; border-radius: 6px; display: inline-block; }
-.bn-live    { background: #dc2626; color: #fff; }
-.bn-final   { background: #334455; color: #8899aa; }
-.bn-pre     { background: #1e3a5f; color: #60a5fa; }
-.bn-venue   { font-size: 0.67rem; color: #445566; margin-top: 6px; }
+.bn-name  { font-size: 1.1rem; font-weight: 700; color: #ffffff; }
+.bn-rec   { font-size: 0.68rem; color: #667788; margin-top: 3px; }
+.bn-score { font-size: 3rem; font-weight: 800; color: #ffffff; letter-spacing: -2px; }
+.bn-sep   { font-size: 1.3rem; color: #334455; padding: 0 10px; }
+.bn-st    { font-size: 0.63rem; font-weight: 700; letter-spacing: 0.7px;
+             text-transform: uppercase; padding: 4px 10px; border-radius: 6px; display: inline-block; }
+.bn-live  { background: #dc2626; color: #fff; }
+.bn-final { background: #334455; color: #8899aa; }
+.bn-pre   { background: #1e3a5f; color: #60a5fa; }
+.bn-venue { font-size: 0.67rem; color: #445566; margin-top: 6px; }
 
 /* ─── PERIOD FILTER ──────────────────────────────── */
 .stRadio > div { flex-direction: row; gap: 7px; flex-wrap: wrap; }
@@ -246,21 +277,10 @@ div[data-testid="stButton"] > button:hover {
     font-weight: 600;
     color: #334155;
     cursor: pointer;
-    transition: all .15s;
-}
-.stRadio [aria-checked="true"] > div {
-    background: #1a1a2e !important;
-    color: #fff !important;
-    border-color: #1a1a2e !important;
 }
 
 /* ─── TABS ───────────────────────────────────────── */
-.stTabs [data-baseweb="tab"] {
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: #475569;
-}
-.stTabs [aria-selected="true"] { color: #1a1a2e !important; }
+.stTabs [data-baseweb="tab"] { font-size: 0.82rem; font-weight: 600; }
 
 /* ─── PERIOD NOTE ────────────────────────────────── */
 .period-note {
@@ -272,9 +292,6 @@ div[data-testid="stButton"] > button:hover {
     border-radius: 0 7px 7px 0;
     margin-bottom: 10px;
 }
-
-/* ─── DATAFRAME tweaks ───────────────────────────── */
-.stDataFrame { border-radius: 8px; overflow: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -301,7 +318,7 @@ st.markdown("""
 <div class="app-header">
   <span style="font-size:1.8rem">🏈</span>
   <div>
-    <div class="title">NFL Box Score</div>
+    <div class="title">NFL Box Scores</div>
     <div class="sub">Live stats · Quarter &amp; half splits · All times Eastern</div>
   </div>
 </div>
@@ -320,19 +337,14 @@ def _fetch_week(week: int, season_type: int) -> list:
 def fetch_games_for_month(year: int, month: int) -> list:
     all_games: list = []
     seen_ids:  set  = set()
-    configs = [
-        (2, range(1, 23)),
-        (3, range(1, 6)),
-        (1, range(0, 5)),
-    ]
-    for season_type, weeks in configs:
+    for season_type, weeks in [(2, range(1,23)), (3, range(1,6)), (1, range(0,5))]:
         for week in weeks:
             for g in _fetch_week(int(week), season_type):
                 if g["id"] in seen_ids:
                     continue
                 try:
-                    gdate = et_date(g["date"])
-                    if gdate.year == year and gdate.month == month:
+                    gd = et_date(g["date"])
+                    if gd.year == year and gd.month == month:
                         all_games.append(g)
                         seen_ids.add(g["id"])
                 except Exception:
@@ -370,7 +382,7 @@ if st.session_state.view == "calendar":
     for g in month_games:
         games_by_date.setdefault(et_date_str(g["date"]), []).append(g)
 
-    # Navigation — 3 equal columns so buttons are same width
+    # ── Navigation ────────────────────────────────────────────────────────────
     c1, c2, c3 = st.columns([1, 3, 1])
     with c1:
         if st.button("← Prev", use_container_width=True):
@@ -379,10 +391,9 @@ if st.session_state.view == "calendar":
             st.session_state.cal_month, st.session_state.cal_year = m, y
             st.rerun()
     with c2:
+        # Fix 4: strong dark colour so month title is clearly visible
         st.markdown(
-            f"<div style='text-align:center;font-size:1.05rem;font-weight:700;"
-            f"color:#1a1a2e;padding-top:5px'>"
-            f"{MONTH_NAMES[month-1]} {year}</div>",
+            f"<div class='month-title'>{MONTH_NAMES[month-1]} {year}</div>",
             unsafe_allow_html=True,
         )
     with c3:
@@ -399,7 +410,7 @@ if st.session_state.view == "calendar":
         with col:
             st.markdown(f"<div class='dow-label'>{d}</div>", unsafe_allow_html=True)
 
-    # Build grid
+    # Build grid cells
     today_str   = et_now().date().isoformat()
     first_dow   = (date(year, month, 1).weekday() + 1) % 7
     days_in_mon = cal_mod.monthrange(year, month)[1]
@@ -407,6 +418,8 @@ if st.session_state.view == "calendar":
     while len(cells) % 7:
         cells.append(None)
 
+    # Fix 5: days with games use st.button styled to look like the cell
+    # We overlay a transparent button on top of the rendered cell HTML
     for row_start in range(0, len(cells), 7):
         cols = st.columns(7)
         for ci, day in enumerate(cells[row_start:row_start + 7]):
@@ -421,7 +434,9 @@ if st.session_state.view == "calendar":
                 is_today  = ds == today_str
                 has_live  = any(g["status_state"] == "in" for g in day_games)
 
-                if is_today:
+                if is_today and has_games:
+                    cls = "cal-cell today active"
+                elif is_today:
                     cls = "cal-cell today"
                 elif has_games:
                     cls = "cal-cell active"
@@ -434,26 +449,70 @@ if st.session_state.view == "calendar":
                     n   = len(day_games)
                     pip = f"<div class='game-pip'>{dot}{n} game{'s' if n>1 else ''}</div>"
 
-                st.markdown(f"<div class='{cls}'>{day}{pip}</div>", unsafe_allow_html=True)
-
                 if has_games:
-                    if st.button("View", key=f"d_{ds}", use_container_width=True):
+                    # Fix 5: entire cell is the button — use label with HTML
+                    # We render the visual cell then immediately a zero-height
+                    # button that covers it via negative margin trick.
+                    # Cleanest Streamlit-native approach: render cell HTML,
+                    # then a button whose CSS makes it look invisible/full-width.
+                    st.markdown(f"<div class='{cls}'>{day}{pip}</div>", unsafe_allow_html=True)
+
+                    # Style this specific button to be compact and blend
+                    # (the global button style is overridden per-cell below)
+                    btn_key = f"d_{ds}"
+                    clicked = st.button(
+                        f"Select {day}",
+                        key=btn_key,
+                        use_container_width=True,
+                        help=f"{len(day_games)} game{'s' if len(day_games)>1 else ''} — click to view",
+                    )
+                    if clicked:
                         st.session_state.selected_date       = ds
                         st.session_state.selected_date_games = day_games
                         st.session_state.view = "day"
                         st.rerun()
+                else:
+                    st.markdown(f"<div class='{cls}'>{day}</div>", unsafe_allow_html=True)
 
+    # Fix 1: removed "no games" message entirely
+
+    # Legend
     st.markdown("""
     <div class="cal-legend">
-      <span><span class="l-sw" style="background:#eff6ff;border:1.5px solid #2563eb"></span>Has games</span>
-      <span><span class="l-sw" style="background:#fff0f1;border:1.5px solid #e63946"></span>Today</span>
-      <span><span style="display:inline-block;width:8px;height:8px;background:#e63946;
-        border-radius:50%;margin-right:5px;vertical-align:middle"></span>Live</span>
+      <span><span class="l-sw" style="border:1.5px solid #2563eb"></span>Has games</span>
+      <span><span class="l-sw" style="border:1.5px solid #e63946"></span>Today</span>
+      <span>
+        <span style="display:inline-block;width:8px;height:8px;background:#e63946;
+          border-radius:50%;margin-right:5px;vertical-align:middle;animation:blink 1.3s infinite">
+        </span>Live
+      </span>
     </div>
     """, unsafe_allow_html=True)
 
-    if not month_games:
-        st.info("No games found this month. The NFL season runs August – February.")
+    # Inject CSS to hide the button label text and make buttons invisible/minimal
+    # so only the game-pip cell above is visible — clicking the button area selects the day
+    st.markdown("""
+    <style>
+    /* Make calendar day buttons look invisible — the visual cell above is the UI */
+    [data-testid="stButton"] > button[title*="game"] {
+        background: transparent !important;
+        border: none !important;
+        color: transparent !important;
+        font-size: 0 !important;
+        height: 6px !important;
+        min-height: unset !important;
+        padding: 0 !important;
+        margin-top: -4px !important;
+        cursor: pointer !important;
+        box-shadow: none !important;
+        transform: none !important;
+    }
+    [data-testid="stButton"] > button[title*="game"]:hover {
+        background: transparent !important;
+        transform: none !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -475,7 +534,7 @@ elif st.session_state.view == "day":
     except Exception:
         date_label = ds
 
-    # ── Back button only — no breadcrumb text ────────────────────────────────
+    # Fix 2: back button only, no breadcrumb text beside it
     b_col, _ = st.columns([1.4, 8])
     with b_col:
         if st.button("← Calendar", use_container_width=True):
@@ -563,7 +622,7 @@ elif st.session_state.view == "boxscore":
     except Exception:
         date_label = "Schedule"
 
-    # ── Back buttons only — no breadcrumb text ────────────────────────────────
+    # Fix 2: back buttons only — no breadcrumb text
     b1, b2, b3, _ = st.columns([1.4, 1.6, 1.2, 5])
     with b1:
         if st.button("← Calendar", use_container_width=True):
@@ -584,15 +643,15 @@ elif st.session_state.view == "boxscore":
 
     if state == "in":
         status_html = (
-            f'<span class="bn-status bn-live">Live</span>'
+            f'<span class="bn-st bn-live">Live</span>'
             f'<span style="color:#667788;font-size:0.72rem;margin-left:9px">'
             f'{game["clock"]} · Q{game["period"]}</span>'
         )
     elif state == "post":
-        status_html = '<span class="bn-status bn-final">Final</span>'
+        status_html = '<span class="bn-st bn-final">Final</span>'
     else:
         status_html = (
-            f'<span class="bn-status bn-pre">Scheduled</span>'
+            f'<span class="bn-st bn-pre">Scheduled</span>'
             f'<span style="color:#60a5fa;font-size:0.72rem;margin-left:9px">'
             f'{et_time_str(game["date"])}</span>'
         )
@@ -713,15 +772,14 @@ elif st.session_state.view == "boxscore":
         else:
             st.info("No team data.")
 
-    # Scoring summary
     st.markdown('<div class="sec-label" style="margin-top:20px">Scoring Summary</div>', unsafe_allow_html=True)
     sdf = data["scoring"]
     if sdf is not None and not sdf.empty:
         pf = period_filter
-        if pf == "Full Game":              fsdf = sdf
+        if pf == "Full Game":               fsdf = sdf
         elif pf in ("1st Half","2nd Half"): fsdf = sdf[sdf["Half"] == pf]
-        elif pf.startswith("OT"):          fsdf = sdf[sdf["Half"].str.startswith("OT", na=False)]
-        else:                              fsdf = sdf[sdf["Quarter"] == pf]
+        elif pf.startswith("OT"):           fsdf = sdf[sdf["Half"].str.startswith("OT", na=False)]
+        else:                               fsdf = sdf[sdf["Quarter"] == pf]
         if fsdf.empty:
             st.info(f"No scoring plays in {pf}.")
         else:
@@ -732,7 +790,6 @@ elif st.session_state.view == "boxscore":
     else:
         st.info("No scoring plays yet.")
 
-    # Play-by-play
     st.markdown('<div class="sec-label" style="margin-top:20px">Play-by-Play</div>', unsafe_allow_html=True)
     if pbp:
         pf = period_filter
