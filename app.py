@@ -254,32 +254,32 @@ if st.session_state.view == "calendar":
     for g in month_games:
         games_by_date.setdefault(et_date_str(g["date"]), []).append(g)
 
-    # ── Month navigation — st.button wrapped in .nav-wrap marker div ────────
-    # The .nav-wrap class is injected via st.markdown immediately before the
-    # buttons. The calendar overlay CSS uses :not(.nav-wrap *) logic — actually
-    # we protect nav buttons by injecting a CSS RESTORE rule AFTER the overlay
-    # CSS that explicitly resets any button inside .nav-wrap back to normal.
-    st.markdown("<div class='nav-wrap'>", unsafe_allow_html=True)
-    c1, c2, c3 = st.columns([1, 3, 1])
+    # ── Month / Year picker — native st.selectbox, no buttons needed ────────
+    # Selectboxes trigger instant reruns on change with no page flash,
+    # and are completely immune to any button CSS.
+    _, c1, c2, _ = st.columns([1, 1.5, 1, 1])
     with c1:
-        if st.button("← Prev", key="nav_prev", use_container_width=True):
-            m, y = st.session_state.cal_month - 1, st.session_state.cal_year
-            if m < 1: m, y = 12, y - 1
-            st.session_state.cal_month, st.session_state.cal_year = m, y
-            st.rerun()
-    with c2:
-        st.markdown(
-            f"<div style='text-align:center;font-weight:700;font-size:1.05rem;"
-            f"padding-top:4px'>{MONTH_NAMES[month-1]} {year}</div>",
-            unsafe_allow_html=True,
+        selected_month = st.selectbox(
+            "Month",
+            options=list(range(1, 13)),
+            format_func=lambda m: MONTH_NAMES[m - 1],
+            index=month - 1,
+            key="pick_month",
+            label_visibility="collapsed",
         )
-    with c3:
-        if st.button("Next →", key="nav_next", use_container_width=True):
-            m, y = st.session_state.cal_month + 1, st.session_state.cal_year
-            if m > 12: m, y = 1, y + 1
-            st.session_state.cal_month, st.session_state.cal_year = m, y
-            st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
+    with c2:
+        selected_year = st.selectbox(
+            "Year",
+            options=list(range(2020, 2030)),
+            index=list(range(2020, 2030)).index(year) if year in range(2020, 2030) else 0,
+            key="pick_year",
+            label_visibility="collapsed",
+        )
+
+    if selected_month != month or selected_year != year:
+        st.session_state.cal_month = selected_month
+        st.session_state.cal_year  = selected_year
+        st.rerun()
 
     # Day-of-week header row
     st.markdown(
@@ -395,24 +395,7 @@ if st.session_state.view == "calendar":
         z-index:     10          !important;
         opacity:     0           !important;
     }
-    /* RESTORE nav buttons — keyed by data-testid on their specific keys.
-       Streamlit sets the key as the aria-label on the button in some builds,
-       but most reliably we target by the unique key strings nav_prev / nav_next
-       which appear as part of the element's generated id attribute. */
-    button[data-testid="stBaseButton-secondary"][key="nav_prev"],
-    button[data-testid="stBaseButton-secondary"][key="nav_next"] {
-        background:  revert !important;
-        border:      revert !important;
-        box-shadow:  revert !important;
-        color:       revert !important;
-        height:      revert !important;
-        min-height:  revert !important;
-        margin-top:  revert !important;
-        padding:     revert !important;
-        opacity:     1      !important;
-        position:    revert !important;
-        z-index:     revert !important;
-    }
+    /* Nav buttons removed — no restore rule needed */
     </style>
     """, unsafe_allow_html=True)
 
