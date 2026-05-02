@@ -648,6 +648,42 @@ elif st.session_state.view == "boxscore":
                 pass
         st.dataframe(df, use_container_width=True, hide_index=True)
 
+    # ── Debug expander ───────────────────────────────────────────────────────
+    with st.expander("🔍 Debug: Play-by-Play Data", expanded=False):
+        raw_summary = data.get("_debug_summary", {})
+        bp_debug    = by_period
+
+        st.markdown("**`by_period` keys:**")
+        if bp_debug:
+            for k, v in bp_debug.items():
+                cats = {c: len(v.get(c, [])) for c in ["passing","rushing","receiving"]}
+                st.write(f"  `{k}` → passing={cats['passing']} rows, rushing={cats['rushing']} rows, receiving={cats['receiving']} rows")
+        else:
+            st.write("by_period is EMPTY")
+
+        # Show raw drives info from the game summary
+        from nfl.api import get_game_summary as _gsum
+        _s = _gsum(game_id)
+        if _s:
+            _drives = _s.get("drives", {})
+            _prev   = _drives.get("previous", [])
+            _curr   = _drives.get("current")
+            _all    = _prev + ([_curr] if _curr else [])
+            st.markdown(f"**Raw drives:** {len(_all)} total ({len(_prev)} previous + {'1 current' if _curr else '0 current'})")
+
+            if _all:
+                _play_count = sum(len(d.get("plays", [])) for d in _all if d)
+                st.markdown(f"**Total plays across all drives:** {_play_count}")
+
+                # Show first 3 play descriptions from drive 0
+                st.markdown("**Sample plays (drive 0):**")
+                for p in (_all[0].get("plays", []) if _all[0] else [])[:5]:
+                    period = p.get("period", {}).get("number", "?")
+                    desc   = p.get("description", "(no description)")
+                    st.write(f"  Q{period}: `{desc[:100]}`")
+        else:
+            st.write("Could not fetch game summary for debug")
+
     tabs = st.tabs(["Passing","Rushing","Receiving","Defense","Kicking","Returning","Team"])
     with tabs[0]: show_period_df("passing",   "YDS")
     with tabs[1]: show_period_df("rushing",   "YDS")
