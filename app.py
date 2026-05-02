@@ -33,7 +33,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ── CSS ───────────────────────────────────────────────────────────────────────
+# ── CSS — warm slate palette ──────────────────────────────────────────────────
 
 st.markdown("""
 <style>
@@ -44,108 +44,121 @@ st.markdown("""
     .block-container { padding-top: 1.5rem !important; max-width: 1200px; }
     * { font-family: 'Inter', sans-serif; }
 
+    /* ── Header ── */
     .nfl-header {
-        background: #013369;
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
         color: white;
-        padding: 1rem 1.6rem;
+        padding: 1.1rem 1.8rem;
         border-radius: 12px;
-        margin-bottom: 1.4rem;
+        margin-bottom: 1.6rem;
         display: flex;
         align-items: center;
         gap: 1rem;
-        border-left: 6px solid #D50A0A;
+        border-left: 5px solid #e8714a;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.15);
     }
     .nfl-header h1 {
         margin: 0;
         font-family: 'Oswald', sans-serif;
-        font-size: 1.7rem;
+        font-size: 1.8rem;
         font-weight: 700;
-        letter-spacing: 1px;
+        letter-spacing: 1.5px;
         text-transform: uppercase;
+        color: #f5f0e8;
     }
-    .nfl-header p { margin: 0; opacity: 0.7; font-size: 0.82rem; }
+    .nfl-header p { margin: 0.15rem 0 0; opacity: 0.55; font-size: 0.8rem; color: #f5f0e8; }
 
+    /* ── Section labels ── */
     .section-label {
         font-family: 'Oswald', sans-serif;
-        font-size: 0.7rem;
-        letter-spacing: 2px;
+        font-size: 0.68rem;
+        letter-spacing: 2.5px;
         text-transform: uppercase;
-        color: #888;
-        margin-bottom: 0.6rem;
-        padding-bottom: 0.3rem;
-        border-bottom: 1px solid rgba(128,128,128,0.15);
+        color: #9a8f82;
+        margin-bottom: 0.7rem;
+        padding-bottom: 0.35rem;
+        border-bottom: 1px solid rgba(200,185,165,0.2);
     }
 
+    /* ── Score banner ── */
     .score-banner {
-        background: #0a0e1a;
-        color: white;
+        background: linear-gradient(135deg, #1a1a2e 0%, #1e1e35 100%);
+        color: #f5f0e8;
         border-radius: 12px;
-        padding: 1.4rem 2rem;
-        margin-bottom: 1.2rem;
+        padding: 1.5rem 2rem;
+        margin-bottom: 1.3rem;
         display: flex;
         align-items: center;
         justify-content: space-between;
-        border: 1px solid rgba(255,255,255,0.06);
+        border: 1px solid rgba(232,113,74,0.2);
+        box-shadow: 0 2px 16px rgba(0,0,0,0.2);
     }
-    .score-team-name { font-family:'Oswald',sans-serif; font-size:1.3rem; font-weight:600; letter-spacing:0.5px; }
-    .score-record    { font-size:0.75rem; color:#888; margin-top:2px; }
-    .score-num       { font-family:'Oswald',sans-serif; font-size:3rem; font-weight:700; }
-    .score-sep       { font-size:1.4rem; color:#333; padding: 0 0.6rem; }
-    .status-pill     { background:#D50A0A; color:white; font-size:0.68rem; font-weight:700;
-                       padding:0.2rem 0.7rem; border-radius:20px; text-transform:uppercase;
+    .score-team-name { font-family:'Oswald',sans-serif; font-size:1.3rem; font-weight:600; letter-spacing:0.5px; color:#f5f0e8; }
+    .score-record    { font-size:0.73rem; color:#9a8f82; margin-top:3px; }
+    .score-num       { font-family:'Oswald',sans-serif; font-size:3.2rem; font-weight:700; color:#f5f0e8; }
+    .score-sep       { font-size:1.5rem; color:#4a4a6a; padding:0 0.7rem; }
+    .status-pill     { background:#e8714a; color:white; font-size:0.68rem; font-weight:700;
+                       padding:0.22rem 0.8rem; border-radius:20px; text-transform:uppercase;
                        letter-spacing:0.8px; display:inline-block; font-family:'Oswald',sans-serif; }
-    .status-pill.final { background:#333; }
-    .status-pill.pre   { background:#013369; }
+    .status-pill.final { background:#4a4a5a; }
+    .status-pill.pre   { background:#2d5a8e; }
 
+    /* ── Period filter radio ── */
     .stRadio > div { flex-direction:row; gap:6px; flex-wrap:wrap; }
     .stRadio > div > label {
-        background: rgba(1,51,105,0.08);
-        border: 1px solid rgba(1,51,105,0.2);
+        background: rgba(232,113,74,0.08);
+        border: 1px solid rgba(232,113,74,0.25);
         border-radius: 20px;
         padding: 4px 16px;
-        font-size: 0.8rem;
+        font-size: 0.78rem;
         cursor: pointer;
         font-family: 'Oswald', sans-serif;
         letter-spacing: 0.5px;
+        color: #c8a882;
+        transition: all 0.15s;
     }
 
+    /* ── Buttons ── */
     div[data-testid="stButton"] > button {
         font-family: 'Oswald', sans-serif;
         letter-spacing: 0.5px;
         border-radius: 8px;
-        border: 1px solid rgba(1,51,105,0.3);
+        border: 1px solid rgba(232,113,74,0.4);
         background: transparent;
-        color: #013369;
+        color: #e8714a;
         font-size: 0.85rem;
         padding: 0.4rem 1rem;
+        transition: all 0.15s;
     }
     div[data-testid="stButton"] > button:hover {
-        background: #013369;
+        background: #e8714a;
         color: white;
-        border-color: #013369;
+        border-color: #e8714a;
     }
 
+    /* ── Tabs ── */
     .stTabs [data-baseweb="tab"] {
         font-family: 'Oswald', sans-serif;
         letter-spacing: 0.5px;
         font-size: 0.85rem;
     }
 
+    /* ── Period note ── */
     .period-note {
-        background: rgba(213,10,10,0.06);
-        border-left: 3px solid #D50A0A;
+        background: rgba(232,113,74,0.07);
+        border-left: 3px solid #e8714a;
         border-radius: 0 6px 6px 0;
-        padding: 0.4rem 0.8rem;
-        font-size: 0.78rem;
-        color: #888;
-        margin-bottom: 0.6rem;
+        padding: 0.4rem 0.9rem;
+        font-size: 0.77rem;
+        color: #9a8f82;
+        margin-bottom: 0.7rem;
     }
 
     .empty-state {
         text-align:center;
         padding:3rem 1rem;
-        color:#aaa;
-        font-size:0.95rem;
+        color:#9a8f82;
+        font-size:0.93rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -153,11 +166,11 @@ st.markdown("""
 # ── Session state ─────────────────────────────────────────────────────────────
 
 for key, default in {
-    "view": "calendar",
+    "view":             "calendar",
     "selected_game_id": None,
-    "selected_game": None,
-    "cal_year": datetime.now().year,
-    "cal_month": datetime.now().month,
+    "selected_game":    None,
+    "cal_year":         datetime.now().year,
+    "cal_month":        datetime.now().month,
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
@@ -166,7 +179,7 @@ for key, default in {
 
 st.markdown("""
 <div class="nfl-header">
-  <div style="font-size:2rem">🏈</div>
+  <div style="font-size:2.1rem">🏈</div>
   <div>
     <h1>NFL Box Score</h1>
     <p>Live stats · Quarter &amp; half splits · Play-by-play</p>
@@ -177,7 +190,8 @@ st.markdown("""
 # ── Data loaders ──────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=300, show_spinner=False)
-def load_games_for_week(week, season_type=2):
+def load_games_for_week(week, season_type):
+    """Cached fetch for a single week."""
     return get_live_games(week=week)
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -195,23 +209,41 @@ def load_all_stats(game_id):
         "pbp":       get_pbp_by_quarter(game_id),
     }
 
+@st.cache_data(ttl=300, show_spinner=False)
 def fetch_games_for_month(year, month):
-    """Try regular season first, then playoffs, then preseason."""
+    """
+    Fetch ALL game types for a given month.
+    Tries every week of every season type and collects games
+    whose date falls in year/month.
+    Season types: 1=preseason, 2=regular, 3=playoffs
+    Weeks:        preseason 0-4, regular 1-18, playoffs 1-5
+    """
     all_games = []
     seen_ids  = set()
-    for season_type, max_week in [(2, 18), (3, 4), (1, 4)]:
-        for week in range(1, max_week + 1):
+
+    season_configs = [
+        (2, range(1, 19)),   # Regular season  weeks 1-18
+        (3, range(1, 6)),    # Playoffs        weeks 1-5  (WC/Div/Conf/SB + Pro Bowl)
+        (1, range(0, 5)),    # Preseason       weeks 0-4
+    ]
+
+    for season_type, weeks in season_configs:
+        for week in weeks:
             try:
                 games = load_games_for_week(week, season_type)
                 for g in games:
                     if g["id"] in seen_ids:
                         continue
-                    gdate = datetime.fromisoformat(g["date"].replace("Z", "")).date()
-                    if gdate.year == year and gdate.month == month:
-                        all_games.append(g)
-                        seen_ids.add(g["id"])
+                    try:
+                        gdate = datetime.fromisoformat(g["date"].replace("Z","")).date()
+                        if gdate.year == year and gdate.month == month:
+                            all_games.append(g)
+                            seen_ids.add(g["id"])
+                    except Exception:
+                        pass
             except Exception:
                 pass
+
     return all_games
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -226,16 +258,15 @@ if st.session_state.view == "calendar":
     year  = st.session_state.cal_year
     month = st.session_state.cal_month
 
-    # Load games for this month
-    with st.spinner(f"Loading {MONTH_NAMES[month-1]} {year}..."):
+    with st.spinner(f"Loading {MONTH_NAMES[month-1]} {year}…"):
         month_games = fetch_games_for_month(year, month)
 
-    # Group by date
-    games_by_date = {}
+    # Group games by ISO date string
+    games_by_date: dict = {}
     for g in month_games:
         try:
-            gdate = datetime.fromisoformat(g["date"].replace("Z", "")).date()
-            ds = gdate.isoformat()
+            gdate = datetime.fromisoformat(g["date"].replace("Z","")).date()
+            ds    = gdate.isoformat()
             games_by_date.setdefault(ds, []).append(g)
         except Exception:
             pass
@@ -252,9 +283,9 @@ if st.session_state.view == "calendar":
             st.rerun()
     with nav2:
         st.markdown(
-            f"<div style='text-align:center;font-weight:700;padding-top:6px;"
-            f"font-family:Oswald,sans-serif;font-size:1.1rem;letter-spacing:0.5px'>"
-            f"{MONTH_NAMES[month-1]} {year}</div>",
+            f"<div style='text-align:center;font-weight:700;padding-top:5px;"
+            f"font-family:Oswald,sans-serif;font-size:1.1rem;letter-spacing:0.5px;"
+            f"color:#c8a882'>{MONTH_NAMES[month-1]} {year}</div>",
             unsafe_allow_html=True,
         )
     with nav3:
@@ -266,12 +297,11 @@ if st.session_state.view == "calendar":
             st.session_state.cal_year  = y
             st.rerun()
 
-    # ── Build calendar HTML ───────────────────────────────────────────────────
-    today_str  = date.today().isoformat()
-    first_dow  = (date(year, month, 1).weekday() + 1) % 7   # Sun=0
+    # ── Serialise for JS ──────────────────────────────────────────────────────
+    today_str   = date.today().isoformat()
+    first_dow   = (date(year, month, 1).weekday() + 1) % 7   # Sunday = 0
     days_in_mon = cal_mod.monthrange(year, month)[1]
 
-    # Serialise only what the calendar JS needs: count + live flag per date
     cal_data = {}
     for ds, games in games_by_date.items():
         has_live = any(g["status_state"] == "in" for g in games)
@@ -282,19 +312,19 @@ if st.session_state.view == "calendar":
                 {
                     "id":          g["id"],
                     "away_abbr":   g["away"]["abbr"],
-                    "away_logo":   g["away"].get("logo", ""),
+                    "away_logo":   g["away"].get("logo",""),
                     "away_score":  g["away"]["score"],
                     "away_record": g["away"]["record"],
+                    "away_team":   g["away"]["team"],
                     "home_abbr":   g["home"]["abbr"],
-                    "home_logo":   g["home"].get("logo", ""),
+                    "home_logo":   g["home"].get("logo",""),
                     "home_score":  g["home"]["score"],
                     "home_record": g["home"]["record"],
+                    "home_team":   g["home"]["team"],
                     "state":       g["status_state"],
                     "period":      g["period"],
                     "status":      g["status"],
-                    "venue":       g.get("venue", ""),
-                    "away_team":   g["away"]["team"],
-                    "home_team":   g["home"]["team"],
+                    "venue":       g.get("venue",""),
                 }
                 for g in games
             ],
@@ -302,283 +332,440 @@ if st.session_state.view == "calendar":
 
     cal_json = json.dumps(cal_data)
 
+    # ── Calendar + inline day panel (single HTML block, no scrollbar) ─────────
     calendar_html = f"""
-<html><head>
+<!DOCTYPE html>
+<html>
+<head>
 <meta charset="utf-8">
 <style>
-*{{box-sizing:border-box;margin:0;padding:0;font-family:'Inter',system-ui,sans-serif}}
-body{{background:transparent;padding:4px 0}}
+  *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{
+    font-family: 'Inter', system-ui, sans-serif;
+    background: transparent;
+    color: #c8bfb5;
+  }}
 
-/* ── Calendar grid ── */
-.grid{{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}}
-.dow{{text-align:center;font-size:0.6rem;font-weight:700;letter-spacing:2px;
-      text-transform:uppercase;color:#666;padding:6px 0 8px}}
+  /* ── Calendar grid ── */
+  .cal-wrap {{ width: 100%; }}
 
-.day{{
-  min-height:72px;
-  border-radius:8px;
-  border:1px solid rgba(128,128,128,0.1);
-  padding:6px 7px;
-  background:transparent;
-  cursor:default;
-  position:relative;
-  transition:border-color 0.15s;
-}}
-.day.empty{{border-color:transparent;pointer-events:none}}
-.day.has-games{{
-  border-color:rgba(1,51,105,0.35);
-  background:rgba(1,51,105,0.05);
-  cursor:pointer;
-}}
-.day.has-games:hover{{
-  border-color:#013369;
-  background:rgba(1,51,105,0.1);
-}}
-.day.today{{border-color:#D50A0A !important;background:rgba(213,10,10,0.04) !important}}
-.day.today.has-games{{cursor:pointer}}
+  .dow-row {{
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 3px;
+    margin-bottom: 3px;
+  }}
+  .dow {{
+    text-align: center;
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #6a6070;
+    padding: 4px 0 6px;
+  }}
 
-.day-num{{font-size:0.75rem;font-weight:600;color:#555}}
-.day.has-games .day-num{{color:#013369;font-weight:700}}
-.day.today .day-num{{color:#D50A0A}}
+  .day-row {{
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 3px;
+    margin-bottom: 3px;
+  }}
 
-/* game count badge */
-.game-count{{
-  margin-top:10px;
-  display:inline-flex;
-  align-items:center;
-  gap:5px;
-  background:rgba(1,51,105,0.12);
-  border-radius:20px;
-  padding:3px 9px;
-  font-size:0.68rem;
-  font-weight:700;
-  color:#013369;
-  letter-spacing:0.3px;
-}}
-.day.today .game-count{{background:rgba(213,10,10,0.1);color:#D50A0A}}
-.live-dot{{
-  width:6px;height:6px;
-  background:#D50A0A;
-  border-radius:50%;
-  flex-shrink:0;
-  animation:pulse 1.2s infinite;
-}}
-@keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:0.25}}}}
+  .day {{
+    min-height: 68px;
+    border-radius: 7px;
+    border: 1px solid rgba(200,185,165,0.08);
+    padding: 6px 7px;
+    background: rgba(255,255,255,0.02);
+    position: relative;
+    transition: border-color 0.15s, background 0.15s;
+    cursor: default;
+  }}
+  .day.empty {{
+    border-color: transparent;
+    background: transparent;
+    pointer-events: none;
+  }}
+  .day.has-games {{
+    border-color: rgba(232,113,74,0.3);
+    background: rgba(232,113,74,0.04);
+    cursor: pointer;
+  }}
+  .day.has-games:hover {{
+    border-color: rgba(232,113,74,0.7);
+    background: rgba(232,113,74,0.09);
+  }}
+  .day.today {{
+    border-color: rgba(232,113,74,0.6) !important;
+    background: rgba(232,113,74,0.06) !important;
+  }}
+  .day.selected {{
+    border-color: #e8714a !important;
+    background: rgba(232,113,74,0.13) !important;
+    box-shadow: 0 0 0 1px #e8714a;
+  }}
 
-/* ── Panel ── */
-.panel{{
-  display:none;
-  margin-top:12px;
-  border:1px solid rgba(1,51,105,0.2);
-  border-radius:12px;
-  overflow:hidden;
-  box-shadow:0 4px 20px rgba(0,0,0,0.15);
-}}
-.panel.open{{display:block}}
-.ph{{
-  background:#013369;
-  color:white;
-  padding:10px 16px;
-  font-size:0.8rem;
-  font-weight:700;
-  letter-spacing:1px;
-  text-transform:uppercase;
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-}}
-.ph-close{{cursor:pointer;opacity:0.65;font-size:1.1rem;line-height:1;padding:0 2px}}
-.ph-close:hover{{opacity:1}}
+  .day-num {{
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #6a6070;
+    line-height: 1;
+  }}
+  .day.has-games .day-num {{ color: #c8a882; font-weight: 700; }}
+  .day.today     .day-num {{ color: #e8714a; }}
+  .day.selected  .day-num {{ color: #e8714a; }}
 
-.grow{{
-  display:flex;
-  align-items:center;
-  padding:11px 16px;
-  border-bottom:1px solid rgba(128,128,128,0.1);
-  gap:12px;
-}}
-.grow:last-child{{border-bottom:none}}
+  .game-badge {{
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 9px;
+    background: rgba(232,113,74,0.12);
+    border: 1px solid rgba(232,113,74,0.22);
+    border-radius: 20px;
+    padding: 3px 9px 3px 7px;
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: #c8a882;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+  }}
+  .day.today    .game-badge,
+  .day.selected .game-badge {{
+    background: rgba(232,113,74,0.18);
+    border-color: rgba(232,113,74,0.45);
+    color: #e8714a;
+  }}
+  .live-dot {{
+    width: 6px; height: 6px;
+    background: #e8714a;
+    border-radius: 50%;
+    flex-shrink: 0;
+    animation: pulse 1.2s infinite;
+  }}
+  @keyframes pulse {{ 0%,100%{{opacity:1}} 50%{{opacity:0.2}} }}
 
-.tb{{display:flex;align-items:center;gap:8px;flex:1;min-width:0}}
-.tlogo{{width:32px;height:32px;object-fit:contain;flex-shrink:0}}
-.tname{{font-weight:700;font-size:0.88rem;color:#013369;white-space:nowrap}}
-.trec{{font-size:0.65rem;color:#aaa}}
+  /* ── Day panel — sits BELOW the calendar rows, no scroll ── */
+  .day-panel {{
+    display: none;
+    border: 1px solid rgba(232,113,74,0.25);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-top: 10px;
+    background: #16161e;
+  }}
+  .day-panel.open {{ display: block; }}
 
-.sc{{
-  font-size:1.35rem;
-  font-weight:800;
-  font-family:monospace;
-  color:#013369;
-  min-width:80px;
-  text-align:center;
-  flex-shrink:0;
-}}
-.vs{{font-size:0.75rem;font-weight:600;color:#bbb}}
+  .panel-header {{
+    background: rgba(232,113,74,0.12);
+    border-bottom: 1px solid rgba(232,113,74,0.18);
+    padding: 9px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }}
+  .panel-title {{
+    font-family: 'Oswald', sans-serif;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: #e8a87a;
+  }}
+  .panel-close {{
+    cursor: pointer;
+    color: #9a8f82;
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0 2px;
+    transition: color 0.15s;
+  }}
+  .panel-close:hover {{ color: #e8714a; }}
 
-.badge{{
-  font-size:0.62rem;
-  font-weight:700;
-  letter-spacing:0.6px;
-  text-transform:uppercase;
-  padding:3px 10px;
-  border-radius:12px;
-  white-space:nowrap;
-  flex-shrink:0;
-}}
-.badge-live{{background:#D50A0A;color:white}}
-.badge-final{{background:#444;color:white}}
-.badge-sched{{background:rgba(1,51,105,0.1);color:#013369}}
+  /* Game rows inside panel */
+  .game-row {{
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    gap: 10px;
+    border-bottom: 1px solid rgba(200,185,165,0.07);
+    transition: background 0.1s;
+  }}
+  .game-row:last-child {{ border-bottom: none; }}
+  .game-row:hover {{ background: rgba(232,113,74,0.05); }}
 
-.sbtn{{
-  background:#013369;
-  color:white;
-  border:none;
-  border-radius:7px;
-  padding:6px 14px;
-  font-size:0.75rem;
-  font-weight:700;
-  cursor:pointer;
-  letter-spacing:0.3px;
-  transition:background 0.15s;
-  flex-shrink:0;
-}}
-.sbtn:hover{{background:#D50A0A}}
+  .team-block {{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+  }}
+  .team-logo {{
+    width: 34px; height: 34px;
+    object-fit: contain;
+    flex-shrink: 0;
+  }}
+  .team-abbr   {{ font-weight: 700; font-size: 0.92rem; color: #ddd5c8; }}
+  .team-record {{ font-size: 0.64rem; color: #6a6070; margin-top: 1px; }}
 
-/* legend */
-.legend{{display:flex;gap:14px;align-items:center;margin-top:10px;font-size:0.7rem;color:#888}}
-.lbox{{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle}}
+  .score-block {{
+    min-width: 90px;
+    text-align: center;
+    font-size: 1.35rem;
+    font-weight: 800;
+    font-family: 'Courier New', monospace;
+    color: #ddd5c8;
+    flex-shrink: 0;
+  }}
+  .vs-label {{ font-size: 0.72rem; font-weight: 600; color: #4a4060; }}
+
+  .status-badge {{
+    font-size: 0.61rem;
+    font-weight: 700;
+    letter-spacing: 0.7px;
+    text-transform: uppercase;
+    padding: 3px 10px;
+    border-radius: 12px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }}
+  .s-live  {{ background: #e8714a; color: white; }}
+  .s-final {{ background: #3a3a4a; color: #c8bfb5; }}
+  .s-sched {{ background: rgba(200,185,165,0.1); color: #9a8f82; }}
+
+  .box-btn {{
+    background: #e8714a;
+    color: white;
+    border: none;
+    border-radius: 7px;
+    padding: 7px 14px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: pointer;
+    letter-spacing: 0.3px;
+    flex-shrink: 0;
+    transition: background 0.15s, transform 0.1s;
+    font-family: 'Oswald', sans-serif;
+  }}
+  .box-btn:hover {{ background: #d4603a; transform: translateY(-1px); }}
+
+  /* Legend */
+  .legend {{
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    margin-top: 10px;
+    font-size: 0.68rem;
+    color: #6a6070;
+  }}
+  .l-box {{
+    display: inline-block;
+    width: 10px; height: 10px;
+    border-radius: 2px;
+    margin-right: 4px;
+    vertical-align: middle;
+  }}
 </style>
 </head>
 <body>
+<div class="cal-wrap">
 
-<div class="grid">
-  <div class="dow">Sun</div><div class="dow">Mon</div><div class="dow">Tue</div>
-  <div class="dow">Wed</div><div class="dow">Thu</div><div class="dow">Fri</div>
-  <div class="dow">Sat</div>
-</div>
-
-<div class="grid" id="cal" style="margin-top:4px"></div>
-
-<div class="panel" id="panel">
-  <div class="ph">
-    <span id="plabel">Games</span>
-    <span class="ph-close" onclick="closePanel()">&#x2715;</span>
+  <!-- Day-of-week headers -->
+  <div class="dow-row">
+    <div class="dow">Sun</div>
+    <div class="dow">Mon</div>
+    <div class="dow">Tue</div>
+    <div class="dow">Wed</div>
+    <div class="dow">Thu</div>
+    <div class="dow">Fri</div>
+    <div class="dow">Sat</div>
   </div>
-  <div id="pgames"></div>
-</div>
 
-<div class="legend">
-  <span><span class="lbox" style="background:rgba(1,51,105,0.1);border:1px solid rgba(1,51,105,0.35)"></span>Has games</span>
-  <span><span class="lbox" style="background:rgba(213,10,10,0.06);border:1px solid #D50A0A"></span>Today</span>
-  <span><span style="display:inline-block;width:8px;height:8px;background:#D50A0A;border-radius:50%;margin-right:4px;vertical-align:middle"></span>Live</span>
+  <!-- Calendar rows rendered by JS -->
+  <div id="cal-rows"></div>
+
+  <!-- Day panel — always rendered below all rows -->
+  <div class="day-panel" id="day-panel">
+    <div class="panel-header">
+      <div class="panel-title" id="panel-title">Games</div>
+      <span class="panel-close" onclick="closePanel()">&#x2715;</span>
+    </div>
+    <div id="panel-body"></div>
+  </div>
+
+  <!-- Legend -->
+  <div class="legend">
+    <span>
+      <span class="l-box" style="background:rgba(232,113,74,0.1);border:1px solid rgba(232,113,74,0.35)"></span>
+      Has games
+    </span>
+    <span>
+      <span class="l-box" style="background:rgba(232,113,74,0.08);border:1px solid rgba(232,113,74,0.6)"></span>
+      Today
+    </span>
+    <span>
+      <span style="display:inline-block;width:7px;height:7px;background:#e8714a;border-radius:50%;margin-right:4px;vertical-align:middle"></span>
+      Live
+    </span>
+  </div>
+
 </div>
 
 <script>
-const CAL   = {cal_json};
-const TODAY = '{today_str}';
-const FDOW  = {first_dow};
-const DAYS  = {days_in_mon};
-const YEAR  = {year};
-const MONTH = {month};
+const CAL    = {cal_json};
+const TODAY  = '{today_str}';
+const FDOW   = {first_dow};
+const DAYS   = {days_in_mon};
+const YEAR   = {year};
+const MONTH  = String({month}).padStart(2,'0');
 
-function pad(n){{return String(n).padStart(2,'0')}}
+let selectedDs = null;
 
-// Build grid
-const grid = document.getElementById('cal');
-for(let i=0;i<FDOW;i++){{
-  const e=document.createElement('div');e.className='day empty';grid.appendChild(e);
-}}
-for(let d=1;d<=DAYS;d++){{
-  const ds=YEAR+'-'+pad(MONTH)+'-'+pad(d);
-  const info=CAL[ds];
-  const isToday=ds===TODAY;
-  const hasGames=!!info;
-  const hasLive=info&&info.has_live;
+function pad(n) {{ return String(n).padStart(2,'0'); }}
 
-  const el=document.createElement('div');
-  el.className='day'+(hasGames?' has-games':'')+(isToday?' today':'');
+// Build rows of 7 days each
+const container = document.getElementById('cal-rows');
+let cells = [];
 
-  let h=`<div class="day-num">${{d}}</div>`;
-  if(hasGames){{
-    h+=`<div class="game-count">
-      ${{hasLive?'<div class="live-dot"></div>':''}}
-      ${{info.count}} game${{info.count>1?'s':''}}
-    </div>`;
-  }}
-  el.innerHTML=h;
+// Empty leading cells
+for (let i = 0; i < FDOW; i++) cells.push(null);
 
-  if(hasGames){{
-    el.onclick=function(){{showPanel(ds)}};
-  }}
-  grid.appendChild(el);
+// Day cells
+for (let d = 1; d <= DAYS; d++) {{
+  cells.push(d);
 }}
 
-function showPanel(ds){{
-  const info=CAL[ds];
-  if(!info)return;
-  const pg=document.getElementById('pgames');
-  const pl=document.getElementById('plabel');
-  const d=new Date(ds+'T12:00:00');
-  pl.textContent=d.toLocaleDateString('en-US',{{weekday:'long',month:'long',day:'numeric'}});
-  pg.innerHTML='';
+// Pad to complete last row
+while (cells.length % 7 !== 0) cells.push(null);
 
-  info.games.forEach(g=>{{
-    const st=g.state;
-    const badgeCls=st==='in'?'badge-live':st==='post'?'badge-final':'badge-sched';
-    const badgeTxt=st==='in'?'Live Q'+g.period:st==='post'?'Final':'Scheduled';
-    const scoreHtml=st!=='pre'
-      ?`${{g.away_score}} <span style="color:#999;font-size:.9rem">–</span> ${{g.home_score}}`
-      :`<span class="vs">VS</span>`;
+// Render rows
+for (let r = 0; r < cells.length / 7; r++) {{
+  const row = document.createElement('div');
+  row.className = 'day-row';
 
-    const row=document.createElement('div');
-    row.className='grow';
-    row.innerHTML=`
-      <div class="tb">
-        ${{g.away_logo?`<img class="tlogo" src="${{g.away_logo}}" onerror="this.style.display='none'">`:''}}
+  for (let c = 0; c < 7; c++) {{
+    const d   = cells[r * 7 + c];
+    const el  = document.createElement('div');
+
+    if (d === null) {{
+      el.className = 'day empty';
+    }} else {{
+      const ds      = YEAR + '-' + MONTH + '-' + pad(d);
+      const info    = CAL[ds];
+      const isToday = ds === TODAY;
+      const hasG    = !!info;
+
+      let cls = 'day';
+      if (hasG)    cls += ' has-games';
+      if (isToday) cls += ' today';
+      el.className = cls;
+      el.dataset.ds = ds;
+
+      let html = `<div class="day-num">${{d}}</div>`;
+      if (hasG) {{
+        const hasLive = info.has_live;
+        html += `<div class="game-badge">
+          ${{hasLive ? '<div class="live-dot"></div>' : ''}}
+          ${{info.count}} game${{info.count > 1 ? 's' : ''}}
+        </div>`;
+        el.onclick = function() {{ togglePanel(ds, el); }};
+      }}
+
+      el.innerHTML = html;
+    }}
+
+    row.appendChild(el);
+  }}
+
+  container.appendChild(row);
+}}
+
+function togglePanel(ds, el) {{
+  const panel = document.getElementById('day-panel');
+  if (selectedDs === ds && panel.classList.contains('open')) {{
+    closePanel();
+    return;
+  }}
+  // Deselect previous
+  document.querySelectorAll('.day.selected').forEach(d => d.classList.remove('selected'));
+  el.classList.add('selected');
+  selectedDs = ds;
+  renderPanel(ds);
+  panel.classList.add('open');
+  // Scroll panel into view smoothly inside the iframe
+  setTimeout(() => {{
+    panel.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
+  }}, 50);
+}}
+
+function closePanel() {{
+  document.getElementById('day-panel').classList.remove('open');
+  document.querySelectorAll('.day.selected').forEach(d => d.classList.remove('selected'));
+  selectedDs = null;
+}}
+
+function renderPanel(ds) {{
+  const info  = CAL[ds];
+  const title = document.getElementById('panel-title');
+  const body  = document.getElementById('panel-body');
+
+  const d = new Date(ds + 'T12:00:00');
+  title.textContent = d.toLocaleDateString('en-US', {{ weekday:'long', month:'long', day:'numeric' }});
+  body.innerHTML = '';
+
+  info.games.forEach(g => {{
+    const st       = g.state;
+    const badgeCls = st === 'in' ? 's-live' : st === 'post' ? 's-final' : 's-sched';
+    const badgeTxt = st === 'in' ? 'Live · Q' + g.period : st === 'post' ? 'Final' : 'Scheduled';
+    const scoreHtml = st !== 'pre'
+      ? `<span>${{g.away_score}}</span> <span style="color:#4a4060;font-size:.9rem">–</span> <span>${{g.home_score}}</span>`
+      : `<span class="vs-label">VS</span>`;
+
+    const row = document.createElement('div');
+    row.className = 'game-row';
+    row.innerHTML = `
+      <div class="team-block">
+        ${{g.away_logo ? `<img class="team-logo" src="${{g.away_logo}}" onerror="this.style.display='none'">` : ''}}
         <div>
-          <div class="tname">${{g.away_abbr}}</div>
-          <div class="trec">${{g.away_record}}</div>
+          <div class="team-abbr">${{g.away_abbr}}</div>
+          <div class="team-record">${{g.away_record}}</div>
         </div>
       </div>
-      <div class="sc">${{scoreHtml}}</div>
-      <div class="tb" style="flex-direction:row-reverse;text-align:right">
-        ${{g.home_logo?`<img class="tlogo" src="${{g.home_logo}}" onerror="this.style.display='none'">`:''}}
+      <div class="score-block">${{scoreHtml}}</div>
+      <div class="team-block" style="flex-direction:row-reverse;text-align:right">
+        ${{g.home_logo ? `<img class="team-logo" src="${{g.home_logo}}" onerror="this.style.display='none'">` : ''}}
         <div>
-          <div class="tname">${{g.home_abbr}}</div>
-          <div class="trec">${{g.home_record}}</div>
+          <div class="team-abbr">${{g.home_abbr}}</div>
+          <div class="team-record">${{g.home_record}}</div>
         </div>
       </div>
-      <span class="badge ${{badgeCls}}">${{badgeTxt}}</span>
-      <button class="sbtn" onclick="selectGame('${{g.id}}')">Box Score</button>
+      <span class="status-badge ${{badgeCls}}">${{badgeTxt}}</span>
+      <button class="box-btn" onclick="selectGame('${{g.id}}')">Box Score</button>
     `;
-    pg.appendChild(row);
+    body.appendChild(row);
   }});
-
-  document.getElementById('panel').classList.add('open');
-  document.getElementById('panel').scrollIntoView({{behavior:'smooth',block:'nearest'}});
 }}
 
-function closePanel(){{
-  document.getElementById('panel').classList.remove('open');
-}}
-
-function selectGame(id){{
-  // Pass game id to Streamlit via query string change
-  const params=new URLSearchParams(window.location.search);
-  params.set('game_id',id);
-  window.parent.location.search=params.toString();
+function selectGame(id) {{
+  // Navigate parent to add query param — triggers Streamlit rerun
+  const url = new URL(window.parent.location.href);
+  url.searchParams.set('game_id', id);
+  window.parent.location.href = url.toString();
 }}
 </script>
-</body></html>
+</body>
+</html>
 """
 
-    components.html(calendar_html, height=720, scrolling=True)
+    # Height must be tall enough for the full calendar + panel without internal scroll
+    components.html(calendar_html, height=820, scrolling=False)
 
     # ── Handle game selection via query params ────────────────────────────────
     qp = st.query_params
     if "game_id" in qp:
         selected_id = qp["game_id"]
-        # Find the game object
         found = None
         for ds, games in games_by_date.items():
             for g in games:
@@ -610,26 +797,26 @@ elif st.session_state.view == "boxscore":
         st.rerun()
 
     # ── Back + Refresh ────────────────────────────────────────────────────────
-    b1, b2, _ = st.columns([1.6, 1.2, 7])
+    b1, b2, _ = st.columns([1.8, 1.4, 7])
     with b1:
         if st.button("← Back to Schedule"):
             st.session_state.view = "calendar"
             st.rerun()
     with b2:
-        if st.button("🔄 Refresh"):
+        if st.button("🔄 Refresh Stats"):
             st.cache_data.clear()
             st.rerun()
 
     # ── Score Banner ──────────────────────────────────────────────────────────
-    away = game["away"]; home = game["home"]
+    away = game["away"];  home = game["home"]
     sc   = {"in":"","post":"final","pre":"pre"}.get(game["status_state"],"")
     clk  = (
-        f'<span style="color:#aaa;font-size:0.75rem;margin-left:8px">'
+        f'<span style="color:#9a8f82;font-size:0.74rem;margin-left:8px">'
         f'{game["clock"]} · Q{game["period"]}</span>'
         if game["status_state"] == "in" else ""
     )
-    al = f'<img src="{away["logo"]}" style="width:54px;height:54px;object-fit:contain">' if away.get("logo") else ""
-    hl = f'<img src="{home["logo"]}" style="width:54px;height:54px;object-fit:contain">' if home.get("logo") else ""
+    al = f'<img src="{away["logo"]}" style="width:56px;height:56px;object-fit:contain">' if away.get("logo") else ""
+    hl = f'<img src="{home["logo"]}" style="width:56px;height:56px;object-fit:contain">' if home.get("logo") else ""
 
     st.markdown(f"""
     <div class="score-banner">
@@ -646,11 +833,11 @@ elif st.session_state.view == "boxscore":
           <span class="score-sep"> – </span>
           <span class="score-num">{home['score']}</span>
         </div>
-        <div style="margin-top:6px">
+        <div style="margin-top:7px">
           <span class="status-pill {sc}">{game['status']}</span>
           {clk}
         </div>
-        <div style="color:#555;font-size:0.73rem;margin-top:4px">{game.get('venue','')}</div>
+        <div style="color:#6a6070;font-size:0.72rem;margin-top:5px">{game.get('venue','')}</div>
       </div>
       <div style="display:flex;align-items:center;gap:14px;flex-direction:row-reverse">
         {hl}
@@ -663,7 +850,7 @@ elif st.session_state.view == "boxscore":
     """, unsafe_allow_html=True)
 
     # ── Load stats ────────────────────────────────────────────────────────────
-    with st.spinner("Loading box score..."):
+    with st.spinner("Loading box score…"):
         data = load_all_stats(game_id)
     pbp = data["pbp"]
 
@@ -675,16 +862,16 @@ elif st.session_state.view == "boxscore":
             s = pd.DataFrame("", index=df.index, columns=df.columns)
             for c in ["1H","2H"]:
                 if c in df.columns:
-                    s[c] = "background:rgba(1,51,105,0.08);font-weight:600"
+                    s[c] = "background:rgba(232,113,74,0.08);font-weight:600"
             if "Total" in df.columns:
-                s["Total"] = "font-weight:800;background:rgba(1,51,105,0.13)"
+                s["Total"] = "font-weight:800;background:rgba(232,113,74,0.14)"
             return s
         st.dataframe(ls_df.style.apply(hl_ls, axis=None), use_container_width=True, hide_index=True)
     else:
         st.info("Linescore not available yet.")
 
     # ── Period filter ─────────────────────────────────────────────────────────
-    st.markdown('<div class="section-label" style="margin-top:1.4rem">Player Stats</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label" style="margin-top:1.5rem">Player Stats</div>', unsafe_allow_html=True)
 
     available = ["Full Game"]
     for pbp_key, label in [("1H","1st Half"),("2H","2nd Half"),("Q1","Q1"),("Q2","Q2"),("Q3","Q3"),("Q4","Q4")]:
@@ -757,7 +944,7 @@ elif st.session_state.view == "boxscore":
             st.info("No team data.")
 
     # ── Scoring Summary ───────────────────────────────────────────────────────
-    st.markdown('<div class="section-label" style="margin-top:1.4rem">Scoring Summary</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label" style="margin-top:1.5rem">Scoring Summary</div>', unsafe_allow_html=True)
     sdf = data["scoring"]
     if sdf is not None and not sdf.empty:
         pf = period_filter
@@ -781,7 +968,7 @@ elif st.session_state.view == "boxscore":
         st.info("No scoring plays yet.")
 
     # ── Play-by-Play ──────────────────────────────────────────────────────────
-    st.markdown('<div class="section-label" style="margin-top:1.4rem">Play-by-Play</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label" style="margin-top:1.5rem">Play-by-Play</div>', unsafe_allow_html=True)
     if pbp:
         pf  = period_filter
         k   = get_pbp_key(pf)
