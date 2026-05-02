@@ -581,22 +581,7 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
-    # Linescore
-    st.markdown("<div class='sec-div'>Score by Quarter</div>", unsafe_allow_html=True)
-    ls_df = data["linescore"]
-    if ls_df is not None and not ls_df.empty:
-        def style_ls(df):
-            s = pd.DataFrame("", index=df.index, columns=df.columns)
-            for c in ["1H","2H"]:
-                if c in df.columns:
-                    s[c] = "font-weight:700"
-            if "Total" in df.columns:
-                s["Total"] = "font-weight:800"
-            return s
-        st.dataframe(ls_df.style.apply(style_ls, axis=None),
-                     use_container_width=True, hide_index=True)
-    else:
-        st.info("Linescore not yet available.")
+    # Linescore removed from UI
 
     # Period filter
     st.markdown("<div class='sec-div' style='margin-top:18px'>Player Stats</div>",
@@ -675,34 +660,29 @@ elif st.session_state.view == "boxscore":
                 _play_count = sum(len(d.get("plays", [])) for d in _all if d)
                 st.markdown(f"**Total plays across all drives:** {_play_count}")
 
-                # Show raw keys and values of first play
-                st.markdown("**First play — all fields:**")
-                first_drive = _all[0] if _all[0] else {}
-                first_plays = first_drive.get("plays", [])
-                if first_plays:
-                    fp = first_plays[0]
-                    for k2, v2 in fp.items():
-                        st.write(f"  `{k2}`: `{str(v2)[:120]}`")
-                    st.markdown("**Second play — all fields:**")
-                    if len(first_plays) > 1:
-                        for k2, v2 in first_plays[1].items():
-                            st.write(f"  `{k2}`: `{str(v2)[:120]}`")
+                # Show first 10 plays with type + text + statYardage
+                st.markdown("**Sample plays across all drives (pass/rush only):**")
+                shown = 0
+                for drv in _all:
+                    if not drv or shown >= 10: break
+                    for p in drv.get("plays", []):
+                        ptype = p.get("type", {}).get("text", "")
+                        text  = p.get("text", "")
+                        yds   = p.get("statYardage", 0)
+                        per   = p.get("period", {}).get("number", "?")
+                        if "pass" in ptype.lower() or "rush" in ptype.lower() or "scramble" in ptype.lower():
+                            st.write(f"  Q{per} `[{ptype}]` yds={yds} | `{text[:100]}`")
+                            shown += 1
+                        if shown >= 10: break
         else:
             st.write("Could not fetch game summary for debug")
 
-    tabs = st.tabs(["Passing","Rushing","Receiving","Defense","Kicking","Returning","Team"])
+    tabs = st.tabs(["Passing","Rushing","Receiving","Defense","Kicking"])
     with tabs[0]: show_period_df("passing",   "YDS")
     with tabs[1]: show_period_df("rushing",   "YDS")
     with tabs[2]: show_period_df("receiving", "YDS")
     with tabs[3]: show_df(data["defense"],   period_filter, "TOT")
     with tabs[4]: show_df(data["kicking"],   period_filter)
-    with tabs[5]: show_df(data["returning"], period_filter, "YDS")
-    with tabs[6]:
-        t = data["team"]
-        if t is not None and not t.empty:
-            st.dataframe(t, use_container_width=True, hide_index=True)
-        else:
-            st.info("No team data.")
 
     st.divider()
     st.caption(
