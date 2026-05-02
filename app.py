@@ -415,154 +415,157 @@ if st.session_state.view == "calendar":
         with col:
             st.markdown(f"<div class='dow-label'>{d}</div>", unsafe_allow_html=True)
 
-    # Build grid cells
+    # Build grid cells — all days render as identical divs.
+    # Game days get a small pip badge + a clickable link via st.query_params.
+    # We use a single components.html block to render the full interactive
+    # calendar, passing games data as JSON. Clicking a day sets ?sel_date=
+    # which Streamlit picks up below.
     today_str   = et_now().date().isoformat()
     first_dow   = (date(year, month, 1).weekday() + 1) % 7
     days_in_mon = cal_mod.monthrange(year, month)[1]
-    cells       = [None] * first_dow + list(range(1, days_in_mon + 1))
-    while len(cells) % 7:
-        cells.append(None)
 
-    # Fix 5: days with games use st.button styled to look like the cell
-    # We overlay a transparent button on top of the rendered cell HTML
-    for row_start in range(0, len(cells), 7):
-        cols = st.columns(7)
-        for ci, day in enumerate(cells[row_start:row_start + 7]):
-            with cols[ci]:
-                if day is None:
-                    st.markdown("<div class='cal-cell empty'></div>", unsafe_allow_html=True)
-                    continue
+    # Build per-date data for the calendar
+    cal_days_data = {}
+    for ds_key, dg in games_by_date.items():
+        cal_days_data[ds_key] = {
+            "count":    len(dg),
+            "has_live": any(g["status_state"] == "in" for g in dg),
+        }
 
-                ds        = f"{year}-{month:02d}-{day:02d}"
-                day_games = games_by_date.get(ds, [])
-                has_games = bool(day_games)
-                is_today  = ds == today_str
-                has_live  = any(g["status_state"] == "in" for g in day_games)
+    import json as _json
+    import streamlit.components.v1 as _components
 
-                if is_today and has_games:
-                    cls = "cal-cell today active"
-                elif is_today:
-                    cls = "cal-cell today"
-                elif has_games:
-                    cls = "cal-cell active"
-                else:
-                    cls = "cal-cell"
+    cal_html = f"""
+<style>
+* {{ box-sizing: border-box; margin: 0; padding: 0; font-family: inherit; }}
+body {{ background: transparent; }}
+.grid {{
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+}}
+.cell {{
+    min-height: 72px;
+    border-radius: 10px;
+    border: 1.5px solid rgba(128,128,128,0.25);
+    background: var(--secondary-background-color, #1e1e2e);
+    padding: 9px 10px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: rgba(160,160,180,0.6);
+    position: relative;
+    user-select: none;
+    transition: border-color .15s, box-shadow .15s, transform .12s;
+}}
+.cell.empty {{
+    border-color: transparent;
+    background: transparent;
+}}
+.cell.active {{
+    border-color: rgba(128,128,128,0.35);
+    color: inherit;
+    cursor: pointer;
+}}
+.cell.active:hover {{
+    border-color: #2563eb;
+    box-shadow: 0 3px 12px rgba(37,99,235,0.15);
+    transform: translateY(-1px);
+}}
+.cell.today {{
+    border-color: #e63946 !important;
+}}
+.cell.today .day-num {{ color: #e63946 !important; }}
+.day-num {{ font-size: 0.74rem; font-weight: 600; }}
+.pip {{
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.6rem;
+    font-weight: 700;
+    color: #2563eb;
+    background: rgba(37,99,235,0.12);
+    border-radius: 5px;
+    padding: 2px 6px;
+}}
+.cell.today .pip {{ color: #e63946; background: rgba(230,57,70,0.12); }}
+.dot {{
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: #e63946;
+    flex-shrink: 0;
+    animation: blink 1.3s infinite;
+}}
+@keyframes blink {{ 0%,100%{{opacity:1}} 50%{{opacity:.2}} }}
+</style>
 
-                pip = ""
-                if has_games:
-                    dot = "<span class='pip-dot'></span>" if has_live else ""
-                    n   = len(day_games)
-                    pip = f"<div class='game-pip'>{dot}{n} game{'s' if n>1 else ''}</div>"
+<div class="grid" id="cal"></div>
 
-                if has_games:
-                    # Each game-day gets a unique CSS class keyed to its date.
-                    # We inject a <style> block that makes that specific button
-                    # look exactly like the calendar cell — no separate div needed.
-                    safe_ds = ds.replace("-", "")
-                    btn_cls = f"calday{safe_ds}"
+<script>
+const DATA  = {_json.dumps(cal_days_data)};
+const TODAY = '{today_str}';
+const FDOW  = {first_dow};
+const DAYS  = {days_in_mon};
+const YEAR  = '{year}';
+const MON   = '{month:02d}';
 
-                    if is_today:
-                        border_col  = "#e63946"
-                        day_col     = "#e63946"
-                        pip_bg      = "#fecdd3"
-                        pip_col     = "#be123c"
-                    else:
-                        border_col  = "#2563eb"
-                        day_col     = "#2563eb"
-                        pip_bg      = "#dbeafe"
-                        pip_col     = "#2563eb"
+function pad(n) {{ return String(n).padStart(2,'0'); }}
 
-                    dot_html = "<span style='width:6px;height:6px;border-radius:50%;background:#e63946;flex-shrink:0;display:inline-block'></span>" if has_live else ""
-                    n        = len(day_games)
-                    label    = f"{dot_html}{n} game{'s' if n>1 else ''}"
+const grid = document.getElementById('cal');
 
-                    # Full button styled as the cell — no separate div, no overlay
-                    st.markdown(f"""
-                    <style>
-                    div[data-testid="stButton"]:has(button.{btn_cls}) > button {{
-                        background: var(--secondary-background-color) !important;
-                        border: 1.5px solid {border_col} !important;
-                        border-radius: 10px !important;
-                        color: {day_col} !important;
-                        font-size: 0.74rem !important;
-                        font-weight: 700 !important;
-                        min-height: 72px !important;
-                        height: 72px !important;
-                        padding: 9px 10px !important;
-                        text-align: left !important;
-                        display: flex !important;
-                        flex-direction: column !important;
-                        justify-content: space-between !important;
-                        align-items: flex-start !important;
-                        width: 100% !important;
-                        cursor: pointer !important;
-                        position: relative !important;
-                        transition: box-shadow .15s, transform .1s !important;
-                        white-space: normal !important;
-                        line-height: 1.2 !important;
-                    }}
-                    div[data-testid="stButton"]:has(button.{btn_cls}) > button:hover {{
-                        border-color: #1d4ed8 !important;
-                        box-shadow: 0 4px 14px rgba(37,99,235,0.18) !important;
-                        transform: translateY(-1px) !important;
-                        background: var(--secondary-background-color) !important;
-                    }}
-                    /* Pip badge inside the button */
-                    div[data-testid="stButton"]:has(button.{btn_cls}) > button > div > p {{
-                        display: flex !important;
-                        flex-direction: column !important;
-                        gap: 6px !important;
-                        margin: 0 !important;
-                        width: 100% !important;
-                    }}
-                    </style>
-                    <script>
-                    (function() {{
-                        // Tag the next button rendered with our class
-                        const obs = new MutationObserver(function(mutations, obs) {{
-                            const btns = document.querySelectorAll('button:not(.{btn_cls}-done)');
-                            btns.forEach(function(btn) {{
-                                if (btn.innerText && btn.innerText.includes('{day}') && btn.innerText.includes('game')) {{
-                                    btn.classList.add('{btn_cls}');
-                                    btn.classList.add('{btn_cls}-done');
-                                    obs.disconnect();
-                                }}
-                            }});
-                        }});
-                        obs.observe(document.body, {{childList: true, subtree: true}});
-                    }})();
-                    </script>
-                    """, unsafe_allow_html=True)
+// Empty leading cells
+for (let i = 0; i < FDOW; i++) {{
+    const e = document.createElement('div');
+    e.className = 'cell empty';
+    grid.appendChild(e);
+}}
 
-                    clicked = st.button(
-                        f"{day}\n{label}",
-                        key=f"d_{ds}",
-                        use_container_width=True,
-                    )
-                    if clicked:
-                        st.session_state.selected_date       = ds
-                        st.session_state.selected_date_games = day_games
-                        st.session_state.view = "day"
-                        st.rerun()
-                else:
-                    st.markdown(f"<div class='{cls}'>{day}</div>", unsafe_allow_html=True)
+// Day cells
+for (let d = 1; d <= DAYS; d++) {{
+    const ds   = YEAR + '-' + MON + '-' + pad(d);
+    const info = DATA[ds];
+    const cell = document.createElement('div');
 
-    # Fix 1: removed "no games" message entirely
+    let cls = 'cell';
+    if (ds === TODAY) cls += ' today';
+    if (info)         cls += ' active';
+    cell.className = cls;
 
-    # Legend
-    st.markdown("""
-    <div class="cal-legend">
-      <span><span class="l-sw" style="border:1.5px solid #2563eb"></span>Has games</span>
-      <span><span class="l-sw" style="border:1.5px solid #e63946"></span>Today</span>
-      <span>
-        <span style="display:inline-block;width:8px;height:8px;background:#e63946;
-          border-radius:50%;margin-right:5px;vertical-align:middle;animation:blink 1.3s infinite">
-        </span>Live
-      </span>
-    </div>
-    """, unsafe_allow_html=True)
+    let html = '<div class="day-num">' + d + '</div>';
+    if (info) {{
+        const dot = info.has_live ? '<span class="dot"></span>' : '';
+        const n   = info.count;
+        html += '<div class="pip">' + dot + n + ' game' + (n > 1 ? 's' : '') + '</div>';
+        cell.onclick = function() {{
+            const url = new URL(window.parent.location.href);
+            url.searchParams.set('sel_date', ds);
+            window.parent.location.href = url.toString();
+        }};
+    }}
+    cell.innerHTML = html;
+    grid.appendChild(cell);
+}}
+</script>
+"""
 
-    # (calendar day buttons are styled per-cell above)
+    _components.html(cal_html, height=days_in_mon > 28 and 420 or 380, scrolling=False)
+
+    # Handle date click via query params
+    _qp = st.query_params
+    if "sel_date" in _qp:
+        _ds    = _qp["sel_date"]
+        _games = games_by_date.get(_ds, [])
+        if _games:
+            st.session_state.selected_date       = _ds
+            st.session_state.selected_date_games = _games
+            st.session_state.view = "day"
+            st.query_params.clear()
+            st.rerun()
+        else:
+            st.query_params.clear()
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
