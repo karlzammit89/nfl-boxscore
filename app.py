@@ -578,7 +578,8 @@ elif st.session_state.view == "boxscore":
 
     with st.spinner("Loading box score…"):
         data = load_all_stats(game_id)
-    pbp = data["pbp"]
+    pbp       = data["pbp"]
+    by_period = data.get("by_period", {})
 
     # Linescore
     st.markdown("<div class='sec-div'>Score by Quarter</div>", unsafe_allow_html=True)
