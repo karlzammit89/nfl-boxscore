@@ -356,28 +356,48 @@ def get_pbp_by_quarter(game_id: str) -> dict[str, pd.DataFrame]:
 
 import re as _re
 
-_NAME    = r'[A-Z][a-z]?\.[A-Z][A-Za-z\'\-]+'
-_PASS_RE = _re.compile(rf'({_NAME}(?:\s+{_NAME})?)\s+pass\s+(complete|incomplete)', _re.I)
-_RECV_RE = _re.compile(rf'pass complete to\s+({_NAME}(?:\s+{_NAME})?)\s+for\s+-?\d+\s+yards?', _re.I)
+_NAME = r'[A-Z][a-z]?\.[A-Z][A-Za-z\'\-]+'
+
+# Passer: any name followed by "pass "
+_PASSER_RE = _re.compile(rf'({_NAME}(?:\s+{_NAME})?)\s+pass\s+', _re.I)
+
+# Receiver: handles both ESPN formats:
+#   "pass short right to J.Waddle to MIA 45"   (new)
+#   "pass complete to T.Hill for 23 yards"      (old)
+_RECV_RE = _re.compile(
+    rf'pass\s+(?:complete\s+to|(?:short|deep|long|screen|flat)?\s*'
+    rf'(?:right|left|middle)?\s*to\s+)({_NAME}(?:\s+{_NAME})?)',
+    _re.I
+)
+
+# Incomplete pass
+_INCOMP_RE = _re.compile(r'pass\s+incomplete', _re.I)
+
+# Rusher: name followed by direction/motion keyword
 _RUSH_RE = _re.compile(
     rf'({_NAME}(?:\s+{_NAME})?)\s+'
     r'(?:up the middle|left end|right end|left tackle|right tackle|'
-    r'left guard|right guard|rushes?|scrambles?|runs?\s)', _re.I)
-_TD_RE   = _re.compile(r'touchdown', _re.I)
-_INT_RE  = _re.compile(r'intercepted', _re.I)
+    r'left guard|right guard|left\s|right\s|rushes?|scrambles?)',
+    _re.I
+)
 
-# Play types that carry pass/rush stats
-_PASS_TYPES = {"pass", "passing touchdown", "interception", "interception return"}
-_RUSH_TYPES = {"rush", "rushing touchdown", "scramble"}
-_SKIP_TYPES = {"kickoff", "punt", "field goal", "extra point", "penalty",
-               "timeout", "end period", "end of half", "two-point conversion",
-               "kick off", "no play"}
+_TD_RE  = _re.compile(r'touchdown', _re.I)
+_INT_RE = _re.compile(r'intercepted', _re.I)
+
+_PASS_PTYPES = {"pass reception", "pass incompletion", "passing touchdown",
+                "interception", "interception return", "pass"}
+_RUSH_PTYPES = {"rush", "rushing touchdown", "scramble"}
+_SKIP_PTYPES = {"kickoff", "punt", "field goal", "extra point", "penalty",
+                "timeout", "end period", "end of half", "two-point conversion",
+                "kick off", "no play", ""}
 
 
 def get_player_stats_by_period(game_id: str) -> dict:
     """
-    Build true per-quarter/half player stat tables by parsing ESPN play text.
-    Uses play['text'] field + play['type']['text'] + play['statYardage'].
+    Build per-quarter and per-half player stat tables by parsing ESPN play text.
+    ESPN stores play text in 'text' field using abbreviated names (T.Tagovailoa).
+    Play type comes from play['type']['text'] e.g. 'Pass Reception', 'Rush'.
+    Yardage comes from play['statYardage'] (always accurate).
     """
     from collections import defaultdict
 
@@ -408,50 +428,51 @@ def get_player_stats_by_period(game_id: str) -> dict:
             continue
         team = drive.get("team", {}).get("abbreviation", "")
         for play in drive.get("plays", []):
-            period = _safe_int(play.get("period", {}).get("number", 0))
+            period   = _safe_int(play.get("period", {}).get("number", 0))
             if period == 0:
                 continue
+            ptype    = play.get("type", {}).get("text", "").lower().strip()
+            text     = play.get("text", "") or ""
+            stat_yds = _safe_int(play.get("statYardage", 0))
+            is_td    = bool(_TD_RE.search(text))
+            is_int   = bool(_INT_RE.search(text))
 
-            ptype     = play.get("type", {}).get("text", "").lower().strip()
-            text      = play.get("text", "") or ""
-            stat_yds  = _safe_int(play.get("statYardage", 0))
-            is_td     = bool(_TD_RE.search(text))
-            is_int    = bool(_INT_RE.search(text))
-
-            # Skip non-stat play types
-            if ptype in _SKIP_TYPES or not text:
+            if ptype in _SKIP_PTYPES or not text:
                 continue
 
-            # ── Passing plays ─────────────────────────────────────────────
-            if ptype in _PASS_TYPES or "pass" in ptype:
-                pm = _PASS_RE.search(text)
-                if pm:
-                    passer   = pm.group(1).strip()
-                    complete = pm.group(2).lower() == "complete"
-                    d = passing[period][passer]
-                    d["Team"]  = team
-                    d["att"]  += 1
-                    if complete:
-                        d["comp"] += 1
-                        d["yds"]  += stat_yds
+            # ── Pass plays ────────────────────────────────────────────────
+            if ptype in _PASS_PTYPES or "pass" in ptype:
+                pm = _PASSER_RE.search(text)
+                if not pm:
+                    continue
+                passer     = pm.group(1).strip()
+                incomplete = bool(_INCOMP_RE.search(text))
+                complete   = not incomplete
+
+                d = passing[period][passer]
+                d["Team"]  = team
+                d["att"]  += 1
+                if complete:
+                    d["comp"] += 1
+                    d["yds"]  += stat_yds
+                    if is_td:
+                        d["td"] += 1
+                    # Receiver
+                    rv = _RECV_RE.search(text)
+                    if rv:
+                        receiver = rv.group(1).strip()
+                        rd = receiving[period][receiver]
+                        rd["Team"]  = team
+                        rd["rec"]  += 1
+                        rd["yds"]  += stat_yds
                         if is_td:
-                            d["td"] += 1
-                        # Receiver
-                        rv = _RECV_RE.search(text)
-                        if rv:
-                            receiver = rv.group(1).strip()
-                            rd = receiving[period][receiver]
-                            rd["Team"]  = team
-                            rd["rec"]  += 1
-                            rd["yds"]  += stat_yds
-                            if is_td:
-                                rd["td"] += 1
-                    if is_int:
-                        d["int"] += 1
+                            rd["td"] += 1
+                if is_int:
+                    d["int"] += 1
                 continue
 
-            # ── Rushing plays ─────────────────────────────────────────────
-            if ptype in _RUSH_TYPES or "rush" in ptype or "scramble" in ptype:
+            # ── Rush plays ────────────────────────────────────────────────
+            if ptype in _RUSH_PTYPES or "rush" in ptype or "scramble" in ptype:
                 rm = _RUSH_RE.search(text)
                 if rm:
                     rusher = rm.group(1).strip()
@@ -508,18 +529,18 @@ def get_player_stats_by_period(game_id: str) -> dict:
                        "rushing":   to_rush_df(rushing[p]),
                        "receiving": to_recv_df(receiving[p])}
 
-    h1 = [p for p in all_periods if p in (1,2)]
-    h2 = [p for p in all_periods if p in (3,4)]
+    h1 = [p for p in all_periods if p in (1, 2)]
+    h2 = [p for p in all_periods if p in (3, 4)]
     ot = [p for p in all_periods if p > 4]
 
     if h1:
-        result["1H"] = {"passing":   to_pass_df(merge(passing,  h1,new_pass)),
-                        "rushing":   to_rush_df(merge(rushing,  h1,new_rush)),
-                        "receiving": to_recv_df(merge(receiving,h1,new_recv))}
+        result["1H"] = {"passing":   to_pass_df(merge(passing,  h1, new_pass)),
+                        "rushing":   to_rush_df(merge(rushing,  h1, new_rush)),
+                        "receiving": to_recv_df(merge(receiving,h1, new_recv))}
     if h2:
-        result["2H"] = {"passing":   to_pass_df(merge(passing,  h2,new_pass)),
-                        "rushing":   to_rush_df(merge(rushing,  h2,new_rush)),
-                        "receiving": to_recv_df(merge(receiving,h2,new_recv))}
+        result["2H"] = {"passing":   to_pass_df(merge(passing,  h2, new_pass)),
+                        "rushing":   to_rush_df(merge(rushing,  h2, new_rush)),
+                        "receiving": to_recv_df(merge(receiving,h2, new_recv))}
     for ot_p in ot:
         lbl = _quarter_label(ot_p)
         if lbl not in result:
@@ -528,8 +549,8 @@ def get_player_stats_by_period(game_id: str) -> dict:
                            "receiving": to_recv_df(receiving[ot_p])}
 
     result["Full Game"] = {
-        "passing":   to_pass_df(merge(passing,  all_periods,new_pass)),
-        "rushing":   to_rush_df(merge(rushing,  all_periods,new_rush)),
-        "receiving": to_recv_df(merge(receiving,all_periods,new_recv)),
+        "passing":   to_pass_df(merge(passing,   all_periods, new_pass)),
+        "rushing":   to_rush_df(merge(rushing,   all_periods, new_rush)),
+        "receiving": to_recv_df(merge(receiving, all_periods, new_recv)),
     }
     return result
