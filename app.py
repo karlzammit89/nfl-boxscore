@@ -161,6 +161,21 @@ st.markdown("""
     margin-bottom: 8px;
 }
 
+/* Center-align dataframe cells */
+[data-testid="stDataFrame"] td {
+    text-align: center !important;
+}
+[data-testid="stDataFrame"] th {
+    text-align: center !important;
+}
+/* Keep Player and Team columns left-aligned */
+[data-testid="stDataFrame"] td:first-child,
+[data-testid="stDataFrame"] td:nth-child(2),
+[data-testid="stDataFrame"] th:first-child,
+[data-testid="stDataFrame"] th:nth-child(2) {
+    text-align: left !important;
+}
+
 /* Section divider label */
 .sec-div {
     font-size: 0.62rem;
@@ -587,12 +602,8 @@ elif st.session_state.view == "boxscore":
     st.markdown("<div class='sec-div' style='margin-top:18px'>Player Stats</div>",
                 unsafe_allow_html=True)
 
-    # Always show all standard period options regardless of data availability
+    # Standard periods only — no OT
     available = ["Full Game", "Q1", "Q2", "1st Half", "Q3", "Q4", "2nd Half"]
-    # Add OT if present in by_period
-    for k in by_period:
-        if k.startswith("OT") and k not in available:
-            available.append(k)
 
     period_filter = st.radio("Period:", options=available,
                              horizontal=True, label_visibility="collapsed")
@@ -600,10 +611,12 @@ elif st.session_state.view == "boxscore":
     def get_pbp_key(pf):
         return {"1st Half":"1H","2nd Half":"2H"}.get(pf, pf)
 
-    def show_df(df, pf, sort=None):
+    def show_df(df, pf, sort=None, drop_cols=None):
         if df is None or df.empty:
             st.info("No data available.")
             return
+        if drop_cols:
+            df = df.drop(columns=[c for c in drop_cols if c in df.columns])
         if sort and sort in df.columns:
             try:
                 tmp = df.copy()
@@ -681,8 +694,8 @@ elif st.session_state.view == "boxscore":
     with tabs[0]: show_period_df("passing",   "YDS")
     with tabs[1]: show_period_df("rushing",   "YDS")
     with tabs[2]: show_period_df("receiving", "YDS")
-    with tabs[3]: show_df(data["defense"],   period_filter, "TOT")
-    with tabs[4]: show_df(data["kicking"],   period_filter)
+    with tabs[3]: show_df(data["defense"],   period_filter, "TOT", drop_cols=["Pos"])
+    with tabs[4]: show_df(data["kicking"],   period_filter, drop_cols=["Pos"])
 
     st.divider()
     st.caption(
