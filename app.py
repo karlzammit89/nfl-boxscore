@@ -75,12 +75,12 @@ st.markdown("""
 }
 .dow-lbl {
     text-align: center;
-    font-size: 0.6rem;
+    font-size: 0.72rem;
     font-weight: 700;
-    letter-spacing: 1.8px;
+    letter-spacing: 1.2px;
     text-transform: uppercase;
-    opacity: 0.4;
-    padding: 2px 0 8px;
+    opacity: 0.55;
+    padding: 2px 0 10px;
 }
 /* Day cell — identical structure for all days */
 .cal-day {
@@ -142,16 +142,19 @@ st.markdown("""
     border: 1px solid rgba(128,128,128,0.15);
 }
 
-/* Game card */
+/* Game card — fixed layout keeps score centred regardless of content */
 .game-card {
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: 10px;
     padding: 13px 16px;
     border-radius: 10px;
     border: 1px solid rgba(128,128,128,0.15);
     margin-bottom: 8px;
 }
+/* Each team block takes equal remaining space */
+.tm-block { display:flex; align-items:center; gap:10px; flex:1; min-width:0; }
+.tm-block.right { flex-direction:row-reverse; text-align:right; }
 
 /* Status chips */
 .chip-live  { color: rgb(255,75,75);   font-size:0.65rem; font-weight:700; }
@@ -263,7 +266,7 @@ if st.session_state.view == "calendar":
         games_by_date.setdefault(et_date_str(g["date"]), []).append(g)
 
     # ── Month navigation ──────────────────────────────────────────────────────
-    c1, c2, c3 = st.columns([1, 3, 1])
+    _, c1, c2, c3, _ = st.columns([2, 1, 3, 1, 2])
     with c1:
         if st.button("← Prev", use_container_width=True):
             m, y = st.session_state.cal_month - 1, st.session_state.cal_year
@@ -273,7 +276,7 @@ if st.session_state.view == "calendar":
     with c2:
         st.markdown(
             f"<div style='text-align:center;font-weight:700;font-size:1.05rem;"
-            f"padding-top:5px'>{MONTH_NAMES[month-1]} {year}</div>",
+            f"padding-top:4px'>{MONTH_NAMES[month-1]} {year}</div>",
             unsafe_allow_html=True,
         )
     with c3:
@@ -328,8 +331,8 @@ if st.session_state.view == "calendar":
                     # Game day → st.button (the button IS the cell)
                     # Label: day number on top line, game count on second line
                     n        = len(day_games)
-                    live_tag = "🔴 " if has_live else ""
-                    count    = f"{live_tag}{n} game{'s' if n > 1 else ''}"
+                    live_tag = "● " if has_live else ""
+                    count    = f"[{live_tag}{n} game{'s' if n > 1 else ''}]"
 
                     # Today accent via CSS — inject a unique style per date
                     today_style = ""
@@ -440,12 +443,12 @@ elif st.session_state.view == "day":
             chip = f'<span class="chip-sched">{et_time_str(g["date"])}</span>'
 
         score_html = (
-            f'<span style="font-size:1.3rem;font-weight:800;min-width:90px;'
-            f'display:inline-block;text-align:center">'
-            f'{away["score"]} – {home["score"]}</span>'
+            f'<div style="font-size:1.3rem;font-weight:800;width:110px;min-width:110px;'
+            f'text-align:center;flex-shrink:0">'
+            f'{away["score"]} – {home["score"]}</div>'
             if state != "pre" else
-            f'<span style="min-width:90px;display:inline-block;text-align:center">'
-            f'vs</span>'
+            f'<div style="width:110px;min-width:110px;flex-shrink:0;'
+            f'text-align:center;font-size:0.85rem;opacity:0.5">vs</div>'
         )
 
         al = (f'<img src="{away["logo"]}" style="width:36px;height:36px;object-fit:contain">'
@@ -457,23 +460,25 @@ elif st.session_state.view == "day":
         with c_card:
             st.markdown(f"""
             <div class="game-card">
-              <div style="display:flex;align-items:center;gap:10px;flex:1">
+              <div class="tm-block">
                 {al}
-                <div>
+                <div style="min-width:0">
                   <div style="font-weight:700;font-size:0.9rem">{away["abbr"]}</div>
                   <div style="font-size:0.63rem;opacity:0.45;margin-top:1px">{away["record"]}</div>
                 </div>
               </div>
               {score_html}
-              <div style="display:flex;align-items:center;gap:10px;flex:1;flex-direction:row-reverse">
+              <div class="tm-block right">
                 {hl}
-                <div style="text-align:right">
+                <div style="min-width:0">
                   <div style="font-weight:700;font-size:0.9rem">{home["abbr"]}</div>
                   <div style="font-size:0.63rem;opacity:0.45;margin-top:1px">{home["record"]}</div>
                 </div>
               </div>
               {chip}
-              <div style="font-size:0.62rem;opacity:0.3;min-width:80px;text-align:right">{g.get("venue","")}</div>
+              <div style="font-size:0.62rem;opacity:0.35;width:88px;min-width:88px;
+                          flex-shrink:0;text-align:right;line-height:1.35;
+                          white-space:normal;word-break:break-word">{g.get("venue","")}</div>
             </div>
             """, unsafe_allow_html=True)
         with c_btn:
