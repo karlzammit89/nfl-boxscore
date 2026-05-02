@@ -356,28 +356,26 @@ def get_pbp_by_quarter(game_id: str) -> dict[str, pd.DataFrame]:
 
 import re as _re
 
+# ESPN uses abbreviated names like D.Achane, T.Tagovailoa, B.St. Brown
+_NAME    = r'[A-Z][a-z]?\.(?:[A-Z][A-Za-z\'\-]+(?:\s+[A-Z][A-Za-z\'\-]+)?)'
 _PASS_RE = _re.compile(
-    r'^(?:\([^)]+\)\s+)?(.+?)\s+pass\s+(complete|incomplete)\s*(?:to\s+.+?\s+for\s+-?\d+\s+yards?)?',
-    _re.I
-)
-_PASS_YDS_RE = _re.compile(r'for\s+(-?\d+)\s+yards?', _re.I)
-_RUSH_RE = _re.compile(
-    r'^(?:\([^)]+\)\s+)?(.+?)\s+(?:rush(?:es)?|scrambles?|runs?)\s*(?:\w+\s+)*?for\s+(-?\d+)\s+yards?',
-    _re.I
-)
-_RECV_RE  = _re.compile(r'pass complete to\s+(.+?)\s+for\s+(-?\d+)\s+yards?', _re.I)
+    rf'^(?:\([^)]+\)\s+)?({_NAME})\s+pass\s+(complete|incomplete)', _re.I)
+_PASS_YDS = _re.compile(r'for\s+(-?\d+)\s+yards?', _re.I)
+_RECV_RE  = _re.compile(
+    rf'pass complete to\s+({_NAME})\s+for\s+(-?\d+)\s+yards?', _re.I)
+_RUSH_RE  = _re.compile(
+    rf'^(?:\([^)]+\)\s+)?({_NAME})\s+(?:up the middle|left end|right end|'
+    r'left tackle|right tackle|left guard|right guard|rushes?|scrambles?)', _re.I)
+_RUSH_YDS = _re.compile(r'for\s+(-?\d+)\s+yards?', _re.I)
 _TD_RE    = _re.compile(r'touchdown', _re.I)
-_INT_RE   = _re.compile(r'(?:is\s+)?intercepted(?:\s+by\s+\S+)?', _re.I)
-_SACK_RE  = _re.compile(r'sacked', _re.I)
+_INT_RE   = _re.compile(r'intercepted', _re.I)
 
 
 def get_player_stats_by_period(game_id: str) -> dict:
     """
     Build true per-quarter and per-half player stat tables by parsing
-    play description text from ESPN's drives/plays data.
-
-    Returns dict keyed by period label (Q1, Q2, 1H, Q3, Q4, 2H, OT1, Full Game).
-    Each value: { 'passing': df, 'rushing': df, 'receiving': df }
+    ESPN play text from drives/plays.  ESPN stores play text in the
+    'text' field (NOT 'description') using abbreviated names (D.Achane).
     """
     from collections import defaultdict
 
@@ -389,19 +387,19 @@ def get_player_stats_by_period(game_id: str) -> dict:
     if not drives:
         return {}
 
-    prev_drives    = drives.get("previous", [])
-    current_drive  = drives.get("current")
-    all_drives     = prev_drives + ([current_drive] if current_drive else [])
+    prev_drives   = drives.get("previous", [])
+    current_drive = drives.get("current")
+    all_drives    = prev_drives + ([current_drive] if current_drive else [])
 
     if not all_drives:
         return {}
 
-    # Accumulators: period (int) → player_name → stat dict
-    def new_pass(): return {"Team":"","comp":0,"att":0,"yds":0,"td":0,"int":0}
-    def new_rush(): return {"Team":"","car":0,"yds":0,"td":0}
-    def new_recv(): return {"Team":"","rec":0,"yds":0,"td":0}
+    def new_pass(): return {"Team": "", "comp": 0, "att": 0, "yds": 0, "td": 0, "int": 0}
+    def new_rush(): return {"Team": "", "car": 0, "yds": 0, "td": 0}
+    def new_recv(): return {"Team": "", "rec": 0, "yds": 0, "td": 0}
 
-    passing   = defaultdict(lambda: defaultdict(new_pass))   # [period][name]
+    # period (int) -> player_name -> stat dict
+    passing   = defaultdict(lambda: defaultdict(new_pass))
     rushing   = defaultdict(lambda: defaultdict(new_rush))
     receiving = defaultdict(lambda: defaultdict(new_recv))
 
@@ -413,109 +411,95 @@ def get_player_stats_by_period(game_id: str) -> dict:
             period = _safe_int(play.get("period", {}).get("number", 0))
             if period == 0:
                 continue
-            desc = play.get("description", "")
-            if not desc:
+
+            # ESPN uses 'text' field, not 'description'
+            text = play.get("text", "") or play.get("description", "")
+            if not text:
                 continue
 
-            is_td   = bool(_TD_RE.search(desc))
-            is_int  = bool(_INT_RE.search(desc))
+            is_td  = bool(_TD_RE.search(text))
+            is_int = bool(_INT_RE.search(text))
 
-            # ── Passing ──────────────────────────────────────────────────────
-            pm = _PASS_RE.match(desc)
+            # ── Passing ──────────────────────────────────────────────────
+            pm = _PASS_RE.match(text)
             if pm:
-                passer = pm.group(1).strip()
+                passer   = pm.group(1).strip()
                 complete = pm.group(2).lower() == "complete"
                 d = passing[period][passer]
-                d["Team"] = team
+                d["Team"]  = team
                 d["att"]  += 1
                 if complete:
                     d["comp"] += 1
-                    ym = _PASS_YDS_RE.search(desc)
+                    ym = _PASS_YDS.search(text)
                     d["yds"] += _safe_int(ym.group(1)) if ym else 0
-                if is_td and complete:
-                    d["td"] += 1
+                    if is_td:
+                        d["td"] += 1
                 if is_int:
                     d["int"] += 1
 
-                # ── Receiving (from same play) ────────────────────────────
-                rvm = _RECV_RE.search(desc)
-                if rvm and complete:
-                    receiver = rvm.group(1).strip()
-                    # Remove trailing possessive/comma artifacts
-                    receiver = receiver.split(",")[0].strip()
-                    rd = receiving[period][receiver]
-                    rd["Team"] = team
-                    rd["rec"] += 1
-                    rd["yds"] += _safe_int(rvm.group(2))
-                    if is_td:
-                        rd["td"] += 1
+                # ── Receiving (from same play) ────────────────────────
+                if complete:
+                    rvm = _RECV_RE.search(text)
+                    if rvm:
+                        receiver = rvm.group(1).strip()
+                        rd = receiving[period][receiver]
+                        rd["Team"]  = team
+                        rd["rec"]  += 1
+                        rd["yds"]  += _safe_int(rvm.group(2))
+                        if is_td:
+                            rd["td"] += 1
                 continue
 
-            # ── Rushing ──────────────────────────────────────────────────────
-            rm = _RUSH_RE.match(desc)
+            # ── Rushing ──────────────────────────────────────────────────
+            rm = _RUSH_RE.match(text)
             if rm:
                 rusher = rm.group(1).strip()
-                yards  = _safe_int(rm.group(2))
+                ym = _RUSH_YDS.search(text)
+                yards  = _safe_int(ym.group(1)) if ym else 0
                 d = rushing[period][rusher]
-                d["Team"] = team
-                d["car"] += 1
-                d["yds"] += yards
+                d["Team"]  = team
+                d["car"]  += 1
+                d["yds"]  += yards
                 if is_td:
                     d["td"] += 1
 
-    # ── Build DataFrames ──────────────────────────────────────────────────────
+    # ── DataFrame builders ────────────────────────────────────────────────────
 
-    def to_pass_df(acc: dict) -> pd.DataFrame:
-        rows = []
-        for name, d in acc.items():
-            if d["att"] == 0:
-                continue
-            rows.append({
-                "Player": name, "Team": d["Team"],
-                "C/ATT": f"{d['comp']}/{d['att']}",
-                "YDS":   d["yds"], "TD": d["td"], "INT": d["int"],
-            })
+    def to_pass_df(acc):
+        rows = [{"Player": n, "Team": d["Team"],
+                 "C/ATT": f"{d['comp']}/{d['att']}",
+                 "YDS": d["yds"], "TD": d["td"], "INT": d["int"]}
+                for n, d in acc.items() if d["att"] > 0]
         if not rows:
             return pd.DataFrame()
         return pd.DataFrame(rows).sort_values("YDS", ascending=False).reset_index(drop=True)
 
-    def to_rush_df(acc: dict) -> pd.DataFrame:
-        rows = []
-        for name, d in acc.items():
-            if d["car"] == 0:
-                continue
-            rows.append({
-                "Player": name, "Team": d["Team"],
-                "CAR": d["car"], "YDS": d["yds"], "TD": d["td"],
-            })
+    def to_rush_df(acc):
+        rows = [{"Player": n, "Team": d["Team"],
+                 "CAR": d["car"], "YDS": d["yds"], "TD": d["td"]}
+                for n, d in acc.items() if d["car"] > 0]
         if not rows:
             return pd.DataFrame()
         return pd.DataFrame(rows).sort_values("YDS", ascending=False).reset_index(drop=True)
 
-    def to_recv_df(acc: dict) -> pd.DataFrame:
-        rows = []
-        for name, d in acc.items():
-            if d["rec"] == 0:
-                continue
-            rows.append({
-                "Player": name, "Team": d["Team"],
-                "REC": d["rec"], "YDS": d["yds"], "TD": d["td"],
-            })
+    def to_recv_df(acc):
+        rows = [{"Player": n, "Team": d["Team"],
+                 "REC": d["rec"], "YDS": d["yds"], "TD": d["td"]}
+                for n, d in acc.items() if d["rec"] > 0]
         if not rows:
             return pd.DataFrame()
         return pd.DataFrame(rows).sort_values("YDS", ascending=False).reset_index(drop=True)
 
-    def merge(acc_dict, periods):
-        """Merge multiple period accumulators into one."""
-        merged = defaultdict(lambda: {"Team":"","comp":0,"att":0,"yds":0,"td":0,"int":0,
-                                       "car":0,"rec":0})
+    def merge_acc(base, periods, factory):
+        from collections import defaultdict
+        merged = defaultdict(factory)
         for p in periods:
-            for name, d in acc_dict[p].items():
-                for k, v in d.items():
-                    if k == "Team":
-                        merged[name]["Team"] = v
-                    else:
-                        merged[name][k] = merged[name].get(k, 0) + v
+            for name, d in base[p].items():
+                m = merged[name]
+                m["Team"] = d["Team"]
+                for k in d:
+                    if k != "Team":
+                        m[k] = m.get(k, 0) + d[k]
         return merged
 
     all_periods = sorted(set(
@@ -539,28 +523,31 @@ def get_player_stats_by_period(game_id: str) -> dict:
     ot = [p for p in all_periods if p > 4]
 
     if h1:
-        mp = merge(passing, h1); mr = merge(rushing, h1); mrv = merge(receiving, h1)
-        result["1H"] = {"passing": to_pass_df(mp), "rushing": to_rush_df(mr),
-                         "receiving": to_recv_df(mrv)}
+        result["1H"] = {
+            "passing":   to_pass_df(merge_acc(passing,   h1, new_pass)),
+            "rushing":   to_rush_df(merge_acc(rushing,   h1, new_rush)),
+            "receiving": to_recv_df(merge_acc(receiving, h1, new_recv)),
+        }
     if h2:
-        mp = merge(passing, h2); mr = merge(rushing, h2); mrv = merge(receiving, h2)
-        result["2H"] = {"passing": to_pass_df(mp), "rushing": to_rush_df(mr),
-                         "receiving": to_recv_df(mrv)}
+        result["2H"] = {
+            "passing":   to_pass_df(merge_acc(passing,   h2, new_pass)),
+            "rushing":   to_rush_df(merge_acc(rushing,   h2, new_rush)),
+            "receiving": to_recv_df(merge_acc(receiving, h2, new_recv)),
+        }
     for ot_p in ot:
-        label = _quarter_label(ot_p)
-        if label not in result:
-            result[label] = {"passing": to_pass_df(passing[ot_p]),
-                              "rushing": to_rush_df(rushing[ot_p]),
-                              "receiving": to_recv_df(receiving[ot_p])}
+        lbl = _quarter_label(ot_p)
+        if lbl not in result:
+            result[lbl] = {
+                "passing":   to_pass_df(passing[ot_p]),
+                "rushing":   to_rush_df(rushing[ot_p]),
+                "receiving": to_recv_df(receiving[ot_p]),
+            }
 
     # Full game
-    mp  = merge(passing,   all_periods)
-    mr  = merge(rushing,   all_periods)
-    mrv = merge(receiving, all_periods)
     result["Full Game"] = {
-        "passing":   to_pass_df(mp),
-        "rushing":   to_rush_df(mr),
-        "receiving": to_recv_df(mrv),
+        "passing":   to_pass_df(merge_acc(passing,   all_periods, new_pass)),
+        "rushing":   to_rush_df(merge_acc(rushing,   all_periods, new_rush)),
+        "receiving": to_recv_df(merge_acc(receiving, all_periods, new_recv)),
     }
 
     return result
