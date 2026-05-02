@@ -74,14 +74,17 @@ html, body, * { font-family: 'Inter', system-ui, sans-serif; }
     display: flex;
     align-items: center;
     gap: 14px;
-    padding: 16px 22px;
+    padding: 18px 24px;
     background: #1a1a2e;
     border-radius: 12px;
     margin-bottom: 22px;
-    border-bottom: 3px solid #e63946;
+    border-left: 5px solid #e63946;
+    box-sizing: border-box;
+    width: 100%;
+    overflow: hidden;
 }
-.app-header .title { font-size: 1.35rem; font-weight: 800; color: #ffffff; letter-spacing: -0.3px; }
-.app-header .sub   { font-size: 0.73rem; color: #8899aa; margin-top: 2px; }
+.app-header .title { font-size: 1.3rem; font-weight: 800; color: #ffffff; letter-spacing: -0.3px; white-space: nowrap; }
+.app-header .sub   { font-size: 0.72rem; color: #8899aa; margin-top: 3px; white-space: nowrap; }
 
 /* ─── SECTION LABEL ──────────────────────────────── */
 .sec-label {
@@ -100,7 +103,7 @@ html, body, * { font-family: 'Inter', system-ui, sans-serif; }
     text-align: center;
     font-size: 1.15rem;
     font-weight: 800;
-    color: #1a1a2e;
+    color: var(--text-color, #1a1a2e);
     padding-top: 4px;
     letter-spacing: -0.3px;
 }
@@ -116,14 +119,14 @@ html, body, * { font-family: 'Inter', system-ui, sans-serif; }
     padding: 4px 0 10px;
 }
 
-/* Base cell — matches page background, visible border */
+/* Base cell — transparent bg inherits page, visible border both modes */
 .cal-cell {
     min-height: 72px;
     border-radius: 10px;
     padding: 9px 10px;
-    border: 1.5px solid #dde1e9;
-    background: var(--background-color, #ffffff);
-    color: #c0c8d8;
+    border: 1.5px solid rgba(128,128,128,0.25);
+    background: var(--secondary-background-color);
+    color: rgba(128,128,128,0.6);
     font-size: 0.74rem;
     font-weight: 600;
     position: relative;
@@ -137,8 +140,8 @@ html, body, * { font-family: 'Inter', system-ui, sans-serif; }
 /* Days with games — clickable, visually distinct */
 .cal-cell.active {
     border-color: #2563eb;
-    background: var(--background-color, #ffffff);
-    color: #1e40af;
+    background: var(--secondary-background-color);
+    color: #2563eb;
     cursor: pointer;
     transition: border-color .15s, box-shadow .15s, transform .1s;
 }
@@ -149,8 +152,8 @@ html, body, * { font-family: 'Inter', system-ui, sans-serif; }
 }
 .cal-cell.today {
     border-color: #e63946 !important;
-    background: var(--background-color, #ffffff) !important;
-    color: #c01124 !important;
+    background: var(--secondary-background-color) !important;
+    color: #e63946 !important;
 }
 .cal-cell.today.active {
     cursor: pointer;
@@ -316,8 +319,8 @@ MONTH_NAMES = ["January","February","March","April","May","June",
 
 st.markdown("""
 <div class="app-header">
-  <span style="font-size:1.8rem">🏈</span>
-  <div>
+  <span style="font-size:1.6rem;flex-shrink:0;line-height:1">🏈</span>
+  <div style="min-width:0">
     <div class="title">NFL Box Scores</div>
     <div class="sub">Live stats · Quarter &amp; half splits · All times Eastern</div>
   </div>
