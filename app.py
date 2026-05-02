@@ -58,243 +58,125 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ── CSS ───────────────────────────────────────────────────────────────────────
+# ── CSS — structural only, zero color overrides ───────────────────────────────
 
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-
 [data-testid="stSidebar"]        { display: none; }
 [data-testid="collapsedControl"] { display: none; }
 .block-container { padding-top: 1.2rem !important; max-width: 1100px; }
-html, body, * { font-family: 'Inter', system-ui, sans-serif; }
 
-/* ─── HEADER ─────────────────────────────────────── */
-.app-header {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 18px 24px;
-    background: #1a1a2e;
-    border-radius: 12px;
-    margin-bottom: 22px;
-    border-left: 5px solid #e63946;
-    box-sizing: border-box;
-    width: 100%;
-    overflow: hidden;
+/* Calendar grid — layout only */
+.cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+    margin-bottom: 4px;
 }
-.app-header .title { font-size: 1.3rem; font-weight: 800; color: #ffffff; letter-spacing: -0.3px; white-space: nowrap; }
-.app-header .sub   { font-size: 0.72rem; color: #8899aa; margin-top: 3px; white-space: nowrap; }
-
-/* ─── SECTION LABEL ──────────────────────────────── */
-.sec-label {
-    font-size: 0.63rem;
-    font-weight: 700;
-    letter-spacing: 2.5px;
-    text-transform: uppercase;
-    color: #8899aa;
-    margin-bottom: 10px;
-    padding-bottom: 7px;
-    border-bottom: 2px solid #eef0f4;
-}
-
-/* ─── MONTH TITLE ────────────────────────────────── */
-.month-title {
-    text-align: center;
-    font-size: 1.15rem;
-    font-weight: 800;
-    color: inherit;
-    padding-top: 4px;
-    letter-spacing: -0.3px;
-}
-
-/* ─── CALENDAR ───────────────────────────────────── */
-.dow-label {
+.dow-lbl {
     text-align: center;
     font-size: 0.6rem;
     font-weight: 700;
-    letter-spacing: 2px;
+    letter-spacing: 1.8px;
     text-transform: uppercase;
-    color: #8899aa;
-    padding: 4px 0 10px;
+    opacity: 0.4;
+    padding: 2px 0 8px;
 }
-
-/* Base cell — transparent bg inherits page, visible border both modes */
-.cal-cell {
-    min-height: 72px;
-    border-radius: 10px;
-    padding: 9px 10px;
-    border: 1.5px solid rgba(128,128,128,0.25);
-    background: var(--secondary-background-color);
-    color: rgba(128,128,128,0.6);
-    font-size: 0.74rem;
+/* Day cell — identical structure for all days */
+.cal-day {
+    min-height: 70px;
+    border-radius: 8px;
+    border: 1px solid rgba(128,128,128,0.15);
+    padding: 8px 9px;
+    font-size: 0.73rem;
     font-weight: 600;
+    opacity: 0.4;
     position: relative;
-    user-select: none;
+    box-sizing: border-box;
 }
-.cal-cell.empty {
-    border-color: transparent;
-    background: transparent;
+/* Game days — slightly more visible border, full opacity, pointer */
+.cal-day.has-g {
+    opacity: 1;
+    border-color: rgba(128,128,128,0.35);
+}
+/* Today — red border accent only */
+.cal-day.today {
+    border-color: rgba(255, 75, 75, 0.7) !important;
+    opacity: 1;
+}
+.cal-day.today .dn { color: rgb(255, 75, 75); }
+.cal-day.empty {
+    border-color: transparent !important;
+    opacity: 0;
     pointer-events: none;
 }
-/* Days with games — clickable, visually distinct */
-.cal-cell.active {
-    border-color: #2563eb;
-    background: var(--secondary-background-color);
-    color: #2563eb;
-    cursor: pointer;
-    transition: border-color .15s, box-shadow .15s, transform .1s;
-}
-.cal-cell.active:hover {
-    border-color: #1d4ed8;
-    box-shadow: 0 4px 14px rgba(37,99,235,0.18);
-    transform: translateY(-1px);
-}
-.cal-cell.today {
-    border-color: #e63946 !important;
-    background: var(--secondary-background-color) !important;
-    color: #e63946 !important;
-}
-.cal-cell.today.active {
-    cursor: pointer;
-}
-
-/* Game count pill — pinned bottom-right so it never overlaps the day number */
-.game-pip {
+/* Game count pip — bottom right, clear of day number */
+.gpip {
     position: absolute;
-    bottom: 8px;
-    right: 8px;
-    display: inline-flex;
+    bottom: 7px;
+    right: 7px;
+    font-size: 0.58rem;
+    font-weight: 600;
+    opacity: 0.65;
+    display: flex;
     align-items: center;
-    gap: 4px;
-    font-size: 0.6rem;
-    font-weight: 700;
-    color: #2563eb;
-    background: #dbeafe;
-    border-radius: 6px;
-    padding: 2px 7px;
+    gap: 3px;
 }
-.cal-cell.today .game-pip { background: #fecdd3; color: #be123c; }
-
-/* Live pulse dot */
-.pip-dot {
-    width: 6px; height: 6px;
+.ldot {
+    width: 5px; height: 5px;
     border-radius: 50%;
-    background: #e63946;
+    background: rgb(255, 75, 75);
     flex-shrink: 0;
     animation: blink 1.3s infinite;
 }
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
 
-/* ─── LEGEND ─────────────────────────────────────── */
-.cal-legend {
+/* Score banner — layout only */
+.score-banner {
+    border-radius: 10px;
+    padding: 20px 26px;
+    margin-bottom: 16px;
     display: flex;
-    gap: 18px;
-    font-size: 0.67rem;
-    color: #8899aa;
-    margin-top: 12px;
     align-items: center;
-}
-.l-sw {
-    display: inline-block;
-    width: 10px; height: 10px;
-    border-radius: 3px;
-    margin-right: 5px;
-    vertical-align: middle;
+    justify-content: space-between;
+    border: 1px solid rgba(128,128,128,0.15);
 }
 
-/* ─── NAV BUTTONS ────────────────────────────────── */
-div[data-testid="stButton"] > button {
-    background: #1a1a2e;
-    color: #ffffff;
-    border: none;
-    border-radius: 8px;
-    font-size: 0.78rem;
-    font-weight: 600;
-    padding: 7px 0;
-    width: 100%;
-    transition: background .15s, transform .1s;
-    letter-spacing: 0.2px;
-}
-div[data-testid="stButton"] > button:hover {
-    background: #2563eb;
-    transform: translateY(-1px);
-}
-
-/* ─── GAME CARD (day view) ───────────────────────── */
+/* Game card */
 .game-card {
     display: flex;
     align-items: center;
     gap: 14px;
-    padding: 14px 18px;
-    background: #ffffff;
-    border: 1.5px solid #e8eaf0;
-    border-radius: 12px;
-    margin-bottom: 10px;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-    transition: border-color .15s, box-shadow .15s;
-}
-.game-card:hover { border-color: #2563eb; box-shadow: 0 3px 12px rgba(37,99,235,0.1); }
-
-.team-name  { font-weight: 700; font-size: 0.92rem; color: #1a1a2e; }
-.team-rec   { font-size: 0.65rem; color: #8899aa; margin-top: 2px; }
-.game-score { font-size: 1.4rem; font-weight: 800; color: #1a1a2e; min-width: 90px; text-align: center; letter-spacing: -0.5px; }
-.game-time  { font-size: 0.75rem; color: #2563eb; font-weight: 600; min-width: 90px; text-align: center; }
-.venue-txt  { font-size: 0.63rem; color: #b0bac8; text-align: right; flex: 1; }
-
-.s-tag   { font-size: 0.61rem; font-weight: 700; letter-spacing: 0.6px;
-            text-transform: uppercase; padding: 4px 10px; border-radius: 6px; white-space: nowrap; }
-.s-live  { background: #fef2f2; color: #dc2626; border: 1.5px solid #fca5a5; }
-.s-final { background: #f1f5f9; color: #475569; border: 1.5px solid #cbd5e1; }
-.s-sched { background: #eff6ff; color: #2563eb; border: 1.5px solid #93c5fd; }
-
-/* ─── SCORE BANNER ───────────────────────────────── */
-.score-banner {
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-    color: #ffffff;
-    border-radius: 14px;
-    padding: 22px 30px;
-    margin-bottom: 20px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    box-shadow: 0 4px 20px rgba(26,26,46,0.22);
-}
-.bn-name  { font-size: 1.1rem; font-weight: 700; color: #ffffff; }
-.bn-rec   { font-size: 0.68rem; color: #667788; margin-top: 3px; }
-.bn-score { font-size: 3rem; font-weight: 800; color: #ffffff; letter-spacing: -2px; }
-.bn-sep   { font-size: 1.3rem; color: #334455; padding: 0 10px; }
-.bn-st    { font-size: 0.63rem; font-weight: 700; letter-spacing: 0.7px;
-             text-transform: uppercase; padding: 4px 10px; border-radius: 6px; display: inline-block; }
-.bn-live  { background: #dc2626; color: #fff; }
-.bn-final { background: #334455; color: #8899aa; }
-.bn-pre   { background: #1e3a5f; color: #60a5fa; }
-.bn-venue { font-size: 0.67rem; color: #445566; margin-top: 6px; }
-
-/* ─── PERIOD FILTER ──────────────────────────────── */
-.stRadio > div { flex-direction: row; gap: 7px; flex-wrap: wrap; }
-.stRadio > div > label {
-    background: #f1f5f9;
-    border: 1.5px solid #e2e8f0;
-    border-radius: 8px;
-    padding: 5px 15px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: #334155;
-    cursor: pointer;
+    padding: 13px 16px;
+    border-radius: 10px;
+    border: 1px solid rgba(128,128,128,0.15);
+    margin-bottom: 8px;
 }
 
-/* ─── TABS ───────────────────────────────────────── */
-.stTabs [data-baseweb="tab"] { font-size: 0.82rem; font-weight: 600; }
+/* Status chips */
+.chip-live  { color: rgb(255,75,75);   font-size:0.65rem; font-weight:700; }
+.chip-final { opacity: 0.55;            font-size:0.65rem; font-weight:700; }
+.chip-sched { color: rgb(100,160,255); font-size:0.65rem; font-weight:700; }
 
-/* ─── PERIOD NOTE ────────────────────────────────── */
+/* Period note */
 .period-note {
-    background: #fffbeb;
-    border-left: 3px solid #f59e0b;
-    padding: 7px 12px;
+    border-left: 3px solid rgba(245,158,11,0.7);
+    padding: 5px 10px;
     font-size: 0.75rem;
-    color: #78716c;
-    border-radius: 0 7px 7px 0;
+    opacity: 0.7;
+    border-radius: 0 5px 5px 0;
+    margin-bottom: 8px;
+}
+
+/* Section divider label */
+.sec-div {
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    opacity: 0.4;
+    padding-bottom: 6px;
+    border-bottom: 1px solid rgba(128,128,128,0.15);
     margin-bottom: 10px;
 }
 </style>
@@ -319,15 +201,9 @@ MONTH_NAMES = ["January","February","March","April","May","June",
 
 # ── Header ────────────────────────────────────────────────────────────────────
 
-st.markdown("""
-<div class="app-header">
-  <span style="font-size:1.6rem;flex-shrink:0;line-height:1">🏈</span>
-  <div style="min-width:0">
-    <div class="title">NFL Box Scores</div>
-    <div class="sub">Live stats · Quarter &amp; half splits · All times Eastern</div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
+st.markdown("## 🏈 NFL Box Scores")
+st.caption("Live stats · Quarter & half splits · All times Eastern")
+st.divider()
 
 # ── Data loaders ──────────────────────────────────────────────────────────────
 
@@ -340,8 +216,7 @@ def _fetch_week(week: int, season_type: int) -> list:
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_games_for_month(year: int, month: int) -> list:
-    all_games: list = []
-    seen_ids:  set  = set()
+    all_games, seen_ids = [], set()
     for season_type, weeks in [(2, range(1,23)), (3, range(1,6)), (1, range(0,5))]:
         for week in weeks:
             for g in _fetch_week(int(week), season_type):
@@ -387,7 +262,7 @@ if st.session_state.view == "calendar":
     for g in month_games:
         games_by_date.setdefault(et_date_str(g["date"]), []).append(g)
 
-    # ── Navigation ────────────────────────────────────────────────────────────
+    # ── Month navigation ──────────────────────────────────────────────────────
     c1, c2, c3 = st.columns([1, 3, 1])
     with c1:
         if st.button("← Prev", use_container_width=True):
@@ -396,9 +271,9 @@ if st.session_state.view == "calendar":
             st.session_state.cal_month, st.session_state.cal_year = m, y
             st.rerun()
     with c2:
-        # Fix 4: strong dark colour so month title is clearly visible
         st.markdown(
-            f"<div class='month-title'>{MONTH_NAMES[month-1]} {year}</div>",
+            f"<div style='text-align:center;font-weight:700;font-size:1.05rem;"
+            f"padding-top:5px'>{MONTH_NAMES[month-1]} {year}</div>",
             unsafe_allow_html=True,
         )
     with c3:
@@ -408,164 +283,115 @@ if st.session_state.view == "calendar":
             st.session_state.cal_month, st.session_state.cal_year = m, y
             st.rerun()
 
-    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+    # Day-of-week header row
+    st.markdown(
+        "<div class='cal-grid'>" +
+        "".join(f"<div class='dow-lbl'>{d}</div>"
+                for d in ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]) +
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
-    # Day-of-week headers
-    for col, d in zip(st.columns(7), ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]):
-        with col:
-            st.markdown(f"<div class='dow-label'>{d}</div>", unsafe_allow_html=True)
+    # ── Calendar grid ─────────────────────────────────────────────────────────
+    # The ONLY reliable way to make cells clickable in Streamlit without JS
+    # is to use st.button inside st.columns. We render each game-day cell as
+    # a styled st.button so it IS the interactive element — no overlay needed.
+    # Non-game days and empty cells are plain st.markdown divs.
+    #
+    # The button label contains the day number + game count, styled via CSS
+    # that targets ONLY buttons with the key prefix "cal_YYYY-MM-DD".
 
-    # Build grid cells — all days render as identical divs.
-    # Game days get a small pip badge + a clickable link via st.query_params.
-    # We use a single components.html block to render the full interactive
-    # calendar, passing games data as JSON. Clicking a day sets ?sel_date=
-    # which Streamlit picks up below.
     today_str   = et_now().date().isoformat()
     first_dow   = (date(year, month, 1).weekday() + 1) % 7
     days_in_mon = cal_mod.monthrange(year, month)[1]
+    cells       = [None] * first_dow + list(range(1, days_in_mon + 1))
+    while len(cells) % 7:
+        cells.append(None)
 
-    # Build per-date data for the calendar
-    cal_days_data = {}
-    for ds_key, dg in games_by_date.items():
-        cal_days_data[ds_key] = {
-            "count":    len(dg),
-            "has_live": any(g["status_state"] == "in" for g in dg),
-        }
+    for row_start in range(0, len(cells), 7):
+        cols = st.columns(7)
+        for ci, day in enumerate(cells[row_start:row_start + 7]):
+            with cols[ci]:
+                if day is None:
+                    # Empty cell — pure HTML, no interactivity
+                    st.markdown("<div class='cal-day empty'></div>",
+                                unsafe_allow_html=True)
+                    continue
 
-    import json as _json
-    import streamlit.components.v1 as _components
+                ds        = f"{year}-{month:02d}-{day:02d}"
+                day_games = games_by_date.get(ds, [])
+                has_games = bool(day_games)
+                is_today  = ds == today_str
+                has_live  = any(g["status_state"] == "in" for g in day_games)
 
-    cal_html = f"""
-<style>
-* {{ box-sizing: border-box; margin: 0; padding: 0; font-family: inherit; }}
-body {{ background: transparent; }}
-.grid {{
-    display: grid;
-    grid-template-columns: repeat(7, 1fr);
-    gap: 4px;
-}}
-.cell {{
-    min-height: 72px;
-    border-radius: 10px;
-    border: 1.5px solid rgba(128,128,128,0.25);
-    background: var(--secondary-background-color, #1e1e2e);
-    padding: 9px 10px;
-    font-size: 0.74rem;
-    font-weight: 600;
-    color: rgba(160,160,180,0.6);
-    position: relative;
-    user-select: none;
-    transition: border-color .15s, box-shadow .15s, transform .12s;
-}}
-.cell.empty {{
-    border-color: transparent;
-    background: transparent;
-}}
-.cell.active {{
-    border-color: rgba(128,128,128,0.35);
-    color: inherit;
-    cursor: pointer;
-}}
-.cell.active:hover {{
-    border-color: #2563eb;
-    box-shadow: 0 3px 12px rgba(37,99,235,0.15);
-    transform: translateY(-1px);
-}}
-.cell.today {{
-    border-color: #e63946 !important;
-}}
-.cell.today .day-num {{ color: #e63946 !important; }}
-.day-num {{ font-size: 0.74rem; font-weight: 600; }}
-.pip {{
-    position: absolute;
-    bottom: 8px;
-    right: 8px;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 0.6rem;
-    font-weight: 700;
-    color: #2563eb;
-    background: rgba(37,99,235,0.12);
-    border-radius: 5px;
-    padding: 2px 6px;
-}}
-.cell.today .pip {{ color: #e63946; background: rgba(230,57,70,0.12); }}
-.dot {{
-    width: 5px; height: 5px;
-    border-radius: 50%;
-    background: #e63946;
-    flex-shrink: 0;
-    animation: blink 1.3s infinite;
-}}
-@keyframes blink {{ 0%,100%{{opacity:1}} 50%{{opacity:.2}} }}
-</style>
+                if has_games:
+                    # Game day → st.button (the button IS the cell)
+                    # Label: day number on top line, game count on second line
+                    n        = len(day_games)
+                    live_tag = "🔴 " if has_live else ""
+                    count    = f"{live_tag}{n} game{'s' if n > 1 else ''}"
 
-<div class="grid" id="cal"></div>
+                    # Today accent via CSS — inject a unique style per date
+                    today_style = ""
+                    if is_today:
+                        today_style = f"""
+                        <style>
+                        [data-testid="stButton"] > button[data-key="cal_{ds}"] {{
+                            border-color: rgb(255,75,75) !important;
+                        }}
+                        </style>"""
+                        st.markdown(today_style, unsafe_allow_html=True)
 
-<script>
-const DATA  = {_json.dumps(cal_days_data)};
-const TODAY = '{today_str}';
-const FDOW  = {first_dow};
-const DAYS  = {days_in_mon};
-const YEAR  = '{year}';
-const MON   = '{month:02d}';
+                    if st.button(
+                        f"{day}\n{count}",
+                        key=f"cal_{ds}",
+                        use_container_width=True,
+                    ):
+                        st.session_state.selected_date       = ds
+                        st.session_state.selected_date_games = day_games
+                        st.session_state.view = "day"
+                        st.rerun()
 
-function pad(n) {{ return String(n).padStart(2,'0'); }}
+                else:
+                    # No games — static cell, dimmed
+                    today_cls = " today" if is_today else ""
+                    st.markdown(
+                        f"<div class='cal-day{today_cls}'>"
+                        f"<div class='dn'>{day}</div></div>",
+                        unsafe_allow_html=True,
+                    )
 
-const grid = document.getElementById('cal');
+    # Style the calendar day buttons to look like cells —
+    # match height, left-align text, remove default button styling.
+    # This scopes to buttons whose key starts with "cal_" via attribute.
+    st.markdown("""
+    <style>
+    /* Style game-day buttons to look like calendar cells */
+    [data-testid="stBaseButton-secondary"] {
+        min-height: 70px !important;
+        height: 70px !important;
+        padding: 8px 9px !important;
+        border-radius: 8px !important;
+        text-align: left !important;
+        align-items: flex-start !important;
+        justify-content: flex-start !important;
+        font-size: 0.73rem !important;
+        font-weight: 600 !important;
+        line-height: 1.4 !important;
+        white-space: pre-line !important;
+        border: 1px solid rgba(128,128,128,0.35) !important;
+        background: transparent !important;
+    }
+    [data-testid="stBaseButton-secondary"]:hover {
+        border-color: rgba(128,128,128,0.6) !important;
+        background: rgba(128,128,128,0.05) !important;
+    }
+    /* Do NOT target stBaseButton-primary — those are the nav buttons */
+    </style>
+    """, unsafe_allow_html=True)
 
-// Empty leading cells
-for (let i = 0; i < FDOW; i++) {{
-    const e = document.createElement('div');
-    e.className = 'cell empty';
-    grid.appendChild(e);
-}}
-
-// Day cells
-for (let d = 1; d <= DAYS; d++) {{
-    const ds   = YEAR + '-' + MON + '-' + pad(d);
-    const info = DATA[ds];
-    const cell = document.createElement('div');
-
-    let cls = 'cell';
-    if (ds === TODAY) cls += ' today';
-    if (info)         cls += ' active';
-    cell.className = cls;
-
-    let html = '<div class="day-num">' + d + '</div>';
-    if (info) {{
-        const dot = info.has_live ? '<span class="dot"></span>' : '';
-        const n   = info.count;
-        html += '<div class="pip">' + dot + n + ' game' + (n > 1 ? 's' : '') + '</div>';
-        cell.onclick = function() {{
-            const url = new URL(window.parent.location.href);
-            url.searchParams.set('sel_date', ds);
-            window.parent.location.href = url.toString();
-        }};
-    }}
-    cell.innerHTML = html;
-    grid.appendChild(cell);
-}}
-</script>
-"""
-
-    _components.html(cal_html, height=days_in_mon > 28 and 420 or 380, scrolling=False)
-
-    # Handle date click via query params
-    _qp = st.query_params
-    if "sel_date" in _qp:
-        _ds    = _qp["sel_date"]
-        _games = games_by_date.get(_ds, [])
-        if _games:
-            st.session_state.selected_date       = _ds
-            st.session_state.selected_date_games = _games
-            st.session_state.view = "day"
-            st.query_params.clear()
-            st.rerun()
-        else:
-            st.query_params.clear()
-
+    # Legend
+    st.caption("Cells with text = has games  ·  🔴 = live game  ·  Red border = today")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -587,17 +413,15 @@ elif st.session_state.view == "day":
     except Exception:
         date_label = ds
 
-    # Fix 2: back button only, no breadcrumb text beside it
-    b_col, _ = st.columns([1.4, 8])
-    with b_col:
+    b1, _ = st.columns([1.5, 8])
+    with b1:
         if st.button("← Calendar", use_container_width=True):
             st.session_state.view = "calendar"
             st.rerun()
 
     st.markdown(
-        f'<div class="sec-label" style="margin-top:14px">'
-        f'{date_label} &nbsp;·&nbsp; {len(games)} game{"s" if len(games)>1 else ""}'
-        f'</div>',
+        f"<div class='sec-div' style='margin-top:12px'>"
+        f"{date_label} · {len(games)} game{'s' if len(games)>1 else ''}</div>",
         unsafe_allow_html=True,
     )
 
@@ -609,19 +433,25 @@ elif st.session_state.view == "day":
         state = g["status_state"]
 
         if state == "in":
-            tag = f'<span class="s-tag s-live">● Live · Q{g["period"]}</span>'
+            chip = f'<span class="chip-live">● LIVE · Q{g["period"]}</span>'
         elif state == "post":
-            tag = '<span class="s-tag s-final">Final</span>'
+            chip = '<span class="chip-final">Final</span>'
         else:
-            tag = '<span class="s-tag s-sched">Scheduled</span>'
+            chip = f'<span class="chip-sched">{et_time_str(g["date"])}</span>'
 
-        if state == "pre":
-            mid = f'<div class="game-time">{et_time_str(g["date"])}</div>'
-        else:
-            mid = f'<div class="game-score">{away["score"]} – {home["score"]}</div>'
+        score_html = (
+            f'<span style="font-size:1.3rem;font-weight:800;min-width:90px;'
+            f'display:inline-block;text-align:center">'
+            f'{away["score"]} – {home["score"]}</span>'
+            if state != "pre" else
+            f'<span style="min-width:90px;display:inline-block;text-align:center">'
+            f'vs</span>'
+        )
 
-        al = f'<img src="{away["logo"]}" style="width:38px;height:38px;object-fit:contain">' if away.get("logo") else ""
-        hl = f'<img src="{home["logo"]}" style="width:38px;height:38px;object-fit:contain">' if home.get("logo") else ""
+        al = (f'<img src="{away["logo"]}" style="width:36px;height:36px;object-fit:contain">'
+              if away.get("logo") else "")
+        hl = (f'<img src="{home["logo"]}" style="width:36px;height:36px;object-fit:contain">'
+              if home.get("logo") else "")
 
         c_card, c_btn = st.columns([6, 1])
         with c_card:
@@ -630,24 +460,24 @@ elif st.session_state.view == "day":
               <div style="display:flex;align-items:center;gap:10px;flex:1">
                 {al}
                 <div>
-                  <div class="team-name">{away["abbr"]}</div>
-                  <div class="team-rec">{away["record"]}</div>
+                  <div style="font-weight:700;font-size:0.9rem">{away["abbr"]}</div>
+                  <div style="font-size:0.63rem;opacity:0.45;margin-top:1px">{away["record"]}</div>
                 </div>
               </div>
-              {mid}
+              {score_html}
               <div style="display:flex;align-items:center;gap:10px;flex:1;flex-direction:row-reverse">
                 {hl}
                 <div style="text-align:right">
-                  <div class="team-name">{home["abbr"]}</div>
-                  <div class="team-rec">{home["record"]}</div>
+                  <div style="font-weight:700;font-size:0.9rem">{home["abbr"]}</div>
+                  <div style="font-size:0.63rem;opacity:0.45;margin-top:1px">{home["record"]}</div>
                 </div>
               </div>
-              {tag}
-              <div class="venue-txt">{g.get("venue","")}</div>
+              {chip}
+              <div style="font-size:0.62rem;opacity:0.3;min-width:80px;text-align:right">{g.get("venue","")}</div>
             </div>
             """, unsafe_allow_html=True)
         with c_btn:
-            st.markdown("<div style='margin-top:8px'>", unsafe_allow_html=True)
+            st.markdown("<div style='margin-top:7px'>", unsafe_allow_html=True)
             if st.button("Box Score", key=f"bs_{g['id']}", use_container_width=True):
                 st.session_state.selected_game_id = g["id"]
                 st.session_state.selected_game    = g
@@ -675,8 +505,7 @@ elif st.session_state.view == "boxscore":
     except Exception:
         date_label = "Schedule"
 
-    # Fix 2: back buttons only — no breadcrumb text
-    b1, b2, b3, _ = st.columns([1.4, 1.6, 1.2, 5])
+    b1, b2, b3, _ = st.columns([1.5, 1.6, 1.3, 5])
     with b1:
         if st.button("← Calendar", use_container_width=True):
             st.session_state.view = "calendar"
@@ -690,88 +519,86 @@ elif st.session_state.view == "boxscore":
             st.cache_data.clear()
             st.rerun()
 
-    # Score Banner
     away  = game["away"]; home = game["home"]
     state = game["status_state"]
 
     if state == "in":
-        status_html = (
-            f'<span class="bn-st bn-live">Live</span>'
-            f'<span style="color:#667788;font-size:0.72rem;margin-left:9px">'
-            f'{game["clock"]} · Q{game["period"]}</span>'
-        )
+        status_md = f"🔴 **Live** · {game['clock']} · Q{game['period']}"
     elif state == "post":
-        status_html = '<span class="bn-st bn-final">Final</span>'
+        status_md = "**Final**"
     else:
-        status_html = (
-            f'<span class="bn-st bn-pre">Scheduled</span>'
-            f'<span style="color:#60a5fa;font-size:0.72rem;margin-left:9px">'
-            f'{et_time_str(game["date"])}</span>'
-        )
+        status_md = f"🕐 **Scheduled** · {et_time_str(game['date'])}"
 
-    al = f'<img src="{away["logo"]}" style="width:54px;height:54px;object-fit:contain">' if away.get("logo") else ""
-    hl = f'<img src="{home["logo"]}" style="width:54px;height:54px;object-fit:contain">' if home.get("logo") else ""
+    al = (f'<img src="{away["logo"]}" style="width:54px;height:54px;object-fit:contain">'
+          if away.get("logo") else "")
+    hl = (f'<img src="{home["logo"]}" style="width:54px;height:54px;object-fit:contain">'
+          if home.get("logo") else "")
 
     st.markdown(f"""
     <div class="score-banner">
-      <div style="display:flex;align-items:center;gap:16px">
+      <div style="display:flex;align-items:center;gap:14px">
         {al}
         <div>
-          <div class="bn-name">{away["team"]}</div>
-          <div class="bn-rec">{away["record"]}</div>
+          <div style="font-size:1.05rem;font-weight:700">{away["team"]}</div>
+          <div style="font-size:0.67rem;opacity:0.4;margin-top:2px">{away["record"]}</div>
         </div>
       </div>
       <div style="text-align:center">
-        <div>
-          <span class="bn-score">{away["score"]}</span>
-          <span class="bn-sep">–</span>
-          <span class="bn-score">{home["score"]}</span>
+        <div style="font-size:2.8rem;font-weight:800;letter-spacing:-1px">
+          {away["score"]} <span style="opacity:0.2">–</span> {home["score"]}
         </div>
-        <div style="margin-top:9px">{status_html}</div>
-        <div class="bn-venue">{game.get("venue","")}</div>
       </div>
-      <div style="display:flex;align-items:center;gap:16px;flex-direction:row-reverse">
+      <div style="display:flex;align-items:center;gap:14px;flex-direction:row-reverse">
         {hl}
         <div style="text-align:right">
-          <div class="bn-name">{home["team"]}</div>
-          <div class="bn-rec">{home["record"]}</div>
+          <div style="font-size:1.05rem;font-weight:700">{home["team"]}</div>
+          <div style="font-size:0.67rem;opacity:0.4;margin-top:2px">{home["record"]}</div>
         </div>
       </div>
     </div>
     """, unsafe_allow_html=True)
+
+    # Status + venue as native Streamlit elements (auto-themed)
+    st.markdown(f"{status_md}  ·  <span style='opacity:0.4;font-size:0.8rem'>{game.get('venue','')}</span>",
+                unsafe_allow_html=True)
+    st.divider()
 
     with st.spinner("Loading box score…"):
         data = load_all_stats(game_id)
     pbp = data["pbp"]
 
     # Linescore
-    st.markdown('<div class="sec-label">Score by Quarter</div>', unsafe_allow_html=True)
+    st.markdown("<div class='sec-div'>Score by Quarter</div>", unsafe_allow_html=True)
     ls_df = data["linescore"]
     if ls_df is not None and not ls_df.empty:
         def style_ls(df):
             s = pd.DataFrame("", index=df.index, columns=df.columns)
             for c in ["1H","2H"]:
                 if c in df.columns:
-                    s[c] = "background:#eff6ff;font-weight:700;color:#1e40af"
+                    s[c] = "font-weight:700"
             if "Total" in df.columns:
-                s["Total"] = "background:#1a1a2e;font-weight:800;color:#ffffff"
+                s["Total"] = "font-weight:800"
             return s
-        st.dataframe(ls_df.style.apply(style_ls, axis=None), use_container_width=True, hide_index=True)
+        st.dataframe(ls_df.style.apply(style_ls, axis=None),
+                     use_container_width=True, hide_index=True)
     else:
         st.info("Linescore not yet available.")
 
     # Period filter
-    st.markdown('<div class="sec-label" style="margin-top:20px">Player Stats</div>', unsafe_allow_html=True)
+    st.markdown("<div class='sec-div' style='margin-top:18px'>Player Stats</div>",
+                unsafe_allow_html=True)
 
     available = ["Full Game"]
-    for pk, lbl in [("1H","1st Half"),("2H","2nd Half"),("Q1","Q1"),("Q2","Q2"),("Q3","Q3"),("Q4","Q4")]:
+    for pk, lbl in [("1H","1st Half"),("2H","2nd Half"),
+                    ("Q1","Q1"),("Q2","Q2"),("Q3","Q3"),("Q4","Q4")]:
         if pk in pbp and not pbp[pk].empty:
             available.append(lbl)
     for k in pbp:
         if k.startswith("OT") and not pbp[k].empty and k not in available:
             available.append(k)
 
-    period_filter = st.radio("Period:", options=available, horizontal=True, label_visibility="collapsed")
+    period_filter = st.radio("Period:", options=available,
+                             horizontal=True, label_visibility="collapsed")
 
     def get_pbp_key(pf):
         return {"1st Half":"1H","2nd Half":"2H"}.get(pf, pf)
@@ -799,7 +626,8 @@ elif st.session_state.view == "boxscore":
         if pf != "Full Game":
             st.markdown(
                 '<div class="period-note">Showing players active in this period. '
-                'ESPN provides cumulative game totals — see Play-by-Play for play-level detail.</div>',
+                'ESPN provides cumulative game totals — see Play-by-Play for '
+                'play-level detail.</div>',
                 unsafe_allow_html=True,
             )
         if sort and sort in out.columns:
@@ -825,7 +653,9 @@ elif st.session_state.view == "boxscore":
         else:
             st.info("No team data.")
 
-    st.markdown('<div class="sec-label" style="margin-top:20px">Scoring Summary</div>', unsafe_allow_html=True)
+    # Scoring summary
+    st.markdown("<div class='sec-div' style='margin-top:18px'>Scoring Summary</div>",
+                unsafe_allow_html=True)
     sdf = data["scoring"]
     if sdf is not None and not sdf.empty:
         pf = period_filter
@@ -839,11 +669,14 @@ elif st.session_state.view == "boxscore":
             for half in fsdf["Half"].unique():
                 hdf = fsdf[fsdf["Half"] == half]
                 st.markdown(f"**{half}**")
-                st.dataframe(hdf.drop(columns=["Half"]), use_container_width=True, hide_index=True)
+                st.dataframe(hdf.drop(columns=["Half"]),
+                             use_container_width=True, hide_index=True)
     else:
         st.info("No scoring plays yet.")
 
-    st.markdown('<div class="sec-label" style="margin-top:20px">Play-by-Play</div>', unsafe_allow_html=True)
+    # Play-by-play
+    st.markdown("<div class='sec-div' style='margin-top:18px'>Play-by-Play</div>",
+                unsafe_allow_html=True)
     if pbp:
         pf = period_filter
         k  = get_pbp_key(pf)
@@ -858,14 +691,16 @@ elif st.session_state.view == "boxscore":
             for tab, key in zip(ptabs, show.keys()):
                 with tab:
                     df   = show[key]
-                    cols = [c for c in ["Clock","Team","Down & Distance","Description","Yards","Play Type"] if c in df.columns]
+                    cols = [c for c in ["Clock","Team","Down & Distance",
+                                        "Description","Yards","Play Type"]
+                            if c in df.columns]
                     st.dataframe(df[cols], use_container_width=True, hide_index=True)
         else:
             st.info(f"No play-by-play for {pf}.")
     else:
         st.info("Play-by-play not yet available.")
 
-    st.markdown("---")
+    st.divider()
     st.caption(
         f"Updated {et_now().strftime('%-I:%M %p')} ET  ·  "
         "ESPN public API  ·  Not affiliated with ESPN or the NFL"
