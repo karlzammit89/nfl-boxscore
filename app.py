@@ -690,10 +690,146 @@ elif st.session_state.view == "boxscore":
         else:
             st.write("Could not fetch game summary for debug")
 
+    # ── Prop Checker ──────────────────────────────────────────────────────────
+    with st.expander("🎯 Prop Checker — did each player hit the threshold in every quarter?", expanded=False):
+        st.caption(
+            "Set a minimum threshold. Each player shows their stat per quarter "
+            "with ✅ (hit) or ❌ (missed). The final column shows if they hit it in ALL quarters."
+        )
+        pc1, pc2, pc3, pc4, pc5, pc6 = st.columns(6)
+        with pc1: thr_pass_yds = st.number_input("Pass YDS ≥", min_value=0, value=0, step=1, key="thr_pass_yds")
+        with pc2: thr_pass_td  = st.number_input("Pass TD ≥",  min_value=0, value=0, step=1, key="thr_pass_td")
+        with pc3: thr_rush_yds = st.number_input("Rush YDS ≥", min_value=0, value=0, step=1, key="thr_rush_yds")
+        with pc4: thr_rush_td  = st.number_input("Rush TD ≥",  min_value=0, value=0, step=1, key="thr_rush_td")
+        with pc5: thr_recv_yds = st.number_input("Rec YDS ≥",  min_value=0, value=0, step=1, key="thr_recv_yds")
+        with pc6: thr_recv_rec = st.number_input("Receptions ≥", min_value=0, value=0, step=1, key="thr_recv_rec")
+
+    def build_prop_table(category: str) -> pd.DataFrame | None:
+        """
+        Build a per-player, per-quarter prop result table.
+        Columns: Player | Team | Q1 | Q2 | Q3 | Q4 | All Quarters
+        Each Qx cell shows the raw stat value + ✅/❌ vs threshold.
+        All Quarters = ✅ only if every quarter hit the threshold.
+        Returns None if no active threshold for this category.
+        """
+        quarters = ["Q1", "Q2", "Q3", "Q4"]
+
+        # Determine active thresholds and stat column for this category
+        if category == "passing":
+            thr_yds, thr_td = thr_pass_yds, thr_pass_td
+            if thr_yds == 0 and thr_td == 0:
+                return None
+            stat_col = "YDS"
+            td_col   = "TD"
+        elif category == "rushing":
+            thr_yds, thr_td = thr_rush_yds, thr_rush_td
+            if thr_yds == 0 and thr_td == 0:
+                return None
+            stat_col = "YDS"
+            td_col   = "TD"
+        elif category == "receiving":
+            thr_yds, thr_td = thr_recv_yds, thr_recv_rec
+            if thr_yds == 0 and thr_td == 0:
+                return None
+            stat_col = "YDS"
+            td_col   = "REC"
+        else:
+            return None
+
+        # Collect all unique players across all quarters
+        all_players: dict = {}   # player_name → {"Team": str}
+        for q in quarters:
+            qdf = by_period.get(q, {}).get(category)
+            if qdf is not None and not qdf.empty:
+                for _, row in qdf.iterrows():
+                    name = row.get("Player", "")
+                    if name and name not in all_players:
+                        all_players[name] = {"Team": row.get("Team", "")}
+
+        if not all_players:
+            return pd.DataFrame()
+
+        rows = []
+        for player, meta in all_players.items():
+            row = {"Player": player, "Team": meta["Team"]}
+            all_hit = True
+            for q in quarters:
+                qdf = by_period.get(q, {}).get(category)
+                # Get this player's stats in this quarter
+                yds_val = 0
+                td_val  = 0
+                if qdf is not None and not qdf.empty and "Player" in qdf.columns:
+                    pmatch = qdf[qdf["Player"] == player]
+                    if not pmatch.empty:
+                        yds_val = int(pmatch.iloc[0].get(stat_col, 0))
+                        td_val  = int(pmatch.iloc[0].get(td_col,  0))
+
+                yds_ok = (yds_val >= thr_yds) if thr_yds > 0 else True
+                td_ok  = (td_val  >= thr_td)  if thr_td  > 0 else True
+                hit    = yds_ok and td_ok
+                if not hit:
+                    all_hit = False
+
+                # Format cell: show value + icon
+                if thr_yds > 0 and thr_td > 0:
+                    cell = f"{'✅' if hit else '❌'} {yds_val}yds / {td_val}"
+                elif thr_yds > 0:
+                    cell = f"{'✅' if hit else '❌'} {yds_val}yds"
+                else:
+                    cell = f"{'✅' if hit else '❌'} {td_val}"
+                row[q] = cell
+
+            row["All Quarters"] = "✅ Won" if all_hit else "❌ Lost"
+            rows.append(row)
+
+        if not rows:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(rows)
+        # Sort: Won first, then by player name
+        df["_sort"] = df["All Quarters"].apply(lambda x: 0 if "Won" in x else 1)
+        df = df.sort_values(["_sort", "Player"]).drop(columns=["_sort"]).reset_index(drop=True)
+        return df
+
+    def show_prop_or_stats(category: str, sort="YDS"):
+        """Show prop table if thresholds set, else show normal stat table."""
+        prop_df = build_prop_table(category)
+        if prop_df is not None:
+            # Prop mode
+            if prop_df.empty:
+                st.info(f"No {category} data available.")
+                return
+            def color_cells(val):
+                if isinstance(val, str):
+                    if val.startswith("✅"): return "color: #22c55e; font-weight: 700"
+                    if val.startswith("❌"): return "color: #ef4444; font-weight: 700"
+                return ""
+            cols_to_style = [c for c in prop_df.columns if c not in ("Player","Team")]
+            st.dataframe(
+                prop_df.style.applymap(color_cells, subset=cols_to_style),
+                use_container_width=True, hide_index=True
+            )
+        else:
+            # Normal mode — show selected period stats
+            stats_key   = _PERIOD_KEY.get(period_filter, period_filter)
+            period_data = by_period.get(stats_key, {})
+            df = period_data.get(category)
+            if df is None or (hasattr(df, "empty") and df.empty):
+                st.info(f"No {category} data available for {period_filter}.")
+                return
+            if sort and sort in df.columns:
+                try:
+                    tmp = df.copy()
+                    tmp[sort] = pd.to_numeric(tmp[sort], errors="coerce")
+                    df = tmp.sort_values(sort, ascending=False)
+                except Exception:
+                    pass
+            st.dataframe(df, use_container_width=True, hide_index=True)
+
     tabs = st.tabs(["Passing","Rushing","Receiving","Defense","Kicking"])
-    with tabs[0]: show_period_df("passing",   "YDS")
-    with tabs[1]: show_period_df("rushing",   "YDS")
-    with tabs[2]: show_period_df("receiving", "YDS")
+    with tabs[0]: show_prop_or_stats("passing",   "YDS")
+    with tabs[1]: show_prop_or_stats("rushing",   "YDS")
+    with tabs[2]: show_prop_or_stats("receiving", "YDS")
     with tabs[3]: show_df(data["defense"],   period_filter, "TOT", drop_cols=["Pos"])
     with tabs[4]: show_df(data["kicking"],   period_filter, drop_cols=["Pos"])
 
