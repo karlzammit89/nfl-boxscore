@@ -75,12 +75,12 @@ st.markdown("""
 }
 .dow-lbl {
     text-align: center;
-    font-size: 0.72rem;
+    font-size: 0.82rem;
     font-weight: 700;
-    letter-spacing: 1.2px;
+    letter-spacing: 0.5px;
     text-transform: uppercase;
-    opacity: 0.55;
-    padding: 2px 0 10px;
+    opacity: 0.65;
+    padding: 2px 0 12px;
 }
 /* Day cell — identical structure for all days */
 .cal-day {
@@ -266,7 +266,7 @@ if st.session_state.view == "calendar":
         games_by_date.setdefault(et_date_str(g["date"]), []).append(g)
 
     # ── Month navigation ──────────────────────────────────────────────────────
-    _, c1, c2, c3, _ = st.columns([2, 1, 3, 1, 2])
+    _, c1, c2, c3, _ = st.columns([3.5, 0.9, 2.2, 0.9, 3.5])
     with c1:
         if st.button("← Prev", use_container_width=True):
             m, y = st.session_state.cal_month - 1, st.session_state.cal_year
@@ -328,25 +328,20 @@ if st.session_state.view == "calendar":
                 has_live  = any(g["status_state"] == "in" for g in day_games)
 
                 if has_games:
-                    # Game day → st.button (the button IS the cell)
-                    # Label: day number on top line, game count on second line
                     n        = len(day_games)
-                    live_tag = "● " if has_live else ""
-                    count    = f"[{live_tag}{n} game{'s' if n > 1 else ''}]"
-
-                    # Today accent via CSS — inject a unique style per date
-                    today_style = ""
-                    if is_today:
-                        today_style = f"""
-                        <style>
-                        [data-testid="stButton"] > button[data-key="cal_{ds}"] {{
-                            border-color: rgb(255,75,75) !important;
-                        }}
-                        </style>"""
-                        st.markdown(today_style, unsafe_allow_html=True)
-
+                    dot      = "<span class='ldot'></span>" if has_live else ""
+                    pip_html = (f"<div class='gpip'>{dot}"
+                                f"{n} game{'s' if n > 1 else ''}</div>")
+                    today_cls = " today" if is_today else ""
+                    # Render the visual cell with proper HTML pip badge
+                    st.markdown(
+                        f"<div class='cal-day has-g{today_cls}'>"
+                        f"<div class='dn'>{day}</div>{pip_html}</div>",
+                        unsafe_allow_html=True,
+                    )
+                    # Invisible Streamlit button overlaid on top via CSS negative margin
                     if st.button(
-                        f"{day}\n{count}",
+                        "​",  # zero-width space — label won't show
                         key=f"cal_{ds}",
                         use_container_width=True,
                     ):
@@ -367,29 +362,28 @@ if st.session_state.view == "calendar":
     # Style the calendar day buttons to look like cells —
     # match height, left-align text, remove default button styling.
     # This scopes to buttons whose key starts with "cal_" via attribute.
+    # Overlay CSS: pull the invisible cal_ buttons up over the cell divs above.
+    # Scoped tightly so no other buttons are affected.
     st.markdown("""
     <style>
-    /* Style game-day buttons to look like calendar cells */
-    [data-testid="stBaseButton-secondary"] {
-        min-height: 70px !important;
-        height: 70px !important;
-        padding: 8px 9px !important;
-        border-radius: 8px !important;
-        text-align: left !important;
-        align-items: flex-start !important;
-        justify-content: flex-start !important;
-        font-size: 0.73rem !important;
-        font-weight: 600 !important;
-        line-height: 1.4 !important;
-        white-space: pre-line !important;
-        border: 1px solid rgba(128,128,128,0.35) !important;
-        background: transparent !important;
+    /* Pull invisible overlay buttons flush over the cell rendered above them */
+    [data-testid="stBaseButton-secondary"]:has(p:empty),
+    [data-testid="stBaseButton-secondary"]:has(p:-moz-only-whitespace) {
+        background:    transparent !important;
+        border:        none        !important;
+        box-shadow:    none        !important;
+        color:         transparent !important;
+        height:        74px        !important;
+        min-height:    74px        !important;
+        margin-top:   -78px        !important;
+        padding:        0          !important;
+        cursor:        pointer     !important;
+        opacity:        0          !important;
+        position:       relative   !important;
+        z-index:        9          !important;
+        width:          100%       !important;
+        display:        block      !important;
     }
-    [data-testid="stBaseButton-secondary"]:hover {
-        border-color: rgba(128,128,128,0.6) !important;
-        background: rgba(128,128,128,0.05) !important;
-    }
-    /* Do NOT target stBaseButton-primary — those are the nav buttons */
     </style>
     """, unsafe_allow_html=True)
 
