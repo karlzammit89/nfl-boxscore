@@ -675,12 +675,18 @@ elif st.session_state.view == "boxscore":
                 _play_count = sum(len(d.get("plays", [])) for d in _all if d)
                 st.markdown(f"**Total plays across all drives:** {_play_count}")
 
-                # Show first 3 play descriptions from drive 0
-                st.markdown("**Sample plays (drive 0):**")
-                for p in (_all[0].get("plays", []) if _all[0] else [])[:5]:
-                    period = p.get("period", {}).get("number", "?")
-                    desc   = p.get("description", "(no description)")
-                    st.write(f"  Q{period}: `{desc[:100]}`")
+                # Show raw keys and values of first play
+                st.markdown("**First play — all fields:**")
+                first_drive = _all[0] if _all[0] else {}
+                first_plays = first_drive.get("plays", [])
+                if first_plays:
+                    fp = first_plays[0]
+                    for k2, v2 in fp.items():
+                        st.write(f"  `{k2}`: `{str(v2)[:120]}`")
+                    st.markdown("**Second play — all fields:**")
+                    if len(first_plays) > 1:
+                        for k2, v2 in first_plays[1].items():
+                            st.write(f"  `{k2}`: `{str(v2)[:120]}`")
         else:
             st.write("Could not fetch game summary for debug")
 
