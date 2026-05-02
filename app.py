@@ -270,8 +270,8 @@ if st.session_state.view == "calendar":
     with c2:
         selected_year = st.selectbox(
             "Year",
-            options=list(range(2020, 2030)),
-            index=list(range(2020, 2030)).index(year) if year in range(2020, 2030) else 0,
+            options=[year - 1, year, year + 1],
+            index=1,
             key="pick_year",
             label_visibility="collapsed",
         )
