@@ -291,13 +291,13 @@ if st.session_state.view == "calendar":
     </style>
     <div style="display:grid;grid-template-columns:1fr 3fr 1fr;gap:8px;align-items:center;margin-bottom:4px">
       <div>
-        <a class="nav-btn" href="?nav=prev&py={prev_y}&pm={prev_m}">← Prev</a>
+        <a class="nav-btn" href="?nav=prev&py={prev_y}&pm={prev_m}" target="_self">← Prev</a>
       </div>
       <div style="text-align:center;font-weight:700;font-size:1.05rem">
         {MONTH_NAMES[month-1]} {year}
       </div>
       <div>
-        <a class="nav-btn" href="?nav=next&py={next_y}&pm={next_m}">Next →</a>
+        <a class="nav-btn" href="?nav=next&py={next_y}&pm={next_m}" target="_self">Next →</a>
       </div>
     </div>
     """, unsafe_allow_html=True)
