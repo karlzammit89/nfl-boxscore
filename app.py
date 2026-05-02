@@ -603,7 +603,7 @@ elif st.session_state.view == "boxscore":
                 unsafe_allow_html=True)
 
     # Standard periods only — no OT
-    available = ["Full Game", "Q1", "Q2", "1st Half", "Q3", "Q4", "2nd Half"]
+    available = ["Full Game", "Q1", "Q2", "Q3", "Q4", "1st Half", "2nd Half"]
 
     period_filter = st.radio("Period:", options=available,
                              horizontal=True, label_visibility="collapsed")
@@ -698,7 +698,4 @@ elif st.session_state.view == "boxscore":
     with tabs[4]: show_df(data["kicking"],   period_filter, drop_cols=["Pos"])
 
     st.divider()
-    st.caption(
-        f"Updated {et_now().strftime('%-I:%M %p')} ET  ·  "
-        "ESPN public API  ·  Not affiliated with ESPN or the NFL"
-    )
+    st.caption(f"Updated {et_now().strftime('%H:%M')} ET")
