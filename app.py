@@ -317,24 +317,11 @@ if st.session_state.view == "calendar":
                 has_live  = any(g["status_state"] == "in" for g in day_games)
 
                 if has_games:
-                    n         = len(day_games)
-                    dot       = "<span class='ldot'></span>" if has_live else ""
-                    today_cls = " today" if is_today else ""
-                    pill      = (
-                        f"<div class='gpip'>{dot}"
-                        f"{n} game{'s' if n > 1 else ''}</div>"
-                    )
-                    # Visual cell rendered as HTML with proper pill badge
-                    st.markdown(
-                        f"<div class='cal-day has-g{today_cls}'>"
-                        f"<span class='dn'>{day}</span>{pill}</div>",
-                        unsafe_allow_html=True,
-                    )
-                    # Invisible overlay button — wrapped in .cal-overlay div
-                    # so CSS scoping keeps it from affecting other buttons
-                    st.markdown("<div class='cal-overlay'>", unsafe_allow_html=True)
+                    n        = len(day_games)
+                    live_tag = "🔴 " if has_live else ""
+                    count    = f"{live_tag}{n} game{'s' if n > 1 else ''}"
                     if st.button(
-                        "select",
+                        f"{day}\n{count}",
                         key=f"cal_{ds}",
                         use_container_width=True,
                     ):
@@ -342,10 +329,8 @@ if st.session_state.view == "calendar":
                         st.session_state.selected_date_games = day_games
                         st.session_state.view = "day"
                         st.rerun()
-                    st.markdown("</div>", unsafe_allow_html=True)
 
                 else:
-                    # No games — static cell, dimmed
                     today_cls = " today" if is_today else ""
                     st.markdown(
                         f"<div class='cal-day{today_cls}'>"
@@ -353,59 +338,27 @@ if st.session_state.view == "calendar":
                         unsafe_allow_html=True,
                     )
 
-    # Style the calendar day buttons to look like cells —
-    # match height, left-align text, remove default button styling.
-    # This scopes to buttons whose key starts with "cal_" via attribute.
+    # Style game-day buttons to look like calendar cells
     st.markdown("""
     <style>
-    /* Game count pill — styled badge bottom-left of cell */
-    .gpip {
-        display:     inline-flex   !important;
-        align-items: center        !important;
-        gap:         4px           !important;
-        position:    absolute      !important;
-        bottom:      8px           !important;
-        left:        8px           !important;
-        font-size:   0.58rem       !important;
-        font-weight: 700           !important;
-        padding:     2px 7px       !important;
-        border-radius: 20px        !important;
-        border:      1px solid rgba(128,128,128,0.3) !important;
-        background:  rgba(128,128,128,0.1) !important;
-        opacity:     0.9           !important;
-        letter-spacing: 0.2px      !important;
-        text-transform: uppercase  !important;
+    [data-testid="stBaseButton-secondary"] {
+        min-height:      70px                             !important;
+        height:          70px                             !important;
+        padding:         8px 9px                          !important;
+        border-radius:   8px                              !important;
+        text-align:      left                             !important;
+        align-items:     flex-start                       !important;
+        justify-content: flex-start                       !important;
+        font-size:       0.73rem                          !important;
+        font-weight:     600                              !important;
+        line-height:     1.4                              !important;
+        white-space:     pre-line                         !important;
+        border:          1px solid rgba(128,128,128,0.35) !important;
+        background:      transparent                      !important;
     }
-    .cal-day.today .gpip {
-        border-color: rgba(255,75,75,0.4) !important;
-        background:   rgba(255,75,75,0.1) !important;
-        color:        rgb(255,75,75)      !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    # Invisible overlay buttons scoped only to calendar cells.
-    # Wrapping each in a div with class "cal-overlay" lets us CSS-target
-    # them precisely without touching Prev / Next / ← Calendar / Box Score.
-    # The wrapper div is injected via st.markdown immediately before each button.
-    # (Already done inline in the grid loop above — the CSS here activates it.)
-    st.markdown("""
-    <style>
-    .cal-overlay button[data-testid="stBaseButton-secondary"] {
-        background:  transparent !important;
-        border:      none        !important;
-        box-shadow:  none        !important;
-        color:       transparent !important;
-        height:      74px        !important;
-        min-height:  74px        !important;
-        margin-top: -78px        !important;
-        padding:     0           !important;
-        cursor:      pointer     !important;
-        width:       100%        !important;
-        display:     block       !important;
-        position:    relative    !important;
-        z-index:     10          !important;
-        opacity:     0           !important;
+    [data-testid="stBaseButton-secondary"]:hover {
+        border-color:    rgba(128,128,128,0.6)            !important;
+        background:      rgba(128,128,128,0.05)           !important;
     }
     </style>
     """, unsafe_allow_html=True)
