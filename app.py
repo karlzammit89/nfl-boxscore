@@ -11,6 +11,7 @@ import calendar as cal_mod
 from nfl.api import get_live_games
 from nfl.stats import (
     build_linescore_df,
+    get_player_stats_by_period,
     get_passing_stats,
     get_rushing_stats,
     get_receiving_stats,
@@ -236,6 +237,7 @@ def load_all_stats(game_id: str) -> dict:
         "team":      get_team_stats(game_id),
         "scoring":   get_scoring_summary(game_id),
         "pbp":       get_pbp_by_quarter(game_id),
+        "by_period":  get_player_stats_by_period(game_id),
     }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -650,10 +652,35 @@ elif st.session_state.view == "boxscore":
                 pass
         st.dataframe(out, use_container_width=True, hide_index=True)
 
+    # For passing / rushing / receiving we use true per-period stats
+    # derived from play-by-play participant data (accurate per-quarter splits).
+    # Defense, kicking, returning, team use ESPN cumulative totals (only source).
+    by_period = data.get("by_period", {})
+    pf_key    = get_pbp_key(period_filter)  # Q1/Q2/1H/Q3/Q4/2H/Full Game
+
+    def show_period_df(category: str, sort="YDS"):
+        """Show per-period offensive stat from by_period dict."""
+        period_data = by_period.get(period_filter, {})
+        df = period_data.get(category)
+        if df is None or (hasattr(df, "empty") and df.empty):
+            # Fallback to ESPN cumulative with a note
+            st.caption("Per-quarter data not available for this period — showing full game totals.")
+            fallback = data.get(category)
+            show_df(fallback, "Full Game", sort)
+            return
+        if sort and sort in df.columns:
+            try:
+                tmp = df.copy()
+                tmp[sort] = pd.to_numeric(tmp[sort], errors="coerce")
+                df = tmp.sort_values(sort, ascending=False)
+            except Exception:
+                pass
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
     tabs = st.tabs(["Passing","Rushing","Receiving","Defense","Kicking","Returning","Team"])
-    with tabs[0]: show_df(data["passing"],   period_filter, "YDS")
-    with tabs[1]: show_df(data["rushing"],   period_filter, "YDS")
-    with tabs[2]: show_df(data["receiving"], period_filter, "YDS")
+    with tabs[0]: show_period_df("passing",   "YDS")
+    with tabs[1]: show_period_df("rushing",   "YDS")
+    with tabs[2]: show_period_df("receiving", "YDS")
     with tabs[3]: show_df(data["defense"],   period_filter, "TOT")
     with tabs[4]: show_df(data["kicking"],   period_filter)
     with tabs[5]: show_df(data["returning"], period_filter, "YDS")
