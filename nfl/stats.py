@@ -357,12 +357,12 @@ def get_pbp_by_quarter(game_id: str) -> dict[str, pd.DataFrame]:
 import re as _re
 
 _PASS_RE = _re.compile(
-    r'^(.+?)\s+pass\s+(complete|incomplete)\s+(?:to\s+(.+?)\s+for\s+(-?\d+)\s+yards?)?',
+    r'^(.+?)\s+pass\s+(complete|incomplete)\s*(?:to\s+.+?\s+for\s+-?\d+\s+yards?)?',
     _re.I
 )
 _PASS_YDS_RE = _re.compile(r'for\s+(-?\d+)\s+yards?', _re.I)
 _RUSH_RE = _re.compile(
-    r'^(.+?)\s+(?:rush(?:es)?|scrambles?|runs?|up the middle|left end|right end|left tackle|right tackle)\s*(?:to\s+\S+\s+)?for\s+(-?\d+)\s+yards?',
+    r'^(.+?)\s+(?:rush(?:es)?|scrambles?|runs?)\s*(?:\w+\s+)*?for\s+(-?\d+)\s+yards?',
     _re.I
 )
 _RECV_RE  = _re.compile(r'pass complete to\s+(.+?)\s+for\s+(-?\d+)\s+yards?', _re.I)
