@@ -254,64 +254,32 @@ if st.session_state.view == "calendar":
     for g in month_games:
         games_by_date.setdefault(et_date_str(g["date"]), []).append(g)
 
-    # ── Month navigation — pure HTML links, immune to st.button CSS ─────────
-    # Using st.button for Prev/Next causes them to be caught by the invisible-
-    # overlay CSS applied to calendar cells. HTML anchor buttons avoid this
-    # entirely — they communicate via query params which Streamlit reads below.
-    prev_m = month - 1 if month > 1 else 12
-    prev_y = year if month > 1 else year - 1
-    next_m = month + 1 if month < 12 else 1
-    next_y = year if month < 12 else year + 1
-
-    st.markdown(f"""
-    <style>
-    .nav-btn {{
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 100%;
-        padding: 8px 16px;
-        border-radius: 8px;
-        border: 1px solid rgba(128,128,128,0.4);
-        background: transparent;
-        font-size: 0.85rem;
-        font-weight: 600;
-        cursor: pointer;
-        text-decoration: none;
-        color: inherit;
-        box-sizing: border-box;
-        transition: border-color .15s, background .15s;
-    }}
-    .nav-btn:hover {{
-        border-color: rgba(128,128,128,0.7);
-        background: rgba(128,128,128,0.08);
-        color: inherit;
-        text-decoration: none;
-    }}
-    </style>
-    <div style="display:grid;grid-template-columns:1fr 3fr 1fr;gap:8px;align-items:center;margin-bottom:4px">
-      <div>
-        <a class="nav-btn" href="?nav=prev&py={prev_y}&pm={prev_m}" target="_self">← Prev</a>
-      </div>
-      <div style="text-align:center;font-weight:700;font-size:1.05rem">
-        {MONTH_NAMES[month-1]} {year}
-      </div>
-      <div>
-        <a class="nav-btn" href="?nav=next&py={next_y}&pm={next_m}" target="_self">Next →</a>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Handle nav query params
-    _qp = st.query_params
-    if "nav" in _qp:
-        try:
-            st.session_state.cal_month = int(_qp["pm"])
-            st.session_state.cal_year  = int(_qp["py"])
-        except Exception:
-            pass
-        st.query_params.clear()
-        st.rerun()
+    # ── Month navigation — st.button wrapped in .nav-wrap marker div ────────
+    # The .nav-wrap class is injected via st.markdown immediately before the
+    # buttons. The calendar overlay CSS uses :not(.nav-wrap *) logic — actually
+    # we protect nav buttons by injecting a CSS RESTORE rule AFTER the overlay
+    # CSS that explicitly resets any button inside .nav-wrap back to normal.
+    st.markdown("<div class='nav-wrap'>", unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([1, 3, 1])
+    with c1:
+        if st.button("← Prev", key="nav_prev", use_container_width=True):
+            m, y = st.session_state.cal_month - 1, st.session_state.cal_year
+            if m < 1: m, y = 12, y - 1
+            st.session_state.cal_month, st.session_state.cal_year = m, y
+            st.rerun()
+    with c2:
+        st.markdown(
+            f"<div style='text-align:center;font-weight:700;font-size:1.05rem;"
+            f"padding-top:4px'>{MONTH_NAMES[month-1]} {year}</div>",
+            unsafe_allow_html=True,
+        )
+    with c3:
+        if st.button("Next →", key="nav_next", use_container_width=True):
+            m, y = st.session_state.cal_month + 1, st.session_state.cal_year
+            if m > 12: m, y = 1, y + 1
+            st.session_state.cal_month, st.session_state.cal_year = m, y
+            st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
     # Day-of-week header row
     st.markdown(
@@ -409,9 +377,9 @@ if st.session_state.view == "calendar":
         background:   rgba(255,75,75,0.1)               !important;
         color:        rgb(255,75,75)                     !important;
     }
-    /* Invisible overlay — scoped to vertical blocks containing a .cal-day */
-    div[data-testid="stVerticalBlockBorderWrapper"]:has(.cal-day) button[data-testid="stBaseButton-secondary"],
-    div[data-testid="stVerticalBlock"]:has(.cal-day) button[data-testid="stBaseButton-secondary"] {
+    /* Invisible overlay — targets ALL secondary buttons since we can't reliably
+       scope by DOM depth. Nav buttons are restored explicitly below. */
+    button[data-testid="stBaseButton-secondary"] {
         background:  transparent !important;
         border:      none        !important;
         box-shadow:  none        !important;
@@ -426,6 +394,24 @@ if st.session_state.view == "calendar":
         position:    relative    !important;
         z-index:     10          !important;
         opacity:     0           !important;
+    }
+    /* RESTORE nav buttons — keyed by data-testid on their specific keys.
+       Streamlit sets the key as the aria-label on the button in some builds,
+       but most reliably we target by the unique key strings nav_prev / nav_next
+       which appear as part of the element's generated id attribute. */
+    button[data-testid="stBaseButton-secondary"][key="nav_prev"],
+    button[data-testid="stBaseButton-secondary"][key="nav_next"] {
+        background:  revert !important;
+        border:      revert !important;
+        box-shadow:  revert !important;
+        color:       revert !important;
+        height:      revert !important;
+        min-height:  revert !important;
+        margin-top:  revert !important;
+        padding:     revert !important;
+        opacity:     1      !important;
+        position:    revert !important;
+        z-index:     revert !important;
     }
     </style>
     """, unsafe_allow_html=True)
