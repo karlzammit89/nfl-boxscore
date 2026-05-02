@@ -524,6 +524,8 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
     result = {}
     for p in all_periods:
+        if p > 4:   # skip OT
+            continue
         lbl = _quarter_label(p)
         result[lbl] = {"passing":   to_pass_df(passing[p]),
                        "rushing":   to_rush_df(rushing[p]),
@@ -531,8 +533,7 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
     h1 = [p for p in all_periods if p in (1, 2)]
     h2 = [p for p in all_periods if p in (3, 4)]
-    ot = [p for p in all_periods if p > 4]
-
+    # OT excluded — only Q1-Q4 and halves
     if h1:
         result["1H"] = {"passing":   to_pass_df(merge(passing,  h1, new_pass)),
                         "rushing":   to_rush_df(merge(rushing,  h1, new_rush)),
@@ -541,12 +542,6 @@ def get_player_stats_by_period(game_id: str) -> dict:
         result["2H"] = {"passing":   to_pass_df(merge(passing,  h2, new_pass)),
                         "rushing":   to_rush_df(merge(rushing,  h2, new_rush)),
                         "receiving": to_recv_df(merge(receiving,h2, new_recv))}
-    for ot_p in ot:
-        lbl = _quarter_label(ot_p)
-        if lbl not in result:
-            result[lbl] = {"passing":   to_pass_df(passing[ot_p]),
-                           "rushing":   to_rush_df(rushing[ot_p]),
-                           "receiving": to_recv_df(receiving[ot_p])}
 
     result["Full Game"] = {
         "passing":   to_pass_df(merge(passing,   all_periods, new_pass)),
