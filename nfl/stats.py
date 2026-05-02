@@ -357,12 +357,12 @@ def get_pbp_by_quarter(game_id: str) -> dict[str, pd.DataFrame]:
 import re as _re
 
 _PASS_RE = _re.compile(
-    r'^(.+?)\s+pass\s+(complete|incomplete)\s*(?:to\s+.+?\s+for\s+-?\d+\s+yards?)?',
+    r'^(?:\([^)]+\)\s+)?(.+?)\s+pass\s+(complete|incomplete)\s*(?:to\s+.+?\s+for\s+-?\d+\s+yards?)?',
     _re.I
 )
 _PASS_YDS_RE = _re.compile(r'for\s+(-?\d+)\s+yards?', _re.I)
 _RUSH_RE = _re.compile(
-    r'^(.+?)\s+(?:rush(?:es)?|scrambles?|runs?)\s*(?:\w+\s+)*?for\s+(-?\d+)\s+yards?',
+    r'^(?:\([^)]+\)\s+)?(.+?)\s+(?:rush(?:es)?|scrambles?|runs?)\s*(?:\w+\s+)*?for\s+(-?\d+)\s+yards?',
     _re.I
 )
 _RECV_RE  = _re.compile(r'pass complete to\s+(.+?)\s+for\s+(-?\d+)\s+yards?', _re.I)
@@ -392,6 +392,9 @@ def get_player_stats_by_period(game_id: str) -> dict:
     prev_drives    = drives.get("previous", [])
     current_drive  = drives.get("current")
     all_drives     = prev_drives + ([current_drive] if current_drive else [])
+
+    if not all_drives:
+        return {}
 
     # Accumulators: period (int) → player_name → stat dict
     def new_pass(): return {"Team":"","comp":0,"att":0,"yds":0,"td":0,"int":0}
