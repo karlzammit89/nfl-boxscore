@@ -330,7 +330,9 @@ if st.session_state.view == "calendar":
                         f"<span class='dn'>{day}</span>{pill}</div>",
                         unsafe_allow_html=True,
                     )
-                    # Invisible native button for click detection — pulled up over the cell
+                    # Invisible overlay button — wrapped in .cal-overlay div
+                    # so CSS scoping keeps it from affecting other buttons
+                    st.markdown("<div class='cal-overlay'>", unsafe_allow_html=True)
                     if st.button(
                         "select",
                         key=f"cal_{ds}",
@@ -340,6 +342,7 @@ if st.session_state.view == "calendar":
                         st.session_state.selected_date_games = day_games
                         st.session_state.view = "day"
                         st.rerun()
+                    st.markdown("</div>", unsafe_allow_html=True)
 
                 else:
                     # No games — static cell, dimmed
@@ -378,8 +381,17 @@ if st.session_state.view == "calendar":
         background:   rgba(255,75,75,0.1) !important;
         color:        rgb(255,75,75)      !important;
     }
-    /* Invisible overlay button — sits over the HTML cell to capture clicks */
-    [data-testid="stBaseButton-secondary"] {
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Invisible overlay buttons scoped only to calendar cells.
+    # Wrapping each in a div with class "cal-overlay" lets us CSS-target
+    # them precisely without touching Prev / Next / ← Calendar / Box Score.
+    # The wrapper div is injected via st.markdown immediately before each button.
+    # (Already done inline in the grid loop above — the CSS here activates it.)
+    st.markdown("""
+    <style>
+    .cal-overlay button[data-testid="stBaseButton-secondary"] {
         background:  transparent !important;
         border:      none        !important;
         box-shadow:  none        !important;
@@ -393,10 +405,7 @@ if st.session_state.view == "calendar":
         display:     block       !important;
         position:    relative    !important;
         z-index:     10          !important;
-    }
-    [data-testid="stBaseButton-secondary"]:hover + div .cal-day,
-    [data-testid="stBaseButton-secondary"]:focus + div .cal-day {
-        border-color: rgba(128,128,128,0.6) !important;
+        opacity:     0           !important;
     }
     </style>
     """, unsafe_allow_html=True)
