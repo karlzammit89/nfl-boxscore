@@ -255,7 +255,7 @@ if st.session_state.view == "calendar":
         games_by_date.setdefault(et_date_str(g["date"]), []).append(g)
 
     # ── Month navigation ──────────────────────────────────────────────────────
-    c1, _, c2, _, c3 = st.columns([1.2, 0.8, 1.8, 0.8, 1.2])
+    c1, c2, c3 = st.columns([1, 3, 1])
     with c1:
         if st.button("← Prev", use_container_width=True):
             m, y = st.session_state.cal_month - 1, st.session_state.cal_year
