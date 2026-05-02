@@ -664,7 +664,7 @@ elif st.session_state.view == "boxscore":
         df = period_data.get(category)
         if df is None or (hasattr(df, "empty") and df.empty):
             # Fallback to ESPN cumulative with a note
-            st.caption("Per-quarter data not available for this period — showing full game totals.")
+            st.info("No play-by-play data available for this period.")
             fallback = data.get(category)
             show_df(fallback, "Full Game", sort)
             return
