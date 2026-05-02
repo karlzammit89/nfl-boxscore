@@ -354,47 +354,33 @@ def get_pbp_by_quarter(game_id: str) -> dict[str, pd.DataFrame]:
 
 # ── Per-Quarter Player Stats from Play-by-Play ────────────────────────────────
 
-def _parse_play_athletes(play: dict) -> list[dict]:
-    """
-    Extract athlete stat contributions from a single play's participants.
-    ESPN encodes per-play stats in play['participants'] as a list of
-    { athlete: {...}, stats: [...] } entries.
-    Returns list of dicts: { athlete_id, name, team, stat_key, value }
-    """
-    rows = []
-    for participant in play.get("participants", []):
-        athlete = participant.get("athlete", {})
-        name    = athlete.get("displayName", "")
-        team    = athlete.get("team", {}).get("abbreviation", "")
-        a_id    = athlete.get("id", "")
-        pos     = athlete.get("position", {}).get("abbreviation", "")
-        for stat in participant.get("stats", []):
-            rows.append({
-                "athlete_id": a_id,
-                "Player":     name,
-                "Pos":        pos,
-                "Team":       team,
-                "stat_name":  stat.get("name", ""),
-                "value":      _safe_float(stat.get("value", 0)),
-                "display":    stat.get("displayValue", ""),
-            })
-    return rows
+import re as _re
+
+_PASS_RE = _re.compile(
+    r'^(.+?)\s+pass\s+(complete|incomplete)\s+(?:to\s+(.+?)\s+for\s+(-?\d+)\s+yards?)?',
+    _re.I
+)
+_PASS_YDS_RE = _re.compile(r'for\s+(-?\d+)\s+yards?', _re.I)
+_RUSH_RE = _re.compile(
+    r'^(.+?)\s+(?:rush(?:es)?|scrambles?|runs?|up the middle|left end|right end|left tackle|right tackle)\s*(?:to\s+\S+\s+)?for\s+(-?\d+)\s+yards?',
+    _re.I
+)
+_RECV_RE  = _re.compile(r'pass complete to\s+(.+?)\s+for\s+(-?\d+)\s+yards?', _re.I)
+_TD_RE    = _re.compile(r'touchdown', _re.I)
+_INT_RE   = _re.compile(r'(?:is\s+)?intercepted(?:\s+by\s+\S+)?', _re.I)
+_SACK_RE  = _re.compile(r'sacked', _re.I)
 
 
 def get_player_stats_by_period(game_id: str) -> dict:
     """
-    Build true per-quarter and per-half player stat tables by aggregating
-    play-by-play participant data.
+    Build true per-quarter and per-half player stat tables by parsing
+    play description text from ESPN's drives/plays data.
 
-    Returns a dict keyed by period label (Q1, Q2, 1H, Q3, Q4, 2H, OT1, Full Game).
-    Each value is a dict of stat-category DataFrames:
-      { 'passing': df, 'rushing': df, 'receiving': df }
-
-    Stat definitions (matching ESPN boxscore column names):
-      Passing:   C/ATT, YDS, TD, INT
-      Rushing:   CAR, YDS, TD
-      Receiving: REC, YDS, TD
+    Returns dict keyed by period label (Q1, Q2, 1H, Q3, Q4, 2H, OT1, Full Game).
+    Each value: { 'passing': df, 'rushing': df, 'receiving': df }
     """
+    from collections import defaultdict
+
     summary = get_game_summary(game_id)
     if not summary:
         return {}
@@ -403,185 +389,175 @@ def get_player_stats_by_period(game_id: str) -> dict:
     if not drives:
         return {}
 
-    previous_drives = drives.get("previous", [])
-    current_drive   = drives.get("current")
-    all_drives      = previous_drives + ([current_drive] if current_drive else [])
+    prev_drives    = drives.get("previous", [])
+    current_drive  = drives.get("current")
+    all_drives     = prev_drives + ([current_drive] if current_drive else [])
 
-    # Collect per-play, per-athlete, per-period contributions
-    # Structure: { period_int: { athlete_id: { Player, Pos, Team, stats... } } }
-    from collections import defaultdict
+    # Accumulators: period (int) → player_name → stat dict
+    def new_pass(): return {"Team":"","comp":0,"att":0,"yds":0,"td":0,"int":0}
+    def new_rush(): return {"Team":"","car":0,"yds":0,"td":0}
+    def new_recv(): return {"Team":"","rec":0,"yds":0,"td":0}
 
-    # We'll accumulate raw stat values per period per athlete
-    # passing: completions, attempts, yards, td, int
-    # rushing: carries, yards, td
-    # receiving: receptions, yards, td
-
-    def empty_pass():
-        return {"comp": 0, "att": 0, "yds": 0, "td": 0, "int": 0}
-    def empty_rush():
-        return {"car": 0, "yds": 0, "td": 0}
-    def empty_recv():
-        return {"rec": 0, "yds": 0, "td": 0}
-
-    # period → category → athlete_id → stats dict
-    passing_data   = defaultdict(lambda: defaultdict(lambda: {"Player":"","Pos":"","Team":"",**empty_pass()}))
-    rushing_data   = defaultdict(lambda: defaultdict(lambda: {"Player":"","Pos":"","Team":"",**empty_rush()}))
-    receiving_data = defaultdict(lambda: defaultdict(lambda: {"Player":"","Pos":"","Team":"",**empty_recv()}))
+    passing   = defaultdict(lambda: defaultdict(new_pass))   # [period][name]
+    rushing   = defaultdict(lambda: defaultdict(new_rush))
+    receiving = defaultdict(lambda: defaultdict(new_recv))
 
     for drive in all_drives:
         if not drive:
             continue
+        team = drive.get("team", {}).get("abbreviation", "")
         for play in drive.get("plays", []):
-            period   = _safe_int(play.get("period", {}).get("number", 0))
+            period = _safe_int(play.get("period", {}).get("number", 0))
             if period == 0:
                 continue
-            play_type = play.get("type", {}).get("text", "").lower()
-            desc      = play.get("description", "").lower()
+            desc = play.get("description", "")
+            if not desc:
+                continue
 
-            for participant in play.get("participants", []):
-                athlete = participant.get("athlete", {})
-                a_id    = athlete.get("id", "")
-                if not a_id:
-                    continue
-                name = athlete.get("displayName", "")
-                pos  = athlete.get("position", {}).get("abbreviation", "")
-                team = athlete.get("team", {}).get("abbreviation", "")
-                role = participant.get("type", {}).get("name", "").lower()
-                stats_list = participant.get("stats", [])
+            is_td   = bool(_TD_RE.search(desc))
+            is_int  = bool(_INT_RE.search(desc))
 
-                stat_map = {s.get("name","").lower(): _safe_float(s.get("value",0))
-                            for s in stats_list}
+            # ── Passing ──────────────────────────────────────────────────────
+            pm = _PASS_RE.match(desc)
+            if pm:
+                passer = pm.group(1).strip()
+                complete = pm.group(2).lower() == "complete"
+                d = passing[period][passer]
+                d["Team"] = team
+                d["att"]  += 1
+                if complete:
+                    d["comp"] += 1
+                    ym = _PASS_YDS_RE.search(desc)
+                    d["yds"] += _safe_int(ym.group(1)) if ym else 0
+                if is_td and complete:
+                    d["td"] += 1
+                if is_int:
+                    d["int"] += 1
 
-                # ── Passing
-                if role in ("passer", "quarterback") or "passingyards" in stat_map or "passingTouchdowns".lower() in stat_map:
-                    pd_  = passing_data[period][a_id]
-                    pd_["Player"] = name; pd_["Pos"] = pos; pd_["Team"] = team
-                    pd_["yds"]  += stat_map.get("passingyards", stat_map.get("yards", 0))
-                    pd_["td"]   += stat_map.get("passingtouchdowns", 0)
-                    pd_["int"]  += stat_map.get("interceptions", 0)
-                    pd_["comp"] += stat_map.get("completions", 0)
-                    pd_["att"]  += stat_map.get("passattempts", stat_map.get("attempts", 0))
+                # ── Receiving (from same play) ────────────────────────────
+                rvm = _RECV_RE.search(desc)
+                if rvm and complete:
+                    receiver = rvm.group(1).strip()
+                    # Remove trailing possessive/comma artifacts
+                    receiver = receiver.split(",")[0].strip()
+                    rd = receiving[period][receiver]
+                    rd["Team"] = team
+                    rd["rec"] += 1
+                    rd["yds"] += _safe_int(rvm.group(2))
+                    if is_td:
+                        rd["td"] += 1
+                continue
 
-                # ── Rushing
-                if role in ("rusher", "ballcarrier") or "rushingyards" in stat_map:
-                    rd_ = rushing_data[period][a_id]
-                    rd_["Player"] = name; rd_["Pos"] = pos; rd_["Team"] = team
-                    rd_["yds"] += stat_map.get("rushingyards", stat_map.get("yards", 0))
-                    rd_["td"]  += stat_map.get("rushingtouchdowns", 0)
-                    rd_["car"] += stat_map.get("rushingcarries", stat_map.get("carries", 1))
+            # ── Rushing ──────────────────────────────────────────────────────
+            rm = _RUSH_RE.match(desc)
+            if rm:
+                rusher = rm.group(1).strip()
+                yards  = _safe_int(rm.group(2))
+                d = rushing[period][rusher]
+                d["Team"] = team
+                d["car"] += 1
+                d["yds"] += yards
+                if is_td:
+                    d["td"] += 1
 
-                # ── Receiving
-                if role in ("receiver", "recipient") or "receivingyards" in stat_map:
-                    rvd = receiving_data[period][a_id]
-                    rvd["Player"] = name; rvd["Pos"] = pos; rvd["Team"] = team
-                    rvd["yds"] += stat_map.get("receivingyards", stat_map.get("yards", 0))
-                    rvd["td"]  += stat_map.get("receivingtouchdowns", 0)
-                    rvd["rec"] += stat_map.get("receptions", 1)
+    # ── Build DataFrames ──────────────────────────────────────────────────────
 
-    def pass_df(period_dict) -> pd.DataFrame:
+    def to_pass_df(acc: dict) -> pd.DataFrame:
         rows = []
-        for a_id, d in period_dict.items():
-            if d["comp"] == 0 and d["att"] == 0 and d["yds"] == 0:
+        for name, d in acc.items():
+            if d["att"] == 0:
                 continue
             rows.append({
-                "Player": d["Player"], "Pos": d["Pos"], "Team": d["Team"],
-                "C/ATT": f"{int(d['comp'])}/{int(d['att'])}",
-                "YDS":   int(d["yds"]), "TD": int(d["td"]), "INT": int(d["int"]),
+                "Player": name, "Team": d["Team"],
+                "C/ATT": f"{d['comp']}/{d['att']}",
+                "YDS":   d["yds"], "TD": d["td"], "INT": d["int"],
             })
-        return pd.DataFrame(rows).sort_values("YDS", ascending=False) if rows else pd.DataFrame()
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame(rows).sort_values("YDS", ascending=False).reset_index(drop=True)
 
-    def rush_df(period_dict) -> pd.DataFrame:
+    def to_rush_df(acc: dict) -> pd.DataFrame:
         rows = []
-        for a_id, d in period_dict.items():
-            if d["car"] == 0 and d["yds"] == 0:
+        for name, d in acc.items():
+            if d["car"] == 0:
                 continue
             rows.append({
-                "Player": d["Player"], "Pos": d["Pos"], "Team": d["Team"],
-                "CAR": int(d["car"]), "YDS": int(d["yds"]), "TD": int(d["td"]),
+                "Player": name, "Team": d["Team"],
+                "CAR": d["car"], "YDS": d["yds"], "TD": d["td"],
             })
-        return pd.DataFrame(rows).sort_values("YDS", ascending=False) if rows else pd.DataFrame()
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame(rows).sort_values("YDS", ascending=False).reset_index(drop=True)
 
-    def recv_df(period_dict) -> pd.DataFrame:
+    def to_recv_df(acc: dict) -> pd.DataFrame:
         rows = []
-        for a_id, d in period_dict.items():
-            if d["rec"] == 0 and d["yds"] == 0:
+        for name, d in acc.items():
+            if d["rec"] == 0:
                 continue
             rows.append({
-                "Player": d["Player"], "Pos": d["Pos"], "Team": d["Team"],
-                "REC": int(d["rec"]), "YDS": int(d["yds"]), "TD": int(d["td"]),
+                "Player": name, "Team": d["Team"],
+                "REC": d["rec"], "YDS": d["yds"], "TD": d["td"],
             })
-        return pd.DataFrame(rows).sort_values("YDS", ascending=False) if rows else pd.DataFrame()
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame(rows).sort_values("YDS", ascending=False).reset_index(drop=True)
 
-    # Build per-period results
-    all_periods = sorted(set(list(passing_data.keys()) +
-                             list(rushing_data.keys()) +
-                             list(receiving_data.keys())))
+    def merge(acc_dict, periods):
+        """Merge multiple period accumulators into one."""
+        merged = defaultdict(lambda: {"Team":"","comp":0,"att":0,"yds":0,"td":0,"int":0,
+                                       "car":0,"rec":0})
+        for p in periods:
+            for name, d in acc_dict[p].items():
+                for k, v in d.items():
+                    if k == "Team":
+                        merged[name]["Team"] = v
+                    else:
+                        merged[name][k] = merged[name].get(k, 0) + v
+        return merged
+
+    all_periods = sorted(set(
+        list(passing.keys()) + list(rushing.keys()) + list(receiving.keys())
+    ))
 
     result = {}
 
-    for period in all_periods:
-        label = _quarter_label(period)
+    # Per-quarter
+    for p in all_periods:
+        label = _quarter_label(p)
         result[label] = {
-            "passing":   pass_df(passing_data[period]),
-            "rushing":   rush_df(rushing_data[period]),
-            "receiving": recv_df(receiving_data[period]),
+            "passing":   to_pass_df(passing[p]),
+            "rushing":   to_rush_df(rushing[p]),
+            "receiving": to_recv_df(receiving[p]),
         }
 
-    # Half aggregations
-    def merge_pass(periods):
-        combined = defaultdict(lambda: {"Player":"","Pos":"","Team":"",**empty_pass()})
-        for p in periods:
-            for a_id, d in passing_data[p].items():
-                combined[a_id]["Player"] = d["Player"]
-                combined[a_id]["Pos"]    = d["Pos"]
-                combined[a_id]["Team"]   = d["Team"]
-                for k in ["comp","att","yds","td","int"]:
-                    combined[a_id][k] += d[k]
-        return combined
+    # Halves
+    h1 = [p for p in all_periods if p in (1, 2)]
+    h2 = [p for p in all_periods if p in (3, 4)]
+    ot = [p for p in all_periods if p > 4]
 
-    def merge_rush(periods):
-        combined = defaultdict(lambda: {"Player":"","Pos":"","Team":"",**empty_rush()})
-        for p in periods:
-            for a_id, d in rushing_data[p].items():
-                combined[a_id]["Player"] = d["Player"]
-                combined[a_id]["Pos"]    = d["Pos"]
-                combined[a_id]["Team"]   = d["Team"]
-                for k in ["car","yds","td"]:
-                    combined[a_id][k] += d[k]
-        return combined
+    if h1:
+        mp = merge(passing, h1); mr = merge(rushing, h1); mrv = merge(receiving, h1)
+        result["1H"] = {"passing": to_pass_df(mp), "rushing": to_rush_df(mr),
+                         "receiving": to_recv_df(mrv)}
+    if h2:
+        mp = merge(passing, h2); mr = merge(rushing, h2); mrv = merge(receiving, h2)
+        result["2H"] = {"passing": to_pass_df(mp), "rushing": to_rush_df(mr),
+                         "receiving": to_recv_df(mrv)}
+    for ot_p in ot:
+        label = _quarter_label(ot_p)
+        if label not in result:
+            result[label] = {"passing": to_pass_df(passing[ot_p]),
+                              "rushing": to_rush_df(rushing[ot_p]),
+                              "receiving": to_recv_df(receiving[ot_p])}
 
-    def merge_recv(periods):
-        combined = defaultdict(lambda: {"Player":"","Pos":"","Team":"",**empty_recv()})
-        for p in periods:
-            for a_id, d in receiving_data[p].items():
-                combined[a_id]["Player"] = d["Player"]
-                combined[a_id]["Pos"]    = d["Pos"]
-                combined[a_id]["Team"]   = d["Team"]
-                for k in ["rec","yds","td"]:
-                    combined[a_id][k] += d[k]
-        return combined
-
-    h1_periods = [p for p in all_periods if p in (1, 2)]
-    h2_periods = [p for p in all_periods if p in (3, 4)]
-    ot_periods = [p for p in all_periods if p > 4]
-
-    if h1_periods:
-        result["1H"] = {"passing": pass_df(merge_pass(h1_periods)),
-                        "rushing": rush_df(merge_rush(h1_periods)),
-                        "receiving": recv_df(merge_recv(h1_periods))}
-    if h2_periods:
-        result["2H"] = {"passing": pass_df(merge_pass(h2_periods)),
-                        "rushing": rush_df(merge_rush(h2_periods)),
-                        "receiving": recv_df(merge_recv(h2_periods))}
-
-    # Full game from all periods
-    fg_pass = merge_pass(all_periods)
-    fg_rush = merge_rush(all_periods)
-    fg_recv = merge_recv(all_periods)
+    # Full game
+    mp  = merge(passing,   all_periods)
+    mr  = merge(rushing,   all_periods)
+    mrv = merge(receiving, all_periods)
     result["Full Game"] = {
-        "passing":   pass_df(fg_pass),
-        "rushing":   rush_df(fg_rush),
-        "receiving": recv_df(fg_recv),
+        "passing":   to_pass_df(mp),
+        "rushing":   to_rush_df(mr),
+        "receiving": to_recv_df(mrv),
     }
 
     return result
