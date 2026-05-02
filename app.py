@@ -371,8 +371,9 @@ if st.session_state.view == "calendar":
         background:   rgba(255,75,75,0.1)               !important;
         color:        rgb(255,75,75)                     !important;
     }
-    /* Invisible overlay — scoped to columns with a .cal-day so Prev/Next unaffected */
-    div:has(> div > div > div > .cal-day) button[data-testid="stBaseButton-secondary"] {
+    /* Invisible overlay — scoped to vertical blocks containing a .cal-day */
+    div[data-testid="stVerticalBlockBorderWrapper"]:has(.cal-day) button[data-testid="stBaseButton-secondary"],
+    div[data-testid="stVerticalBlock"]:has(.cal-day) button[data-testid="stBaseButton-secondary"] {
         background:  transparent !important;
         border:      none        !important;
         box-shadow:  none        !important;
