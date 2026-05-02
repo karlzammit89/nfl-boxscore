@@ -5,7 +5,7 @@ Run: streamlit run app.py
 
 import streamlit as st
 import pandas as pd
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
 import calendar as cal_mod
 
 from nfl.api import get_live_games
@@ -22,6 +22,45 @@ from nfl.stats import (
     get_pbp_by_quarter,
 )
 
+# ── Eastern Time helper ───────────────────────────────────────────────────────
+
+def to_et(utc_str: str) -> datetime:
+    """Parse ESPN UTC ISO string → Eastern Time datetime."""
+    try:
+        utc_dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
+        # EST = UTC-5, EDT = UTC-4 (DST: 2nd Sun Mar → 1st Sun Nov)
+        et_offset = timedelta(hours=-4)   # EDT (Apr–Oct)
+        # Simple DST check
+        month = utc_dt.month
+        if month < 3 or month == 12 or (month == 11 and utc_dt.day > 7):
+            et_offset = timedelta(hours=-5)  # EST
+        return utc_dt + et_offset
+    except Exception:
+        return datetime.now()
+
+def et_date(utc_str: str) -> date:
+    """Return the Eastern Time date for a UTC string."""
+    return to_et(utc_str).date()
+
+def et_time_str(utc_str: str) -> str:
+    """Return formatted time string in ET, e.g. '1:00 PM ET'."""
+    try:
+        et = to_et(utc_str)
+        return et.strftime("%-I:%M %p ET")
+    except Exception:
+        return ""
+
+def et_date_str(utc_str: str) -> str:
+    """Return ET date string for grouping."""
+    return et_date(utc_str).isoformat()
+
+def et_now() -> datetime:
+    """Current time in Eastern."""
+    utc_now = datetime.now(timezone.utc)
+    month = utc_now.month
+    offset = timedelta(hours=-4) if 3 <= month <= 10 else timedelta(hours=-5)
+    return utc_now.replace(tzinfo=None) + offset
+
 # ── Page Config ───────────────────────────────────────────────────────────────
 
 st.set_page_config(
@@ -31,223 +70,210 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ── CSS — clean white theme ───────────────────────────────────────────────────
+# ── CSS ───────────────────────────────────────────────────────────────────────
 
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
     [data-testid="stSidebar"]        { display: none; }
     [data-testid="collapsedControl"] { display: none; }
-    .block-container { padding-top: 1.5rem !important; max-width: 1200px; }
-    * { font-family: 'Inter', sans-serif; }
+    .block-container { padding-top: 1.2rem !important; max-width: 1100px; }
+    html, body, * { font-family: 'Inter', system-ui, sans-serif; }
 
-    /* Header */
-    .nfl-header {
-        background: #013369;
-        color: white;
-        padding: 1.1rem 1.8rem;
-        border-radius: 12px;
-        margin-bottom: 1.6rem;
+    /* ── Header ───────────────────────────────────── */
+    .app-header {
         display: flex;
         align-items: center;
-        gap: 1rem;
-        border-left: 5px solid #D50A0A;
+        gap: 12px;
+        padding: 14px 20px;
+        background: #111;
+        border-radius: 10px;
+        margin-bottom: 20px;
     }
-    .nfl-header h1 {
-        margin: 0;
-        font-family: 'Oswald', sans-serif;
-        font-size: 1.8rem;
+    .app-header .title  { font-size: 1.25rem; font-weight: 700; color: #fff; letter-spacing: -0.3px; }
+    .app-header .sub    { font-size: 0.75rem; color: #666; margin-top: 1px; }
+
+    /* ── Section label ────────────────────────────── */
+    .sec-label {
+        font-size: 0.65rem;
         font-weight: 700;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        color: #999;
+        margin-bottom: 10px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid #f0f0f0;
+    }
+
+    /* ── Breadcrumb ───────────────────────────────── */
+    .breadcrumb {
+        font-size: 0.78rem;
+        color: #999;
+        padding-top: 6px;
+    }
+    .breadcrumb .crumb-active { color: #111; font-weight: 600; }
+
+    /* ── Calendar cells ───────────────────────────── */
+    .dow-label {
+        text-align: center;
+        font-size: 0.62rem;
+        font-weight: 600;
         letter-spacing: 1.5px;
         text-transform: uppercase;
+        color: #bbb;
+        padding: 4px 0 10px;
     }
-    .nfl-header p { margin: 0.1rem 0 0; opacity: 0.6; font-size: 0.8rem; }
+    .cal-cell {
+        min-height: 70px;
+        border-radius: 8px;
+        padding: 8px;
+        border: 1px solid #f0f0f0;
+        background: #fafafa;
+        color: #ccc;
+        font-size: 0.72rem;
+        font-weight: 500;
+    }
+    .cal-cell.empty  { border-color: transparent; background: transparent; }
+    .cal-cell.active { border-color: #ddd; background: #fff; color: #111; }
+    .cal-cell.active:hover { border-color: #bbb; }
+    .cal-cell.today  { border-color: #111 !important; background: #fff !important; color: #111 !important; }
+    .game-pip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin-top: 7px;
+        font-size: 0.62rem;
+        font-weight: 600;
+        color: #555;
+        background: #f3f3f3;
+        border-radius: 6px;
+        padding: 2px 7px;
+    }
+    .cal-cell.today .game-pip { background: #111; color: #fff; }
+    .pip-dot {
+        width: 5px; height: 5px;
+        border-radius: 50%;
+        background: #e00;
+        animation: blink 1.4s infinite;
+        flex-shrink: 0;
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.25} }
 
-    /* Section labels */
-    .section-label {
-        font-family: 'Oswald', sans-serif;
-        font-size: 0.68rem;
-        letter-spacing: 2.5px;
+    /* ── View button ──────────────────────────────── */
+    div[data-testid="stButton"] > button {
+        background: #fff;
+        color: #111;
+        border: 1.5px solid #ddd;
+        border-radius: 7px;
+        font-size: 0.78rem;
+        font-weight: 600;
+        padding: 6px 0;
+        width: 100%;
+        transition: border-color .15s, background .15s;
+    }
+    div[data-testid="stButton"] > button:hover {
+        border-color: #111;
+        background: #111;
+        color: #fff;
+    }
+
+    /* ── Game card (day view) ─────────────────────── */
+    .game-card {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 14px 16px;
+        background: #fff;
+        border: 1px solid #ebebeb;
+        border-radius: 10px;
+        margin-bottom: 8px;
+    }
+    .team-name  { font-weight: 700; font-size: 0.9rem; color: #111; }
+    .team-rec   { font-size: 0.65rem; color: #aaa; margin-top: 1px; }
+    .game-score {
+        font-size: 1.3rem;
+        font-weight: 700;
+        color: #111;
+        min-width: 86px;
+        text-align: center;
+        letter-spacing: -0.5px;
+    }
+    .game-time  { font-size: 0.72rem; color: #888; min-width: 86px; text-align: center; }
+    .status-tag {
+        font-size: 0.62rem;
+        font-weight: 700;
+        letter-spacing: 0.5px;
         text-transform: uppercase;
-        color: #888;
-        margin-bottom: 0.7rem;
-        padding-bottom: 0.35rem;
-        border-bottom: 1px solid #e8e8e8;
+        padding: 3px 9px;
+        border-radius: 6px;
+        white-space: nowrap;
     }
+    .tag-live  { background: #fef2f2; color: #e00; border: 1px solid #fecaca; }
+    .tag-final { background: #f5f5f5; color: #555; border: 1px solid #e5e5e5; }
+    .tag-sched { background: #f0f7ff; color: #2563eb; border: 1px solid #bfdbfe; }
 
-    /* Breadcrumb */
-    .breadcrumb {
-        font-size: 0.75rem;
-        color: #aaa;
-        padding-top: 8px;
-        font-family: 'Oswald', sans-serif;
-        letter-spacing: 0.3px;
-    }
-    .breadcrumb b { color: #013369; }
-
-    /* Score banner */
+    /* ── Score banner (box score view) ───────────── */
     .score-banner {
-        background: #013369;
-        color: white;
-        border-radius: 12px;
-        padding: 1.5rem 2rem;
-        margin-bottom: 1.3rem;
+        background: #111;
+        color: #fff;
+        border-radius: 10px;
+        padding: 20px 28px;
+        margin-bottom: 18px;
         display: flex;
         align-items: center;
         justify-content: space-between;
     }
-    .score-team-name { font-family:'Oswald',sans-serif; font-size:1.3rem; font-weight:600; letter-spacing:0.5px; }
-    .score-record    { font-size:0.73rem; opacity:0.55; margin-top:3px; }
-    .score-num       { font-family:'Oswald',sans-serif; font-size:3.2rem; font-weight:700; }
-    .score-sep       { font-size:1.5rem; opacity:0.25; padding:0 0.7rem; }
-    .status-pill     { background:#D50A0A; color:white; font-size:0.68rem; font-weight:700;
-                       padding:0.22rem 0.8rem; border-radius:20px; text-transform:uppercase;
-                       letter-spacing:0.8px; display:inline-block; font-family:'Oswald',sans-serif; }
-    .status-pill.final { background:rgba(255,255,255,0.15); }
-    .status-pill.pre   { background:rgba(255,255,255,0.1); }
+    .bn-team-name { font-size: 1.1rem; font-weight: 700; }
+    .bn-team-rec  { font-size: 0.7rem; color: #777; margin-top: 2px; }
+    .bn-score     { font-size: 2.8rem; font-weight: 800; letter-spacing: -1px; }
+    .bn-sep       { font-size: 1.2rem; color: #444; padding: 0 8px; }
+    .bn-status    { font-size: 0.65rem; font-weight: 700; letter-spacing: 0.5px;
+                    text-transform: uppercase; padding: 3px 9px; border-radius: 6px; display: inline-block; }
+    .bn-live      { background: #e00; color: #fff; }
+    .bn-final     { background: #333; color: #aaa; }
+    .bn-pre       { background: #1e3a5f; color: #7aaed6; }
+    .bn-venue     { font-size: 0.68rem; color: #555; margin-top: 5px; }
 
-    /* Game card */
-    .game-card {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        padding: 12px 16px;
-        background: white;
-        border: 1px solid #e8e8e8;
-        border-radius: 10px;
-        margin-bottom: 8px;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-    }
-
-    /* Period filter */
-    .stRadio > div { flex-direction:row; gap:6px; flex-wrap:wrap; }
+    /* ── Period filter ────────────────────────────── */
+    .stRadio > div { flex-direction: row; gap: 6px; flex-wrap: wrap; }
     .stRadio > div > label {
         background: #f5f5f5;
-        border: 1px solid #e0e0e0;
-        border-radius: 20px;
-        padding: 4px 16px;
-        font-size: 0.78rem;
+        border: 1px solid #e5e5e5;
+        border-radius: 6px;
+        padding: 5px 14px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        color: #444;
         cursor: pointer;
-        font-family: 'Oswald', sans-serif;
-        letter-spacing: 0.5px;
-        color: #555;
     }
 
-    /* Buttons */
-    div[data-testid="stButton"] > button {
-        font-family: 'Oswald', sans-serif;
-        letter-spacing: 0.5px;
-        border-radius: 8px;
-        border: 1.5px solid #013369;
-        background: white;
-        color: #013369;
-        font-size: 0.84rem;
-        padding: 0.42rem 0;
-        width: 100%;
-        transition: all 0.15s;
-    }
-    div[data-testid="stButton"] > button:hover {
-        background: #013369;
-        color: white;
-    }
+    /* ── Tabs ─────────────────────────────────────── */
+    .stTabs [data-baseweb="tab"] { font-size: 0.82rem; font-weight: 500; }
 
-    /* Tabs */
-    .stTabs [data-baseweb="tab"] {
-        font-family: 'Oswald', sans-serif;
-        letter-spacing: 0.5px;
-        font-size: 0.85rem;
-    }
-
-    /* Period note */
+    /* ── Period note ──────────────────────────────── */
     .period-note {
-        background: #fff8f0;
-        border-left: 3px solid #D50A0A;
+        background: #fffbeb;
+        border-left: 3px solid #f59e0b;
+        padding: 6px 12px;
+        font-size: 0.76rem;
+        color: #78716c;
         border-radius: 0 6px 6px 0;
-        padding: 0.4rem 0.9rem;
-        font-size: 0.77rem;
-        color: #888;
-        margin-bottom: 0.7rem;
+        margin-bottom: 10px;
     }
 
-    /* Calendar grid */
-    .cal-grid {
-        display: grid;
-        grid-template-columns: repeat(7, 1fr);
-        gap: 4px;
-        margin-top: 4px;
-    }
-    .cal-dow {
-        text-align: center;
-        font-size: 0.62rem;
-        font-weight: 700;
-        letter-spacing: 1.8px;
-        text-transform: uppercase;
-        color: #aaa;
-        padding: 4px 0 8px;
-    }
-    .cal-day {
-        min-height: 64px;
-        border-radius: 8px;
-        border: 1px solid #efefef;
-        padding: 6px 7px;
-        background: white;
-        font-size: 0.72rem;
-        font-weight: 600;
-        color: #bbb;
-    }
-    .cal-day.has-games {
-        border-color: #013369;
-        background: #f0f4fa;
-        color: #013369;
-        font-weight: 700;
-    }
-    .cal-day.today {
-        border-color: #D50A0A !important;
-        background: #fff5f5 !important;
-        color: #D50A0A !important;
-    }
-    .cal-day.empty {
-        border-color: transparent;
-        background: transparent;
-    }
-    .game-count-badge {
-        display: inline-block;
-        margin-top: 8px;
-        background: #013369;
-        color: white;
-        font-size: 0.6rem;
-        font-weight: 700;
-        padding: 2px 8px;
-        border-radius: 20px;
-        font-family: 'Oswald', sans-serif;
-        letter-spacing: 0.3px;
-    }
-    .cal-day.today .game-count-badge { background: #D50A0A; }
-
-    /* Live dot */
-    .live-dot {
-        display: inline-block;
-        width: 6px; height: 6px;
-        background: #D50A0A;
-        border-radius: 50%;
-        margin-right: 3px;
-        vertical-align: middle;
-        animation: blink 1.2s infinite;
-    }
-    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
-
-    /* Legend */
+    /* ── Legend ───────────────────────────────────── */
     .cal-legend {
         display: flex;
         gap: 16px;
-        font-size: 0.68rem;
+        font-size: 0.67rem;
         color: #aaa;
         margin-top: 10px;
+        align-items: center;
     }
-    .legend-box {
+    .l-swatch {
         display: inline-block;
-        width: 10px; height: 10px;
+        width: 9px; height: 9px;
         border-radius: 2px;
         margin-right: 4px;
         vertical-align: middle;
@@ -257,29 +283,31 @@ st.markdown("""
 
 # ── Session state ─────────────────────────────────────────────────────────────
 
-for key, default in {
-    "view":                 "calendar",
-    "selected_game_id":     None,
-    "selected_game":        None,
-    "selected_date":        None,
-    "selected_date_games":  [],
-    "cal_year":             datetime.now().year,
-    "cal_month":            datetime.now().month,
+for k, v in {
+    "view":                "calendar",
+    "selected_game_id":    None,
+    "selected_game":       None,
+    "selected_date":       None,
+    "selected_date_games": [],
+    "cal_year":            et_now().year,
+    "cal_month":           et_now().month,
 }.items():
-    if key not in st.session_state:
-        st.session_state[key] = default
+    if k not in st.session_state:
+        st.session_state[k] = v
 
-MONTH_NAMES = ["January","February","March","April","May","June",
-               "July","August","September","October","November","December"]
+MONTH_NAMES = [
+    "January","February","March","April","May","June",
+    "July","August","September","October","November","December"
+]
 
 # ── Header ────────────────────────────────────────────────────────────────────
 
 st.markdown("""
-<div class="nfl-header">
-  <div style="font-size:2rem">🏈</div>
+<div class="app-header">
+  <span style="font-size:1.5rem">🏈</span>
   <div>
-    <h1>NFL Box Score</h1>
-    <p>Live stats · Quarter &amp; half splits · Play-by-play</p>
+    <div class="title">NFL Box Score</div>
+    <div class="sub">Live stats · Quarter &amp; half splits · All times Eastern</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -296,25 +324,16 @@ def _fetch_week(week: int, season_type: int) -> list:
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_games_for_month(year: int, month: int) -> list:
     """
-    Fetch all games (regular + playoffs + preseason) for a given month.
-
-    Key fix: get_live_games now accepts season_type so ESPN's
-    seasontype param is actually sent correctly.
-
-    Playoff structure (season_type=3):
-      week 1 = Wild Card weekend
-      week 2 = Divisional round
-      week 3 = Conference Championships
-      week 4 = Pro Bowl
-      week 5 = Super Bowl
+    Fetch all game types (regular + playoffs + preseason) for given ET month.
+    Groups by Eastern Time date so games at e.g. 1 AM UTC appear on correct day.
     """
     all_games: list = []
     seen_ids:  set  = set()
 
     configs = [
-        (2, range(1, 23)),   # Regular season (includes weeks 1-18, buffer to 22)
-        (3, range(1, 6)),    # All playoff rounds weeks 1-5
-        (1, range(0, 5)),    # Preseason weeks 0-4
+        (2, range(1, 23)),   # Regular season weeks 1–22
+        (3, range(1, 6)),    # Playoffs: WC(1) Div(2) Conf(3) ProBowl(4) SB(5)
+        (1, range(0, 5)),    # Preseason weeks 0–4
     ]
 
     for season_type, weeks in configs:
@@ -324,7 +343,8 @@ def fetch_games_for_month(year: int, month: int) -> list:
                 if g["id"] in seen_ids:
                     continue
                 try:
-                    gdate = datetime.fromisoformat(g["date"].replace("Z","")).date()
+                    # Use ET date for grouping — critical for late-night games
+                    gdate = et_date(g["date"])
                     if gdate.year == year and gdate.month == month:
                         all_games.append(g)
                         seen_ids.add(g["id"])
@@ -349,7 +369,7 @@ def load_all_stats(game_id: str) -> dict:
     }
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  VIEW: CALENDAR
+#  VIEW — CALENDAR
 # ══════════════════════════════════════════════════════════════════════════════
 
 if st.session_state.view == "calendar":
@@ -360,126 +380,106 @@ if st.session_state.view == "calendar":
     with st.spinner(f"Loading {MONTH_NAMES[month-1]} {year}…"):
         month_games = fetch_games_for_month(year, month)
 
+    # Group by Eastern Time date string
     games_by_date: dict = {}
     for g in month_games:
-        try:
-            gdate = datetime.fromisoformat(g["date"].replace("Z","")).date()
-            games_by_date.setdefault(gdate.isoformat(), []).append(g)
-        except Exception:
-            pass
+        ds = et_date_str(g["date"])
+        games_by_date.setdefault(ds, []).append(g)
 
-    # ── Navigation ────────────────────────────────────────────────────────────
-    nav1, nav2, nav3 = st.columns([1, 2, 1])
-    with nav1:
+    # ── Nav ───────────────────────────────────────────────────────────────────
+    c1, c2, c3 = st.columns([1, 3, 1])
+    with c1:
         if st.button("← Prev", use_container_width=True):
-            m = st.session_state.cal_month - 1
-            y = st.session_state.cal_year
-            if m < 1: m = 12; y -= 1
-            st.session_state.cal_month = m
-            st.session_state.cal_year  = y
+            m, y = st.session_state.cal_month - 1, st.session_state.cal_year
+            if m < 1: m, y = 12, y - 1
+            st.session_state.cal_month, st.session_state.cal_year = m, y
             st.rerun()
-    with nav2:
+    with c2:
         st.markdown(
-            f"<div style='text-align:center;font-weight:700;padding-top:5px;"
-            f"font-family:Oswald,sans-serif;font-size:1.15rem;letter-spacing:0.5px;"
-            f"color:#013369'>{MONTH_NAMES[month-1]} {year}</div>",
+            f"<div style='text-align:center;font-size:1rem;font-weight:700;"
+            f"color:#111;padding-top:4px'>{MONTH_NAMES[month-1]} {year}</div>",
             unsafe_allow_html=True,
         )
-    with nav3:
+    with c3:
         if st.button("Next →", use_container_width=True):
-            m = st.session_state.cal_month + 1
-            y = st.session_state.cal_year
-            if m > 12: m = 1; y += 1
-            st.session_state.cal_month = m
-            st.session_state.cal_year  = y
+            m, y = st.session_state.cal_month + 1, st.session_state.cal_year
+            if m > 12: m, y = 1, y + 1
+            st.session_state.cal_month, st.session_state.cal_year = m, y
             st.rerun()
 
-    # ── Calendar grid (pure Streamlit — no HTML component, no JS) ─────────────
-    today_str   = date.today().isoformat()
-    first_dow   = (date(year, month, 1).weekday() + 1) % 7   # Sun=0
-    days_in_mon = cal_mod.monthrange(year, month)[1]
+    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
-    # Day-of-week headers
-    DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
-    dow_cols = st.columns(7)
+    # ── Day-of-week headers ───────────────────────────────────────────────────
+    DOW      = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
+    hdr_cols = st.columns(7)
     for i, d in enumerate(DOW):
-        with dow_cols[i]:
-            st.markdown(
-                f"<div class='cal-dow'>{d}</div>",
-                unsafe_allow_html=True,
-            )
+        with hdr_cols[i]:
+            st.markdown(f"<div class='dow-label'>{d}</div>", unsafe_allow_html=True)
 
-    # Build list of cells: None = empty, int = day number
-    cells = [None] * first_dow + list(range(1, days_in_mon + 1))
-    while len(cells) % 7 != 0:
+    # ── Grid ─────────────────────────────────────────────────────────────────
+    today_str   = et_now().date().isoformat()
+    first_dow   = (date(year, month, 1).weekday() + 1) % 7
+    days_in_mon = cal_mod.monthrange(year, month)[1]
+    cells       = [None] * first_dow + list(range(1, days_in_mon + 1))
+    while len(cells) % 7:
         cells.append(None)
 
-    # Render rows of 7
     for row_start in range(0, len(cells), 7):
-        row_cells = cells[row_start:row_start + 7]
+        row  = cells[row_start:row_start + 7]
         cols = st.columns(7)
-        for col_idx, day in enumerate(row_cells):
-            with cols[col_idx]:
+        for ci, day in enumerate(row):
+            with cols[ci]:
                 if day is None:
-                    st.markdown("<div class='cal-day empty'></div>", unsafe_allow_html=True)
+                    st.markdown("<div class='cal-cell empty'></div>", unsafe_allow_html=True)
+                    continue
+
+                ds         = f"{year}-{month:02d}-{day:02d}"
+                day_games  = games_by_date.get(ds, [])
+                has_games  = bool(day_games)
+                is_today   = ds == today_str
+                has_live   = any(g["status_state"] == "in" for g in day_games)
+
+                if is_today:
+                    cell_cls = "cal-cell today"
+                elif has_games:
+                    cell_cls = "cal-cell active"
                 else:
-                    ds        = f"{year}-{month:02d}-{day:02d}"
-                    is_today  = ds == today_str
-                    day_games = games_by_date.get(ds, [])
-                    has_games = len(day_games) > 0
-                    has_live  = any(g["status_state"] == "in" for g in day_games)
+                    cell_cls = "cal-cell"
 
-                    day_cls = "cal-day"
-                    if has_games: day_cls += " has-games"
-                    if is_today:  day_cls += " today"
+                pip_html = ""
+                if has_games:
+                    dot = "<span class='pip-dot'></span>" if has_live else ""
+                    cnt = len(day_games)
+                    pip_html = f"<div class='game-pip'>{dot}{cnt} game{'s' if cnt>1 else ''}</div>"
 
-                    if has_games:
-                        live_html  = "<span class='live-dot'></span>" if has_live else ""
-                        badge_html = (
-                            f"<div class='game-count-badge'>"
-                            f"{live_html}{len(day_games)} game{'s' if len(day_games)>1 else ''}"
-                            f"</div>"
-                        )
-                        st.markdown(
-                            f"<div class='{day_cls}'>{day}<br>{badge_html}</div>",
-                            unsafe_allow_html=True,
-                        )
-                        # Clickable button underneath the visual cell
-                        if st.button(
-                            "View",
-                            key=f"day_{ds}",
-                            use_container_width=True,
-                        ):
-                            st.session_state.selected_date       = ds
-                            st.session_state.selected_date_games = day_games
-                            st.session_state.view = "day"
-                            st.rerun()
-                    else:
-                        st.markdown(
-                            f"<div class='{day_cls}'>{day}</div>",
-                            unsafe_allow_html=True,
-                        )
+                st.markdown(
+                    f"<div class='{cell_cls}'><div>{day}</div>{pip_html}</div>",
+                    unsafe_allow_html=True,
+                )
+
+                if has_games:
+                    if st.button("View", key=f"d_{ds}", use_container_width=True):
+                        st.session_state.selected_date       = ds
+                        st.session_state.selected_date_games = day_games
+                        st.session_state.view = "day"
+                        st.rerun()
 
     # Legend
     st.markdown("""
     <div class="cal-legend">
-      <span><span class="legend-box" style="background:#f0f4fa;border:1px solid #013369"></span>Has games</span>
-      <span><span class="legend-box" style="background:#fff5f5;border:1px solid #D50A0A"></span>Today</span>
-      <span><span class="live-dot" style="width:7px;height:7px"></span>Live game</span>
+      <span><span class="l-swatch" style="background:#f3f3f3;border:1px solid #ddd"></span>Has games</span>
+      <span><span class="l-swatch" style="background:#111"></span>Today</span>
+      <span><span class="pip-dot" style="width:7px;height:7px;display:inline-block;
+            background:#e00;border-radius:50%;vertical-align:middle;margin-right:4px"></span>Live</span>
     </div>
     """, unsafe_allow_html=True)
 
     if not month_games:
-        st.markdown(
-            "<div style='text-align:center;padding:2rem;color:#aaa'>"
-            "No games found this month. NFL season runs August – February."
-            "</div>",
-            unsafe_allow_html=True,
-        )
+        st.info("No games found this month. The NFL season runs August – February.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  VIEW: DAY  — games on selected date
+#  VIEW — DAY  (game list for selected date)
 # ══════════════════════════════════════════════════════════════════════════════
 
 elif st.session_state.view == "day":
@@ -491,8 +491,9 @@ elif st.session_state.view == "day":
         st.session_state.view = "calendar"
         st.rerun()
 
+    # Format ET date label
     try:
-        d_obj      = datetime.fromisoformat(ds)
+        d_obj      = date.fromisoformat(ds)
         date_label = d_obj.strftime("%A, %B %-d %Y")
     except Exception:
         date_label = ds
@@ -505,56 +506,72 @@ elif st.session_state.view == "day":
             st.rerun()
     with bc:
         st.markdown(
-            f'<div class="breadcrumb">Calendar &rsaquo; <b>{date_label}</b></div>',
+            f'<div class="breadcrumb">Calendar '
+            f'<span style="color:#ccc">›</span> '
+            f'<span class="crumb-active">{date_label}</span></div>',
             unsafe_allow_html=True,
         )
 
     st.markdown(
-        f'<div class="section-label">{date_label} — '
-        f'{len(games)} game{"s" if len(games)>1 else ""}</div>',
+        f'<div class="sec-label" style="margin-top:14px">'
+        f'{date_label} · {len(games)} game{"s" if len(games)>1 else ""}'
+        f'</div>',
         unsafe_allow_html=True,
     )
 
-    for g in games:
+    # Sort: live first, then by ET kickoff time
+    def sort_key(g):
+        order = {"in": 0, "post": 1, "pre": 2}
+        return (order.get(g["status_state"], 3), g.get("date",""))
+
+    for g in sorted(games, key=sort_key):
         away  = g["away"]; home = g["home"]
         state = g["status_state"]
 
+        # Status tag
         if state == "in":
-            badge = f'<span style="background:#D50A0A;color:white;font-size:0.65rem;font-weight:700;padding:3px 10px;border-radius:10px">🔴 LIVE · Q{g["period"]}</span>'
+            tag = f'<span class="status-tag tag-live">● Live · Q{g["period"]}</span>'
         elif state == "post":
-            badge = '<span style="background:#f0f0f0;color:#555;font-size:0.65rem;font-weight:700;padding:3px 10px;border-radius:10px">Final</span>'
+            tag = '<span class="status-tag tag-final">Final</span>'
         else:
-            badge = '<span style="background:#e8f0fe;color:#013369;font-size:0.65rem;font-weight:700;padding:3px 10px;border-radius:10px">Scheduled</span>'
+            tag = '<span class="status-tag tag-sched">Scheduled</span>'
 
-        score_str  = f"{away['score']}  –  {home['score']}" if state != "pre" else "vs"
-        away_logo  = f'<img src="{away["logo"]}" style="width:38px;height:38px;object-fit:contain;vertical-align:middle">' if away.get("logo") else ""
-        home_logo  = f'<img src="{home["logo"]}" style="width:38px;height:38px;object-fit:contain;vertical-align:middle">' if home.get("logo") else ""
+        # Score or kickoff time in ET
+        if state == "pre":
+            center_html = f'<div class="game-time">{et_time_str(g["date"])}</div>'
+        else:
+            center_html = f'<div class="game-score">{away["score"]} – {home["score"]}</div>'
 
-        c_info, c_btn = st.columns([6, 1])
-        with c_info:
+        al = f'<img src="{away["logo"]}" style="width:36px;height:36px;object-fit:contain">' if away.get("logo") else ""
+        hl = f'<img src="{home["logo"]}" style="width:36px;height:36px;object-fit:contain">' if home.get("logo") else ""
+
+        col_card, col_btn = st.columns([6, 1])
+        with col_card:
             st.markdown(f"""
             <div class="game-card">
               <div style="display:flex;align-items:center;gap:10px;flex:1">
-                {away_logo}
+                {al}
                 <div>
-                  <div style="font-weight:700;font-size:0.95rem;color:#013369">{away['abbr']}</div>
-                  <div style="font-size:0.65rem;color:#aaa">{away['record']}</div>
+                  <div class="team-name">{away["abbr"]}</div>
+                  <div class="team-rec">{away["record"]}</div>
                 </div>
               </div>
-              <div style="font-family:'Oswald',sans-serif;font-size:1.3rem;font-weight:700;color:#013369;min-width:80px;text-align:center">{score_str}</div>
-              <div style="display:flex;align-items:center;gap:10px;flex:1;flex-direction:row-reverse">
-                {home_logo}
+              {center_html}
+              <div style="display:flex;align-items:center;gap:10px;flex:1;
+                          flex-direction:row-reverse">
+                {hl}
                 <div style="text-align:right">
-                  <div style="font-weight:700;font-size:0.95rem;color:#013369">{home['abbr']}</div>
-                  <div style="font-size:0.65rem;color:#aaa">{home['record']}</div>
+                  <div class="team-name">{home["abbr"]}</div>
+                  <div class="team-rec">{home["record"]}</div>
                 </div>
               </div>
-              <div>{badge}</div>
-              <div style="font-size:0.65rem;color:#ccc">{g.get('venue','')}</div>
+              {tag}
+              <div style="font-size:0.65rem;color:#ccc;min-width:80px;
+                          text-align:right">{g.get("venue","")}</div>
             </div>
             """, unsafe_allow_html=True)
-        with c_btn:
-            st.markdown("<div style='margin-top:10px'>", unsafe_allow_html=True)
+        with col_btn:
+            st.markdown("<div style='margin-top:8px'>", unsafe_allow_html=True)
             if st.button("Box Score", key=f"bs_{g['id']}", use_container_width=True):
                 st.session_state.selected_game_id = g["id"]
                 st.session_state.selected_game    = g
@@ -564,7 +581,7 @@ elif st.session_state.view == "day":
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  VIEW: BOX SCORE
+#  VIEW — BOX SCORE
 # ══════════════════════════════════════════════════════════════════════════════
 
 elif st.session_state.view == "boxscore":
@@ -576,9 +593,10 @@ elif st.session_state.view == "boxscore":
         st.session_state.view = "calendar"
         st.rerun()
 
+    # Format date label in ET
     try:
         ds         = st.session_state.selected_date or ""
-        d_obj      = datetime.fromisoformat(ds)
+        d_obj      = date.fromisoformat(ds)
         date_label = d_obj.strftime("%b %-d")
     except Exception:
         date_label = "Schedule"
@@ -587,7 +605,7 @@ elif st.session_state.view == "boxscore":
     home_abbr = game["home"]["abbr"]
 
     # Back buttons + breadcrumb
-    b1, b2, b3, bc = st.columns([1.4, 1.4, 1.2, 5])
+    b1, b2, b3, bc = st.columns([1.4, 1.6, 1.2, 5])
     with b1:
         if st.button("← Calendar", use_container_width=True):
             st.session_state.view = "calendar"
@@ -602,77 +620,93 @@ elif st.session_state.view == "boxscore":
             st.rerun()
     with bc:
         st.markdown(
-            f'<div class="breadcrumb">Calendar &rsaquo; '
-            f'<b>{date_label}</b> &rsaquo; '
-            f'<b>{away_abbr} vs {home_abbr}</b></div>',
+            f'<div class="breadcrumb">'
+            f'Calendar <span style="color:#ccc">›</span> '
+            f'<span style="color:#555">{date_label}</span> '
+            f'<span style="color:#ccc">›</span> '
+            f'<span class="crumb-active">{away_abbr} vs {home_abbr}</span>'
+            f'</div>',
             unsafe_allow_html=True,
         )
 
-    # Score Banner
+    # ── Score Banner ──────────────────────────────────────────────────────────
     away = game["away"]; home = game["home"]
-    sc   = {"in":"","post":"final","pre":"pre"}.get(game["status_state"],"")
-    clk  = (
-        f'<span style="opacity:0.6;font-size:0.74rem;margin-left:8px">'
-        f'{game["clock"]} · Q{game["period"]}</span>'
-        if game["status_state"] == "in" else ""
-    )
-    al = f'<img src="{away["logo"]}" style="width:56px;height:56px;object-fit:contain">' if away.get("logo") else ""
-    hl = f'<img src="{home["logo"]}" style="width:56px;height:56px;object-fit:contain">' if home.get("logo") else ""
+    state = game["status_state"]
+
+    if state == "in":
+        status_html = (
+            f'<span class="bn-status bn-live">Live</span>'
+            f'<span style="color:#555;font-size:0.72rem;margin-left:8px">'
+            f'{game["clock"]} · Q{game["period"]}</span>'
+        )
+    elif state == "post":
+        status_html = '<span class="bn-status bn-final">Final</span>'
+    else:
+        # Show ET kickoff for scheduled games
+        status_html = (
+            f'<span class="bn-status bn-pre">Scheduled</span>'
+            f'<span style="color:#666;font-size:0.72rem;margin-left:8px">'
+            f'{et_time_str(game["date"])}</span>'
+        )
+
+    al = f'<img src="{away["logo"]}" style="width:52px;height:52px;object-fit:contain">' if away.get("logo") else ""
+    hl = f'<img src="{home["logo"]}" style="width:52px;height:52px;object-fit:contain">' if home.get("logo") else ""
 
     st.markdown(f"""
     <div class="score-banner">
       <div style="display:flex;align-items:center;gap:14px">
         {al}
         <div>
-          <div class="score-team-name">{away['team']}</div>
-          <div class="score-record">{away['record']}</div>
+          <div class="bn-team-name">{away["team"]}</div>
+          <div class="bn-team-rec">{away["record"]}</div>
         </div>
       </div>
       <div style="text-align:center">
         <div>
-          <span class="score-num">{away['score']}</span>
-          <span class="score-sep"> – </span>
-          <span class="score-num">{home['score']}</span>
+          <span class="bn-score">{away["score"]}</span>
+          <span class="bn-sep"> – </span>
+          <span class="bn-score">{home["score"]}</span>
         </div>
-        <div style="margin-top:7px">
-          <span class="status-pill {sc}">{game['status']}</span>
-          {clk}
-        </div>
-        <div style="opacity:0.4;font-size:0.72rem;margin-top:5px">{game.get('venue','')}</div>
+        <div style="margin-top:8px">{status_html}</div>
+        <div class="bn-venue">{game.get("venue","")}</div>
       </div>
       <div style="display:flex;align-items:center;gap:14px;flex-direction:row-reverse">
         {hl}
         <div style="text-align:right">
-          <div class="score-team-name">{home['team']}</div>
-          <div class="score-record">{home['record']}</div>
+          <div class="bn-team-name">{home["team"]}</div>
+          <div class="bn-team-rec">{home["record"]}</div>
         </div>
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # Load stats
+    # ── Load stats ────────────────────────────────────────────────────────────
     with st.spinner("Loading box score…"):
         data = load_all_stats(game_id)
     pbp = data["pbp"]
 
-    # Linescore
-    st.markdown('<div class="section-label">Score by Quarter</div>', unsafe_allow_html=True)
+    # ── Linescore ─────────────────────────────────────────────────────────────
+    st.markdown('<div class="sec-label">Score by Quarter</div>', unsafe_allow_html=True)
     ls_df = data["linescore"]
     if ls_df is not None and not ls_df.empty:
-        def hl_ls(df):
+        def style_ls(df):
             s = pd.DataFrame("", index=df.index, columns=df.columns)
-            for c in ["1H","2H"]:
+            for c in ["1H", "2H"]:
                 if c in df.columns:
-                    s[c] = "background:#f0f4fa;font-weight:600"
+                    s[c] = "background:#f8f8f8;font-weight:600"
             if "Total" in df.columns:
-                s["Total"] = "font-weight:800;background:#e8f0fe"
+                s["Total"] = "background:#f0f0f0;font-weight:700"
             return s
-        st.dataframe(ls_df.style.apply(hl_ls, axis=None), use_container_width=True, hide_index=True)
+        st.dataframe(
+            ls_df.style.apply(style_ls, axis=None),
+            use_container_width=True,
+            hide_index=True,
+        )
     else:
-        st.info("Linescore not available yet.")
+        st.info("Linescore not yet available.")
 
-    # Period filter
-    st.markdown('<div class="section-label" style="margin-top:1.5rem">Player Stats</div>', unsafe_allow_html=True)
+    # ── Period filter ─────────────────────────────────────────────────────────
+    st.markdown('<div class="sec-label" style="margin-top:18px">Player Stats</div>', unsafe_allow_html=True)
 
     available = ["Full Game"]
     for pk, lbl in [("1H","1st Half"),("2H","2nd Half"),("Q1","Q1"),("Q2","Q2"),("Q3","Q3"),("Q4","Q4")]:
@@ -682,10 +716,15 @@ elif st.session_state.view == "boxscore":
         if k.startswith("OT") and not pbp[k].empty and k not in available:
             available.append(k)
 
-    period_filter = st.radio("Period:", options=available, horizontal=True, label_visibility="collapsed")
+    period_filter = st.radio(
+        "Period:",
+        options=available,
+        horizontal=True,
+        label_visibility="collapsed",
+    )
 
     def get_pbp_key(pf):
-        return {"1st Half":"1H","2nd Half":"2H"}.get(pf, pf)
+        return {"1st Half": "1H", "2nd Half": "2H"}.get(pf, pf)
 
     def filter_df(df, pf):
         if pf == "Full Game" or df is None or df.empty:
@@ -715,57 +754,71 @@ elif st.session_state.view == "boxscore":
             )
         if sort and sort in out.columns:
             try:
-                tmp = out.copy()
+                tmp       = out.copy()
                 tmp[sort] = pd.to_numeric(tmp[sort], errors="coerce")
-                out = tmp.sort_values(sort, ascending=False)
+                out       = tmp.sort_values(sort, ascending=False)
             except Exception:
                 pass
         st.dataframe(out, use_container_width=True, hide_index=True)
 
-    t1,t2,t3,t4,t5,t6,t7 = st.tabs(["Passing","Rushing","Receiving","Defense","Kicking","Returning","Team"])
-    with t1: show_df(data["passing"],   period_filter, "YDS")
-    with t2: show_df(data["rushing"],   period_filter, "YDS")
-    with t3: show_df(data["receiving"], period_filter, "YDS")
-    with t4: show_df(data["defense"],   period_filter, "TOT")
-    with t5: show_df(data["kicking"],   period_filter)
-    with t6: show_df(data["returning"], period_filter, "YDS")
-    with t7:
+    # Stat tabs
+    tabs = st.tabs(["Passing","Rushing","Receiving","Defense","Kicking","Returning","Team"])
+    with tabs[0]: show_df(data["passing"],   period_filter, "YDS")
+    with tabs[1]: show_df(data["rushing"],   period_filter, "YDS")
+    with tabs[2]: show_df(data["receiving"], period_filter, "YDS")
+    with tabs[3]: show_df(data["defense"],   period_filter, "TOT")
+    with tabs[4]: show_df(data["kicking"],   period_filter)
+    with tabs[5]: show_df(data["returning"], period_filter, "YDS")
+    with tabs[6]:
         t = data["team"]
         if t is not None and not t.empty:
             st.dataframe(t, use_container_width=True, hide_index=True)
         else:
             st.info("No team data.")
 
-    # Scoring summary
-    st.markdown('<div class="section-label" style="margin-top:1.5rem">Scoring Summary</div>', unsafe_allow_html=True)
+    # ── Scoring Summary ───────────────────────────────────────────────────────
+    st.markdown('<div class="sec-label" style="margin-top:18px">Scoring Summary</div>', unsafe_allow_html=True)
     sdf = data["scoring"]
     if sdf is not None and not sdf.empty:
         pf = period_filter
-        if pf == "Full Game":       fsdf = sdf
-        elif pf in ("1st Half","2nd Half"): fsdf = sdf[sdf["Half"] == pf]
-        elif pf.startswith("OT"):   fsdf = sdf[sdf["Half"].str.startswith("OT", na=False)]
-        else:                       fsdf = sdf[sdf["Quarter"] == pf]
+        if pf == "Full Game":
+            fsdf = sdf
+        elif pf in ("1st Half", "2nd Half"):
+            fsdf = sdf[sdf["Half"] == pf]
+        elif pf.startswith("OT"):
+            fsdf = sdf[sdf["Half"].str.startswith("OT", na=False)]
+        else:
+            fsdf = sdf[sdf["Quarter"] == pf]
+
         if fsdf.empty:
             st.info(f"No scoring plays in {pf}.")
         else:
             for half in fsdf["Half"].unique():
                 hdf = fsdf[fsdf["Half"] == half]
                 st.markdown(f"**{half}**")
-                st.dataframe(hdf.drop(columns=["Half"]), use_container_width=True, hide_index=True)
+                st.dataframe(
+                    hdf.drop(columns=["Half"]),
+                    use_container_width=True,
+                    hide_index=True,
+                )
     else:
         st.info("No scoring plays yet.")
 
-    # Play-by-play
-    st.markdown('<div class="section-label" style="margin-top:1.5rem">Play-by-Play</div>', unsafe_allow_html=True)
+    # ── Play-by-Play ──────────────────────────────────────────────────────────
+    st.markdown('<div class="sec-label" style="margin-top:18px">Play-by-Play</div>', unsafe_allow_html=True)
     if pbp:
         pf = period_filter
         k  = get_pbp_key(pf)
         if pf == "Full Game":
             show = {x: pbp[x] for x in ["Q1","Q2","Q3","Q4"] if x in pbp}
             show.update({x: pbp[x] for x in pbp if x.startswith("OT")})
-        elif pf == "1st Half": show = {x: pbp[x] for x in ["Q1","Q2"] if x in pbp}
-        elif pf == "2nd Half": show = {x: pbp[x] for x in ["Q3","Q4"] if x in pbp}
-        else:                  show = {k: pbp[k]} if k in pbp else {}
+        elif pf == "1st Half":
+            show = {x: pbp[x] for x in ["Q1","Q2"] if x in pbp}
+        elif pf == "2nd Half":
+            show = {x: pbp[x] for x in ["Q3","Q4"] if x in pbp}
+        else:
+            show = {k: pbp[k]} if k in pbp else {}
+
         if show:
             ptabs = st.tabs(list(show.keys()))
             for tab, key in zip(ptabs, show.keys()):
@@ -779,4 +832,7 @@ elif st.session_state.view == "boxscore":
         st.info("Play-by-play not yet available.")
 
     st.markdown("---")
-    st.caption(f"Updated: {datetime.now().strftime('%H:%M:%S')}  ·  ESPN public API  ·  Not affiliated with ESPN or the NFL")
+    st.caption(
+        f"Updated {datetime.now().strftime('%-I:%M %p')} ET  ·  "
+        "Data: ESPN public API  ·  Not affiliated with ESPN or the NFL"
+    )
