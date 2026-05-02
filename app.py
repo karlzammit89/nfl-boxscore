@@ -103,7 +103,7 @@ html, body, * { font-family: 'Inter', system-ui, sans-serif; }
     text-align: center;
     font-size: 1.15rem;
     font-weight: 800;
-    color: var(--text-color, #1a1a2e);
+    color: inherit;
     padding-top: 4px;
     letter-spacing: -0.3px;
 }
@@ -159,18 +159,20 @@ html, body, * { font-family: 'Inter', system-ui, sans-serif; }
     cursor: pointer;
 }
 
-/* Game count pill */
+/* Game count pill — pinned bottom-right so it never overlaps the day number */
 .game-pip {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    margin-top: 8px;
-    font-size: 0.62rem;
+    gap: 4px;
+    font-size: 0.6rem;
     font-weight: 700;
     color: #2563eb;
     background: #dbeafe;
     border-radius: 6px;
-    padding: 2px 8px;
+    padding: 2px 7px;
 }
 .cal-cell.today .game-pip { background: #fecdd3; color: #be123c; }
 
@@ -453,21 +455,89 @@ if st.session_state.view == "calendar":
                     pip = f"<div class='game-pip'>{dot}{n} game{'s' if n>1 else ''}</div>"
 
                 if has_games:
-                    # Fix 5: entire cell is the button — use label with HTML
-                    # We render the visual cell then immediately a zero-height
-                    # button that covers it via negative margin trick.
-                    # Cleanest Streamlit-native approach: render cell HTML,
-                    # then a button whose CSS makes it look invisible/full-width.
-                    st.markdown(f"<div class='{cls}'>{day}{pip}</div>", unsafe_allow_html=True)
+                    # Each game-day gets a unique CSS class keyed to its date.
+                    # We inject a <style> block that makes that specific button
+                    # look exactly like the calendar cell — no separate div needed.
+                    safe_ds = ds.replace("-", "")
+                    btn_cls = f"calday{safe_ds}"
 
-                    # Style this specific button to be compact and blend
-                    # (the global button style is overridden per-cell below)
-                    btn_key = f"d_{ds}"
+                    if is_today:
+                        border_col  = "#e63946"
+                        day_col     = "#e63946"
+                        pip_bg      = "#fecdd3"
+                        pip_col     = "#be123c"
+                    else:
+                        border_col  = "#2563eb"
+                        day_col     = "#2563eb"
+                        pip_bg      = "#dbeafe"
+                        pip_col     = "#2563eb"
+
+                    dot_html = "<span style='width:6px;height:6px;border-radius:50%;background:#e63946;flex-shrink:0;display:inline-block'></span>" if has_live else ""
+                    n        = len(day_games)
+                    label    = f"{dot_html}{n} game{'s' if n>1 else ''}"
+
+                    # Full button styled as the cell — no separate div, no overlay
+                    st.markdown(f"""
+                    <style>
+                    div[data-testid="stButton"]:has(button.{btn_cls}) > button {{
+                        background: var(--secondary-background-color) !important;
+                        border: 1.5px solid {border_col} !important;
+                        border-radius: 10px !important;
+                        color: {day_col} !important;
+                        font-size: 0.74rem !important;
+                        font-weight: 700 !important;
+                        min-height: 72px !important;
+                        height: 72px !important;
+                        padding: 9px 10px !important;
+                        text-align: left !important;
+                        display: flex !important;
+                        flex-direction: column !important;
+                        justify-content: space-between !important;
+                        align-items: flex-start !important;
+                        width: 100% !important;
+                        cursor: pointer !important;
+                        position: relative !important;
+                        transition: box-shadow .15s, transform .1s !important;
+                        white-space: normal !important;
+                        line-height: 1.2 !important;
+                    }}
+                    div[data-testid="stButton"]:has(button.{btn_cls}) > button:hover {{
+                        border-color: #1d4ed8 !important;
+                        box-shadow: 0 4px 14px rgba(37,99,235,0.18) !important;
+                        transform: translateY(-1px) !important;
+                        background: var(--secondary-background-color) !important;
+                    }}
+                    /* Pip badge inside the button */
+                    div[data-testid="stButton"]:has(button.{btn_cls}) > button > div > p {{
+                        display: flex !important;
+                        flex-direction: column !important;
+                        gap: 6px !important;
+                        margin: 0 !important;
+                        width: 100% !important;
+                    }}
+                    </style>
+                    <script>
+                    (function() {{
+                        // Tag the next button rendered with our class
+                        const obs = new MutationObserver(function(mutations, obs) {{
+                            const btns = document.querySelectorAll('button:not(.{btn_cls}-done)');
+                            btns.forEach(function(btn) {{
+                                if (btn.innerText && btn.innerText.includes('{day}') && btn.innerText.includes('game')) {{
+                                    btn.classList.add('{btn_cls}');
+                                    btn.classList.add('{btn_cls}-done');
+                                    obs.disconnect();
+                                }}
+                            }});
+                        }});
+                        obs.observe(document.body, {{childList: true, subtree: true}});
+                    }})();
+                    </script>
+                    """, unsafe_allow_html=True)
+
                     clicked = st.button(
-                        f"Select {day}",
-                        key=btn_key,
+                        f"{day}\n{label}",
+                        key=f"d_{ds}",
                         use_container_width=True,
-                        help=f"{len(day_games)} game{'s' if len(day_games)>1 else ''} — click to view",
                     )
                     if clicked:
                         st.session_state.selected_date       = ds
@@ -492,30 +562,7 @@ if st.session_state.view == "calendar":
     </div>
     """, unsafe_allow_html=True)
 
-    # Inject CSS to hide the button label text and make buttons invisible/minimal
-    # so only the game-pip cell above is visible — clicking the button area selects the day
-    st.markdown("""
-    <style>
-    /* Make calendar day buttons look invisible — the visual cell above is the UI */
-    [data-testid="stButton"] > button[title*="game"] {
-        background: transparent !important;
-        border: none !important;
-        color: transparent !important;
-        font-size: 0 !important;
-        height: 6px !important;
-        min-height: unset !important;
-        padding: 0 !important;
-        margin-top: -4px !important;
-        cursor: pointer !important;
-        box-shadow: none !important;
-        transform: none !important;
-    }
-    [data-testid="stButton"] > button[title*="game"]:hover {
-        background: transparent !important;
-        transform: none !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+    # (calendar day buttons are styled per-cell above)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
