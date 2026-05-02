@@ -602,13 +602,28 @@ elif st.session_state.view == "boxscore":
                 unsafe_allow_html=True)
 
     available = ["Full Game"]
-    for pk, lbl in [("1H","1st Half"),("2H","2nd Half"),
-                    ("Q1","Q1"),("Q2","Q2"),("Q3","Q3"),("Q4","Q4")]:
-        if pk in pbp and not pbp[pk].empty:
+    # Build period options from by_period keys (has actual stat data)
+    # Map internal keys to display labels
+    _period_display = {"1H":"1st Half","2H":"2nd Half"}
+    for pk, lbl in [("Q1","Q1"),("Q2","Q2"),("Q3","Q3"),("Q4","Q4"),
+                    ("1H","1st Half"),("2H","2nd Half")]:
+        bp = by_period.get(pk, {})
+        has_data = any(
+            isinstance(bp.get(cat), pd.DataFrame) and not bp.get(cat, pd.DataFrame()).empty
+            for cat in ["passing","rushing","receiving"]
+        )
+        if has_data and lbl not in available:
             available.append(lbl)
-    for k in pbp:
-        if k.startswith("OT") and not pbp[k].empty and k not in available:
-            available.append(k)
+    for k in by_period:
+        if k.startswith("OT"):
+            lbl = k
+            bp = by_period.get(k, {})
+            has_data = any(
+                isinstance(bp.get(cat), pd.DataFrame) and not bp.get(cat, pd.DataFrame()).empty
+                for cat in ["passing","rushing","receiving"]
+            )
+            if has_data and lbl not in available:
+                available.append(lbl)
 
     period_filter = st.radio("Period:", options=available,
                              horizontal=True, label_visibility="collapsed")
@@ -660,7 +675,10 @@ elif st.session_state.view == "boxscore":
 
     def show_period_df(category: str, sort="YDS"):
         """Show per-period offensive stat from by_period dict."""
-        period_data = by_period.get(period_filter, {})
+        # Map display labels to stats.py internal keys
+        _key_map = {"1st Half": "1H", "2nd Half": "2H"}
+        _stats_key = _key_map.get(period_filter, period_filter)
+        period_data = by_period.get(_stats_key, {})
         df = period_data.get(category)
         if df is None or (hasattr(df, "empty") and df.empty):
             # Fallback to ESPN cumulative with a note
