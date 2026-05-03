@@ -161,15 +161,6 @@ st.markdown("""
     margin-bottom: 8px;
 }
 
-/* Number input highlight when active (non-zero) */
-input[data-testid="stNumberInputField"].nfl-active {
-    border-color: #22c55e !important;
-    box-shadow: 0 0 0 2px rgba(34,197,94,0.25) !important;
-    color: #22c55e !important;
-    font-weight: 700 !important;
-    background: rgba(34,197,94,0.04) !important;
-}
-
 /* Center-align dataframe cells */
 [data-testid="stDataFrame"] td {
     text-align: center !important;
@@ -197,30 +188,6 @@ input[data-testid="stNumberInputField"].nfl-active {
     margin-bottom: 10px;
 }
 </style>
-""", unsafe_allow_html=True)
-
-# ── JS: highlight non-zero number inputs ─────────────────────────────────────
-st.markdown("""
-<script>
-(function() {
-    function highlightInputs() {
-        const inputs = document.querySelectorAll('input[data-testid="stNumberInputField"]');
-        inputs.forEach(function(inp) {
-            const val = parseFloat(inp.value);
-            if (!isNaN(val) && val !== 0) {
-                inp.classList.add('nfl-active');
-            } else {
-                inp.classList.remove('nfl-active');
-            }
-        });
-    }
-    // Run on load and on any input change
-    document.addEventListener('DOMContentLoaded', highlightInputs);
-    document.addEventListener('input', highlightInputs);
-    // Also poll since Streamlit re-renders
-    setInterval(highlightInputs, 500);
-})();
-</script>
 """, unsafe_allow_html=True)
 
 
@@ -680,12 +647,10 @@ elif st.session_state.view == "boxscore":
                 pass
         st.dataframe(df, use_container_width=True, hide_index=True)
 
-    tabs = st.tabs(["Passing","Rushing","Receiving","Defense","Kicking"])
+    tabs = st.tabs(["Passing","Rushing","Receiving"])
     with tabs[0]: show_period_df("passing",   "YDS")
     with tabs[1]: show_period_df("rushing",   "YDS")
     with tabs[2]: show_period_df("receiving", "YDS")
-    with tabs[3]: show_df(data["defense"],   period_filter, "TOT", drop_cols=["Pos"])
-    with tabs[4]: show_df(data["kicking"],   period_filter, drop_cols=["Pos"])
 
     # ── Prop Checker ──────────────────────────────────────────────────────────
     with st.expander("🎯 Prop Checker by Quarter", expanded=False):
@@ -694,13 +659,27 @@ elif st.session_state.view == "boxscore":
             "with ✅ (hit) or ❌ (missed). The final column shows if they hit it in ALL quarters."
         )
         pc1, pc2, pc3, pc4, pc5, pc6, pc7 = st.columns(7)
-        with pc1: thr_pass_yds = st.number_input("Pass YDS ≥",   min_value=0, value=0, step=1, key="thr_pass_yds")
-        with pc2: thr_pass_td  = st.number_input("Pass TD ≥",    min_value=0, value=0, step=1, key="thr_pass_td")
-        with pc3: thr_rush_yds = st.number_input("Rush YDS ≥",   min_value=0, value=0, step=1, key="thr_rush_yds")
-        with pc4: thr_rush_td  = st.number_input("Rush TD ≥",    min_value=0, value=0, step=1, key="thr_rush_td")
-        with pc5: thr_recv_rec = st.number_input("Receptions ≥", min_value=0, value=0, step=1, key="thr_recv_rec")
-        with pc6: thr_recv_yds = st.number_input("Rec YDS ≥",    min_value=0, value=0, step=1, key="thr_recv_yds")
-        with pc7: thr_recv_td  = st.number_input("Rec TD ≥",     min_value=0, value=0, step=1, key="thr_recv_td")
+        with pc1:
+            thr_pass_yds = st.number_input("Pass YDS ≥",   min_value=0, value=0, step=1, key="thr_pass_yds")
+            if thr_pass_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_pass_yds}</div>", unsafe_allow_html=True)
+        with pc2:
+            thr_pass_td  = st.number_input("Pass TD ≥",    min_value=0, value=0, step=1, key="thr_pass_td")
+            if thr_pass_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_pass_td}</div>", unsafe_allow_html=True)
+        with pc3:
+            thr_rush_yds = st.number_input("Rush YDS ≥",   min_value=0, value=0, step=1, key="thr_rush_yds")
+            if thr_rush_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_rush_yds}</div>", unsafe_allow_html=True)
+        with pc4:
+            thr_rush_td  = st.number_input("Rush TD ≥",    min_value=0, value=0, step=1, key="thr_rush_td")
+            if thr_rush_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_rush_td}</div>", unsafe_allow_html=True)
+        with pc5:
+            thr_recv_rec = st.number_input("Receptions ≥", min_value=0, value=0, step=1, key="thr_recv_rec")
+            if thr_recv_rec > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_recv_rec}</div>", unsafe_allow_html=True)
+        with pc6:
+            thr_recv_yds = st.number_input("Rec YDS ≥",    min_value=0, value=0, step=1, key="thr_recv_yds")
+            if thr_recv_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_recv_yds}</div>", unsafe_allow_html=True)
+        with pc7:
+            thr_recv_td  = st.number_input("Rec TD ≥",     min_value=0, value=0, step=1, key="thr_recv_td")
+            if thr_recv_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_recv_td}</div>", unsafe_allow_html=True)
 
     def build_prop_table(category: str) -> pd.DataFrame | None:
         """
@@ -863,13 +842,27 @@ elif st.session_state.view == "boxscore":
             "with ✅ (hit) or ❌ (missed). The final column shows if they hit it in BOTH halves."
         )
         ph1, ph2, ph3, ph4, ph5, ph6, ph7 = st.columns(7)
-        with ph1: thr_h_pass_yds = st.number_input("Pass YDS ≥",   min_value=0, value=0, step=1, key="thr_h_pass_yds")
-        with ph2: thr_h_pass_td  = st.number_input("Pass TD ≥",    min_value=0, value=0, step=1, key="thr_h_pass_td")
-        with ph3: thr_h_rush_yds = st.number_input("Rush YDS ≥",   min_value=0, value=0, step=1, key="thr_h_rush_yds")
-        with ph4: thr_h_rush_td  = st.number_input("Rush TD ≥",    min_value=0, value=0, step=1, key="thr_h_rush_td")
-        with ph5: thr_h_recv_rec = st.number_input("Receptions ≥", min_value=0, value=0, step=1, key="thr_h_recv_rec")
-        with ph6: thr_h_recv_yds = st.number_input("Rec YDS ≥",    min_value=0, value=0, step=1, key="thr_h_recv_yds")
-        with ph7: thr_h_recv_td  = st.number_input("Rec TD ≥",     min_value=0, value=0, step=1, key="thr_h_recv_td")
+        with ph1:
+            thr_h_pass_yds = st.number_input("Pass YDS ≥",   min_value=0, value=0, step=1, key="thr_h_pass_yds")
+            if thr_h_pass_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_pass_yds}</div>", unsafe_allow_html=True)
+        with ph2:
+            thr_h_pass_td  = st.number_input("Pass TD ≥",    min_value=0, value=0, step=1, key="thr_h_pass_td")
+            if thr_h_pass_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_pass_td}</div>", unsafe_allow_html=True)
+        with ph3:
+            thr_h_rush_yds = st.number_input("Rush YDS ≥",   min_value=0, value=0, step=1, key="thr_h_rush_yds")
+            if thr_h_rush_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_rush_yds}</div>", unsafe_allow_html=True)
+        with ph4:
+            thr_h_rush_td  = st.number_input("Rush TD ≥",    min_value=0, value=0, step=1, key="thr_h_rush_td")
+            if thr_h_rush_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_rush_td}</div>", unsafe_allow_html=True)
+        with ph5:
+            thr_h_recv_rec = st.number_input("Receptions ≥", min_value=0, value=0, step=1, key="thr_h_recv_rec")
+            if thr_h_recv_rec > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_recv_rec}</div>", unsafe_allow_html=True)
+        with ph6:
+            thr_h_recv_yds = st.number_input("Rec YDS ≥",    min_value=0, value=0, step=1, key="thr_h_recv_yds")
+            if thr_h_recv_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_recv_yds}</div>", unsafe_allow_html=True)
+        with ph7:
+            thr_h_recv_td  = st.number_input("Rec TD ≥",     min_value=0, value=0, step=1, key="thr_h_recv_td")
+            if thr_h_recv_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_recv_td}</div>", unsafe_allow_html=True)
 
     def build_half_prop_table(category: str) -> pd.DataFrame | None:
         halves = ["1H", "2H"]
