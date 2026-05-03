@@ -65,7 +65,7 @@ st.markdown("""
 <style>
 [data-testid="stSidebar"]        { display: none; }
 [data-testid="collapsedControl"] { display: none; }
-.block-container { padding-top: 1.2rem !important; max-width: 1100px; }
+.block-container { padding-top: 2.5rem !important; max-width: 1100px; }
 
 /* Calendar grid — layout only */
 .cal-grid {
@@ -211,6 +211,7 @@ MONTH_NAMES = ["January","February","March","April","May","June",
 # ── Header ────────────────────────────────────────────────────────────────────
 
 st.markdown("## 🏈 NFL Box Scores")
+st.caption("Live stats · Quarter & half splits · All times Eastern")
 st.divider()
 
 # ── Data loaders ──────────────────────────────────────────────────────────────
