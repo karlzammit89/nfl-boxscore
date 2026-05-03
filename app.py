@@ -161,6 +161,15 @@ st.markdown("""
     margin-bottom: 8px;
 }
 
+/* Number input highlight when active (non-zero) */
+input[data-testid="stNumberInputField"].nfl-active {
+    border-color: #22c55e !important;
+    box-shadow: 0 0 0 2px rgba(34,197,94,0.25) !important;
+    color: #22c55e !important;
+    font-weight: 700 !important;
+    background: rgba(34,197,94,0.04) !important;
+}
+
 /* Center-align dataframe cells */
 [data-testid="stDataFrame"] td {
     text-align: center !important;
@@ -189,6 +198,31 @@ st.markdown("""
 }
 </style>
 """, unsafe_allow_html=True)
+
+# ── JS: highlight non-zero number inputs ─────────────────────────────────────
+st.markdown("""
+<script>
+(function() {
+    function highlightInputs() {
+        const inputs = document.querySelectorAll('input[data-testid="stNumberInputField"]');
+        inputs.forEach(function(inp) {
+            const val = parseFloat(inp.value);
+            if (!isNaN(val) && val !== 0) {
+                inp.classList.add('nfl-active');
+            } else {
+                inp.classList.remove('nfl-active');
+            }
+        });
+    }
+    // Run on load and on any input change
+    document.addEventListener('DOMContentLoaded', highlightInputs);
+    document.addEventListener('input', highlightInputs);
+    // Also poll since Streamlit re-renders
+    setInterval(highlightInputs, 500);
+})();
+</script>
+""", unsafe_allow_html=True)
+
 
 # ── Session state ─────────────────────────────────────────────────────────────
 
