@@ -945,5 +945,19 @@ elif st.session_state.view == "boxscore":
     with tabs[3]: show_df(data["defense"],   period_filter, "TOT", drop_cols=["Pos"])
     with tabs[4]: show_df(data["kicking"],   period_filter, drop_cols=["Pos"])
 
+    # Half prop results — only shown when thresholds are active
+    half_active = any([
+        thr_h_pass_yds, thr_h_pass_td,
+        thr_h_rush_yds, thr_h_rush_td,
+        thr_h_recv_rec, thr_h_recv_yds, thr_h_recv_td,
+    ])
+    if half_active:
+        st.markdown("<div class='sec-div' style='margin-top:8px'>Prop Checker by Half — Results</div>",
+                    unsafe_allow_html=True)
+        htabs = st.tabs(["Passing","Rushing","Receiving"])
+        with htabs[0]: show_half_prop_or_stats("passing",   "YDS")
+        with htabs[1]: show_half_prop_or_stats("rushing",   "YDS")
+        with htabs[2]: show_half_prop_or_stats("receiving", "YDS")
+
     st.divider()
     st.caption(f"⚡ Last updated at {et_now().strftime('%H:%M')} ET")
