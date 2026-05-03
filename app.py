@@ -646,6 +646,13 @@ elif st.session_state.view == "boxscore":
                 pass
         st.dataframe(df, use_container_width=True, hide_index=True)
 
+    tabs = st.tabs(["Passing","Rushing","Receiving","Defense","Kicking"])
+    with tabs[0]: show_period_df("passing",   "YDS")
+    with tabs[1]: show_period_df("rushing",   "YDS")
+    with tabs[2]: show_period_df("receiving", "YDS")
+    with tabs[3]: show_df(data["defense"],   period_filter, "TOT", drop_cols=["Pos"])
+    with tabs[4]: show_df(data["kicking"],   period_filter, drop_cols=["Pos"])
+
     # ── Prop Checker ──────────────────────────────────────────────────────────
     with st.expander("🎯 Prop Checker by Quarter", expanded=False):
         st.caption(
@@ -802,6 +809,20 @@ elif st.session_state.view == "boxscore":
                     pass
             st.dataframe(df, use_container_width=True, hide_index=True)
 
+    # Quarter prop results — only shown when thresholds are active
+    qtr_active = any([
+        thr_pass_yds, thr_pass_td,
+        thr_rush_yds, thr_rush_td,
+        thr_recv_rec, thr_recv_yds, thr_recv_td,
+    ])
+    if qtr_active:
+        st.markdown("<div class='sec-div' style='margin-top:8px'>Prop Checker by Quarter — Results</div>",
+                    unsafe_allow_html=True)
+        qtabs = st.tabs(["Passing","Rushing","Receiving"])
+        with qtabs[0]: show_prop_or_stats("passing",   "YDS")
+        with qtabs[1]: show_prop_or_stats("rushing",   "YDS")
+        with qtabs[2]: show_prop_or_stats("receiving", "YDS")
+
     with st.expander("📊 Prop Checker by Half", expanded=False):
         st.caption(
             "Set a minimum threshold. Each player shows their stat per half "
@@ -937,27 +958,6 @@ elif st.session_state.view == "boxscore":
                 except Exception:
                     pass
             st.dataframe(df, use_container_width=True, hide_index=True)
-
-    tabs = st.tabs(["Passing","Rushing","Receiving","Defense","Kicking"])
-    with tabs[0]: show_period_df("passing",   "YDS")
-    with tabs[1]: show_period_df("rushing",   "YDS")
-    with tabs[2]: show_period_df("receiving", "YDS")
-    with tabs[3]: show_df(data["defense"],   period_filter, "TOT", drop_cols=["Pos"])
-    with tabs[4]: show_df(data["kicking"],   period_filter, drop_cols=["Pos"])
-
-    # Quarter prop results — only shown when thresholds are active
-    qtr_active = any([
-        thr_pass_yds, thr_pass_td,
-        thr_rush_yds, thr_rush_td,
-        thr_recv_rec, thr_recv_yds, thr_recv_td,
-    ])
-    if qtr_active:
-        st.markdown("<div class='sec-div' style='margin-top:8px'>Prop Checker by Quarter — Results</div>",
-                    unsafe_allow_html=True)
-        qtabs = st.tabs(["Passing","Rushing","Receiving"])
-        with qtabs[0]: show_prop_or_stats("passing",   "YDS")
-        with qtabs[1]: show_prop_or_stats("rushing",   "YDS")
-        with qtabs[2]: show_prop_or_stats("receiving", "YDS")
 
     # Half prop results — only shown when thresholds are active
     half_active = any([
