@@ -211,7 +211,6 @@ MONTH_NAMES = ["January","February","March","April","May","June",
 # ── Header ────────────────────────────────────────────────────────────────────
 
 st.markdown("## 🏈 NFL Box Scores")
-st.caption("Live stats · Quarter & half splits · All times Eastern")
 st.divider()
 
 # ── Data loaders ──────────────────────────────────────────────────────────────
