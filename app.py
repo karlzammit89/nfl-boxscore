@@ -1077,11 +1077,13 @@ elif st.session_state.view == "boxscore":
                     requirements = []
                     rtd = RUSH_TD_RE2.search(line)
                     ptd = PASS_TD_RE2.search(line)
-                    atd = ANY_TD_RE.search(line)
+                    # ANY_TD: match td/tds not preceded by rushing/passing
+                    atd_m = _re.search(r'(\d+)\+?\s*tds?', line, _re.I)
+                    atd = atd_m if atd_m and not rtd and not ptd else None
                     fg  = FG_RE2.search(line)
                     if rtd: requirements.append(('rushing_td', int(rtd.group(1))))
                     if ptd: requirements.append(('passing_td', int(ptd.group(1))))
-                    if not rtd and not ptd and atd: requirements.append(('any_td', int(atd.group(1))))
+                    if atd: requirements.append(('any_td', int(atd.group(1))))
                     if fg:  requirements.append(('fg', int(fg.group(1))))
                     if not requirements: requirements.append(('score', 1))
                     team_props.append({'line_index': i, 'line': line,
@@ -1225,12 +1227,14 @@ elif st.session_state.view == "boxscore":
                 periods = ["Q1","Q2","Q3","Q4"] if cond == "each quarter" else ["1H","2H"]
                 is_each_team = 'each team' in tp['line'].lower() or 'both teams' in tp['line'].lower()
                 won = all(check_reqs(reqs, p, each_team=is_each_team) for p in periods)
+
+                scope_lbl  = {"each quarter":"Each Qrt","each half":"Each HF"}.get(cond,"Game")
+                # Build human-readable prop label from requirements
                 req_strs = []
                 for rt, rn in reqs:
-                    label = {"rushing_td":"Rush TD","passing_td":"Pass TD",
-                             "any_td":"TD","fg":"FG","score":"Points"}.get(rt, rt)
-                    req_strs.append(f"{rn}+ {label}")
-                scope_lbl  = {"each quarter":"Each Qrt","each half":"Each HF"}.get(cond,"Game")
+                    lbl = {"rushing_td":"Rush TD","passing_td":"Pass TD",
+                           "any_td":"TD","fg":"FG","score":"Points"}.get(rt, rt)
+                    req_strs.append(f"{rn}+ {lbl}")
                 prop_label = " & ".join(req_strs) if req_strs else "Score"
                 if is_each_team:
                     who = "Each Team"
