@@ -1500,19 +1500,17 @@ elif st.session_state.view == "boxscore":
                     ok = sum(1 for p in plays if "touchdown" in p) >= req_n
                 elif req_type == "fg":
                     ok = sum(1 for p in plays if "field goal" in p) >= req_n
-                else:  # score / points — check linescore directly
-                    if linescore is not None and not linescore.empty and period_label in linescore.columns:
-                        col_vals = pd.to_numeric(linescore[period_label], errors="coerce").fillna(0)
-                        ok = col_vals.sum() > 0
+                else:  # score / points — any scoring play in this period
+                    if scoring_df is not None and not scoring_df.empty and "Quarter" in scoring_df.columns:
+                        ok = (scoring_df["Quarter"] == period_label).any()
+                    elif scoring_df is not None and not scoring_df.empty and "Half" in scoring_df.columns:
+                        # For half periods use Half column
+                        ok = (scoring_df["Half"] == period_label).any()
                     else:
                         ok = pts > 0
                 if not ok:
                     return False
             return True
-
-        # Debug linescore columns
-        if linescore is not None and not linescore.empty:
-            st.caption(f"DEBUG linescore cols: {list(linescore.columns)} | Q1 vals: {linescore.get('Q1', 'NO Q1 COL')}")
 
         for i, line in enumerate(clean_lines):
             if not TEAM_LINE_RE.match(line):
