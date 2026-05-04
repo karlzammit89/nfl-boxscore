@@ -1408,6 +1408,24 @@ elif st.session_state.view == "boxscore":
         gdf = pd.DataFrame(graded) if graded else pd.DataFrame()
         if not gdf.empty:
             gdf = _sort(gdf, 'Players')
+            # ── Debug expander ───────────────────────────────────────────
+            with st.expander("🔍 Debug (remove later)", expanded=False):
+                st.write("**_full_name_team keys (sample):**", list(_full_name_team.items())[:20])
+                st.write("**_game_teams:**", _game_teams)
+                st.write("**_game_abbrs (sample):**", list(_game_abbrs)[:20])
+                fg_def = by_period.get("Full Game", {}).get("defense", pd.DataFrame())
+                st.write("**by_period Full Game defense:**", fg_def)
+                espn_def = data.get("defense", pd.DataFrame())
+                st.write("**ESPN defense df cols:**", list(espn_def.columns) if not espn_def.empty else "empty")
+                st.write("**ESPN defense sample:**", espn_def.head(5) if not espn_def.empty else "empty")
+                # Show what 'Kenneth Walker' resolves to
+                kw_lower = "kenneth walker"
+                st.write(f"**'kenneth walker' in _full_name_team:**", kw_lower in _full_name_team)
+                st.write(f"**'kenneth walker iii' in _full_name_team:**", "kenneth walker iii" in _full_name_team)
+                # Show all keys containing 'walker'
+                walker_keys = [k for k in _full_name_team if 'walker' in k]
+                st.write("**walker keys:**", walker_keys)
+            # ────────────────────────────────────────────────────────────────
             np_  = len(gdf)
             nw_  = sum(1 for v in gdf['Result'] if 'Won'  in str(v))
             nl_  = sum(1 for v in gdf['Result'] if 'Lost' in str(v))
