@@ -391,6 +391,14 @@ _SKIP_PTYPES = {"kickoff", "punt", "field goal", "extra point", "penalty",
                 "timeout", "end period", "end of half", "two-point conversion",
                 "kick off", "no play", ""}
 
+_SACK_PTYPE = {"sack"}
+_SACK_RE    = _re.compile(
+    r'(?:[A-Z][a-z]?\.[A-Z][A-Za-z\'-]+(?:\s+[A-Z][A-Za-z\'-]+)?)'
+    r'\s+sacked\s+by\s+'
+    r'([A-Z][a-z]?\.[A-Z][A-Za-z\'-]+(?:\s+[A-Z][A-Za-z\'-]+)?)',
+    _re.I
+)
+
 
 def get_player_stats_by_period(game_id: str) -> dict:
     """
@@ -418,10 +426,12 @@ def get_player_stats_by_period(game_id: str) -> dict:
     def new_pass(): return {"Team":"","comp":0,"att":0,"yds":0,"td":0,"int":0}
     def new_rush(): return {"Team":"","car":0,"yds":0,"td":0}
     def new_recv(): return {"Team":"","rec":0,"yds":0,"td":0}
+    def new_sack(): return {"Team":"","sacks":0}
 
     passing   = defaultdict(lambda: defaultdict(new_pass))
     rushing   = defaultdict(lambda: defaultdict(new_rush))
     receiving = defaultdict(lambda: defaultdict(new_recv))
+    sacking   = defaultdict(lambda: defaultdict(new_sack))
 
     for drive in all_drives:
         if not drive:
@@ -483,7 +493,20 @@ def get_player_stats_by_period(game_id: str) -> dict:
                     if is_td:
                         d["td"] += 1
 
+            # ── Sack plays ────────────────────────────────────────────────────
+            if "sack" in ptype.lower():
+                sm = _SACK_RE.search(text)
+                if sm:
+                    sacker = sm.group(1).strip()
+                    sacking[period][sacker]["sacks"] += 1
+
     # ── DataFrame builders ────────────────────────────────────────────────
+
+    def to_sack_df(acc):
+        rows = [{"Player": n, "Team": d["Team"], "SACKS": d["sacks"]}
+                for n, d in acc.items() if d["sacks"] > 0]
+        return (pd.DataFrame(rows).sort_values("SACKS", ascending=False)
+                .reset_index(drop=True)) if rows else pd.DataFrame()
 
     def to_pass_df(acc):
         rows = [{"Player":n,"Team":d["Team"],
@@ -520,7 +543,8 @@ def get_player_stats_by_period(game_id: str) -> dict:
         return merged
 
     all_periods = sorted(set(
-        list(passing.keys()) + list(rushing.keys()) + list(receiving.keys())))
+        list(passing.keys()) + list(rushing.keys()) +
+        list(receiving.keys()) + list(sacking.keys())))
 
     result = {}
     for p in all_periods:
@@ -529,7 +553,8 @@ def get_player_stats_by_period(game_id: str) -> dict:
         lbl = _quarter_label(p)
         result[lbl] = {"passing":   to_pass_df(passing[p]),
                        "rushing":   to_rush_df(rushing[p]),
-                       "receiving": to_recv_df(receiving[p])}
+                       "receiving": to_recv_df(receiving[p]),
+                       "defense":   to_sack_df(sacking[p])}
 
     h1 = [p for p in all_periods if p in (1, 2)]
     h2 = [p for p in all_periods if p in (3, 4)]
@@ -537,15 +562,18 @@ def get_player_stats_by_period(game_id: str) -> dict:
     if h1:
         result["1H"] = {"passing":   to_pass_df(merge(passing,  h1, new_pass)),
                         "rushing":   to_rush_df(merge(rushing,  h1, new_rush)),
-                        "receiving": to_recv_df(merge(receiving,h1, new_recv))}
+                        "receiving": to_recv_df(merge(receiving,h1, new_recv)),
+                        "defense":   to_sack_df(merge(sacking,  h1, new_sack))}
     if h2:
         result["2H"] = {"passing":   to_pass_df(merge(passing,  h2, new_pass)),
                         "rushing":   to_rush_df(merge(rushing,  h2, new_rush)),
-                        "receiving": to_recv_df(merge(receiving,h2, new_recv))}
+                        "receiving": to_recv_df(merge(receiving,h2, new_recv)),
+                        "defense":   to_sack_df(merge(sacking,  h2, new_sack))}
 
     result["Full Game"] = {
         "passing":   to_pass_df(merge(passing,   all_periods, new_pass)),
         "rushing":   to_rush_df(merge(rushing,   all_periods, new_rush)),
         "receiving": to_recv_df(merge(receiving, all_periods, new_recv)),
+        "defense":   to_sack_df(merge(sacking,   all_periods, new_sack)),
     }
     return result
