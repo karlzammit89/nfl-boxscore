@@ -1144,7 +1144,12 @@ elif st.session_state.view == "boxscore":
                         for _ath in _cat.get('athletes', []):
                             _full = _ath.get('athlete', {}).get('displayName', '')
                             if _full:
-                                _full_name_team[_full.lower()] = _team_abbr
+                                _key = _full.lower().strip()
+                                _full_name_team[_key] = _team_abbr
+                                import re as _rn2
+                                _norm = _rn2.sub(r'\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$', '', _key, flags=_rn2.I).strip()
+                                if _norm != _key:
+                                    _full_name_team[_norm] = _team_abbr
         except Exception:
             pass
 
@@ -1223,10 +1228,6 @@ elif st.session_state.view == "boxscore":
             if category == 'defense':
                 parts = player.strip().split()
                 abbr = f"{parts[0][0]}.{parts[-1]}" if len(parts) >= 2 else player
-                pdf = by_period.get('Full Game', {}).get('defense', pd.DataFrame())
-                if pdf is not None and not pdf.empty and 'Player' in pdf.columns:
-                    if (pdf['Player'] == abbr).any():
-                        return True
                 df2 = data.get('defense', pd.DataFrame())
                 if df2 is not None and not df2.empty and 'Player' in df2.columns:
                     return (df2['Player'] == abbr).any()
@@ -1244,10 +1245,7 @@ elif st.session_state.view == "boxscore":
 
         def get_player_val(player: str, category: str, col: str, period_key: str) -> float:
             if category == 'defense':
-                # Use by_period defense (per-period sacks from play-by-play)
-                pdf = by_period.get(period_key, {}).get('defense', pd.DataFrame())
-                if pdf is None or pdf.empty:
-                    pdf = data.get('defense', pd.DataFrame())
+                pdf = data.get('defense', pd.DataFrame())
                 if pdf is None or pdf.empty or 'Player' not in pdf.columns:
                     return 0.0
                 parts = player.strip().split()
@@ -1255,8 +1253,7 @@ elif st.session_state.view == "boxscore":
                 m = pdf[pdf['Player'] == abbr]
                 if m.empty:
                     m = pdf[pdf['Player'].str.contains(parts[-1], case=False, na=False)]
-                real_col = 'SACKS' if col in ('SACKS','TOT','Sacks') else col
-                return float(m.iloc[0].get(real_col, 0)) if not m.empty else 0.0
+                return float(m.iloc[0].get('SACKS', 0)) if not m.empty else 0.0
             match = _find_player(player, category, period_key)
             return float(match.iloc[0].get(col, 0)) if not match.empty else 0.0
 
