@@ -1228,6 +1228,9 @@ elif st.session_state.view == "boxscore":
 
             graded = [grade_prop_group(group) for group in by_line.values()]
             gdf = pd.DataFrame(graded)
+            if not gdf.empty and "Result" in gdf.columns:
+                gdf["_won"] = gdf["Result"].apply(lambda x: 0 if "Won" in str(x) else 1)
+                gdf = gdf.sort_values(["_won", "Players"]).drop(columns=["_won"]).reset_index(drop=True)
 
             def color_prop(val):
                 if isinstance(val, str):
