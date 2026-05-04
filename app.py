@@ -1476,13 +1476,17 @@ elif st.session_state.view == "boxscore":
         def _plays_in(period_label):
             if scoring_df is None or scoring_df.empty or "Quarter" not in scoring_df.columns:
                 return []
+            # scoring_df "Quarter" column uses same labels as linescore: Q1, Q2 etc
             rows = scoring_df[scoring_df["Quarter"] == period_label]
             return rows["Type"].str.lower().tolist() if "Type" in rows.columns else []
 
         def _pts_in(period_label):
             if linescore is None or linescore.empty or period_label not in linescore.columns:
                 return 0
-            return int(linescore[period_label].sum())
+            try:
+                return int(pd.to_numeric(linescore[period_label], errors="coerce").fillna(0).sum())
+            except Exception:
+                return 0
 
         def _check_reqs(reqs, period_label, each_team):
             plays = _plays_in(period_label)
