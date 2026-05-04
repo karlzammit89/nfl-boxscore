@@ -1390,10 +1390,21 @@ elif st.session_state.view == "boxscore":
                 "Players": players_str,
                 "Prop":    f"{threshold:.0f}+ {stat_short}",
                 "Scope":   scope_short,
-                "Result":  "✅ Won" if overall_won is True else ("⚠️ N/A" if overall_won is None else "❌ Lost"),
+                "Result":  "✅ Won" if overall_won is True else ("❗ Error" if overall_won is None else "❌ Lost"),
             }
 
-        graded = [grade_prop_group(group) for group in by_line.values()]
+        def safe_grade(group):
+            try:
+                return grade_prop_group(group)
+            except Exception as _ge:
+                p = group[0] if group else {}
+                return {
+                    "Players": p.get("player", "?"),
+                    "Prop":    f"{p.get('threshold','')}+ {p.get('stat','')}",
+                    "Scope":   p.get("condition",""),
+                    "Result":  "❗ Error",
+                }
+        graded = [safe_grade(group) for group in by_line.values()]
         for er in error_rows:
             graded.append({
                 "Players": er.get("raw_line","")[:60],
@@ -1406,14 +1417,13 @@ elif st.session_state.view == "boxscore":
             if isinstance(val, str):
                 if val.startswith('✅'): return 'color:#22c55e;font-weight:700'
                 if val.startswith('❌'): return 'color:#ef4444;font-weight:700'
-                if val.startswith('⚠️'): return 'color:#f59e0b;font-weight:700'
-                if val.startswith('❗'): return 'color:#a855f7;font-weight:700'
+                if val.startswith('❗'): return 'color:#f59e0b;font-weight:700'
             return ''
 
         def _sort(df, col):
             if df.empty or 'Result' not in df.columns: return df
             df = df.copy()
-            df['_w'] = df['Result'].apply(lambda x: 0 if 'Won' in str(x) else (2 if 'N/A' in str(x) else (3 if 'Error' in str(x) else 1)))
+            df['_w'] = df['Result'].apply(lambda x: 0 if 'Won' in str(x) else (1 if 'Error' in str(x) else 2))
             return df.sort_values(['_w', col]).drop(columns=['_w']).reset_index(drop=True)
 
         # ── Player props table ─────────────────────────────────────────
@@ -1421,11 +1431,10 @@ elif st.session_state.view == "boxscore":
         if not gdf.empty:
             gdf = _sort(gdf, 'Players')
             np_  = len(gdf)
-            nw_  = sum(1 for v in gdf['Result'] if 'Won'  in str(v))
-            nl_  = sum(1 for v in gdf['Result'] if 'Lost' in str(v))
-            nna_ = sum(1 for v in gdf['Result'] if 'N/A'  in str(v))
+            nw_  = sum(1 for v in gdf['Result'] if 'Won'   in str(v))
+            nl_  = sum(1 for v in gdf['Result'] if 'Lost'  in str(v))
             ne_  = sum(1 for v in gdf['Result'] if 'Error' in str(v))
-            st.markdown(f'**👤 Player Props** — {np_} props · ✅ {nw_} Won · ❌ {nl_} Loss · ⚠️ {nna_} N/A · ❗ {ne_} Error')
+            st.markdown(f'**👤 Player Props** — {np_} props · ✅ {nw_} Won · ❗ {ne_} Error · ❌ {nl_} Loss')
             ps = [c for c in gdf.columns if c not in ('Players','Prop','Scope')]
             st.dataframe(gdf.style.map(_color, subset=ps), use_container_width=True, hide_index=True)
 
