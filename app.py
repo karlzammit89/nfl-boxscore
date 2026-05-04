@@ -1028,8 +1028,6 @@ elif st.session_state.view == "boxscore":
     run_grader = st.button("⚡ Grade Props", key="grade_btn")
 
     if run_grader and prop_text.strip():
-        import json as _json, re as _re
-
         def strip_odds(line: str) -> str:
             """Remove trailing +240 / -115 odds from a prop line."""
             import re as _re2
@@ -1039,43 +1037,73 @@ elif st.session_state.view == "boxscore":
         raw_lines   = [l.strip() for l in prop_text.strip().splitlines() if l.strip()]
         clean_lines = [strip_odds(l) for l in raw_lines]
 
-        with st.spinner("Parsing props…"):
-            try:
-                import requests as _req
-                resp = _req.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers={"Content-Type": "application/json"},
-                    json={
-                        "model": "claude-sonnet-4-20250514",
-                        "max_tokens": 2000,
-                        "messages": [{
-                            "role": "user",
-                            "content": (
-                                "Parse each player prop below into structured JSON.\n"
-                                "Return ONLY a JSON array — no markdown, no explanation.\n\n"
-                                "Rules:\n"
-                                "- If a line has TWO players (joined by & or 'and'), create TWO separate objects with the same stat/threshold/condition.\n"
-                                "- Skip lines about teams scoring, field goals, or non-player props (set player to null).\n"
-                                "- condition must be one of: each quarter, each half, game total\n"
-                                "- stat must be one of: Rushing Yards, Passing Yards, Receptions, Rushing TDs, Passing TDs, Receiving Yards, Interceptions\n"
-                                "- operator is always 'over' unless explicitly stated otherwise\n"
-                                "- line_index: the 0-based index of the original line (so multi-player lines share the same index)\n\n"
-                                "Fields per object: line_index (int), player (string), stat (string), threshold (number), condition (string), operator (string)\n\n"
-                                "Props:\n" +
-                                "\n".join(f"{i}. {l}" for i, l in enumerate(clean_lines))
-                            )
-                        }]
-                    },
-                    timeout=30,
-                )
-                raw   = resp.json()["content"][0]["text"].strip()
-                raw   = raw.replace("```json","").replace("```","").strip()
-                props = _json.loads(raw)
-                # Filter out null players
-                props = [p for p in props if p.get("player")]
-            except Exception as e:
-                st.error(f"Could not parse props: {e}")
-                props = []
+        # Parse props with regex — no API call needed
+        import re as _re
+
+        STAT_MAP_RE = [
+            (_re.compile(r'rushing yards?|rushing yds?', _re.I),   "Rushing Yards"),
+            (_re.compile(r'rushing tds?|rushing touchdowns?', _re.I), "Rushing TDs"),
+            (_re.compile(r'passing yards?|passing yds?', _re.I),   "Passing Yards"),
+            (_re.compile(r'passing tds?|passing touchdowns?', _re.I), "Passing TDs"),
+            (_re.compile(r'receiving yards?|receiving yds?', _re.I), "Receiving Yards"),
+            (_re.compile(r'receptions?', _re.I),                   "Receptions"),
+            (_re.compile(r'interceptions?', _re.I),                "Interceptions"),
+        ]
+        COND_MAP_RE = [
+            (_re.compile(r'each quarter', _re.I),  "each quarter"),
+            (_re.compile(r'each half',    _re.I),  "each half"),
+        ]
+        SKIP_RE = _re.compile(
+            r'^(each team|points scored|both teams)', _re.I)
+        THRESHOLD_RE = _re.compile(r'(\d+)\+?\s*(?:or more)?')
+        PLAYERS_RE   = _re.compile(
+            r'^(.+?)(?:\s+(?:&|and)\s+(.+?))\s+to\s+each\s+(?:record|have)', _re.I)
+        SINGLE_RE    = _re.compile(r'^(.+?)\s+to\s+(?:record|have|score)', _re.I)
+
+        props = []
+        try:
+            for i, line in enumerate(clean_lines):
+                if SKIP_RE.match(line):
+                    continue
+
+                # Detect stat
+                stat = None
+                for pat, label in STAT_MAP_RE:
+                    if pat.search(line):
+                        stat = label
+                        break
+                if not stat:
+                    continue
+
+                # Detect threshold
+                tm = THRESHOLD_RE.search(line)
+                if not tm:
+                    continue
+                threshold = float(tm.group(1))
+
+                # Detect condition
+                condition = "game total"
+                for pat, label in COND_MAP_RE:
+                    if pat.search(line):
+                        condition = label
+                        break
+
+                # Detect players
+                dual = PLAYERS_RE.match(line)
+                if dual:
+                    for player in [dual.group(1).strip(), dual.group(2).strip()]:
+                        props.append({"line_index": i, "player": player,
+                                      "stat": stat, "threshold": threshold,
+                                      "condition": condition, "operator": "over"})
+                else:
+                    single = SINGLE_RE.match(line)
+                    if single:
+                        props.append({"line_index": i, "player": single.group(1).strip(),
+                                      "stat": stat, "threshold": threshold,
+                                      "condition": condition, "operator": "over"})
+        except Exception as e:
+            st.error(f"Could not parse props: {e}")
+            props = []
 
         if props:
             st.markdown("**Grading results:**")
