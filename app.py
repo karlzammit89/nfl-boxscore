@@ -1015,8 +1015,12 @@ elif st.session_state.view == "boxscore":
 
     prop_text = st.text_area(
         "Props",
-        placeholder="Bijan Robinson 10+ Rushing Yards Each Quarter\nTua Tagovailoa Over 250 Passing Yards Game Total",
-        height=140,
+        placeholder=(
+            "Bijan Robinson to record 10+ Rushing Yards in Each Quarter+240\n"
+            "Bijan Robinson & Kyren Williams to Each Record 5+ Rushing Yards in Each Quarter+330\n"
+            "Kirk Cousins to record 100+ Passing Yards in Each Half+120"
+        ),
+        height=200,
         key="prop_text_input",
         label_visibility="collapsed",
     )
@@ -1024,11 +1028,18 @@ elif st.session_state.view == "boxscore":
     run_grader = st.button("⚡ Grade Props", key="grade_btn")
 
     if run_grader and prop_text.strip():
-        import json as _json
+        import json as _json, re as _re
 
-        lines = [l.strip() for l in prop_text.strip().splitlines() if l.strip()]
+        def strip_odds(line: str) -> str:
+            """Remove trailing +240 / -115 odds from a prop line."""
+            import re as _re2
+            m = _re2.search(r'[+-]\d+\s*$', line.strip())
+            return line[:m.start()].strip() if m else line.strip()
 
-        with st.spinner("Parsing props with Claude…"):
+        raw_lines   = [l.strip() for l in prop_text.strip().splitlines() if l.strip()]
+        clean_lines = [strip_odds(l) for l in raw_lines]
+
+        with st.spinner("Parsing props…"):
             try:
                 import requests as _req
                 resp = _req.post(
@@ -1036,19 +1047,22 @@ elif st.session_state.view == "boxscore":
                     headers={"Content-Type": "application/json"},
                     json={
                         "model": "claude-sonnet-4-20250514",
-                        "max_tokens": 1000,
+                        "max_tokens": 2000,
                         "messages": [{
                             "role": "user",
                             "content": (
-                                "Parse each of the following player props into structured JSON.\n"
-                                "Return ONLY a JSON array — no markdown, no explanation.\n"
-                                "Each item must have:\n"
-                                "  player: full player name\n"
-                                "  stat: one of (Rushing Yards, Passing Yards, Receptions, Rushing TDs, Passing TDs, Receiving Yards, Interceptions)\n"
-                                "  threshold: number\n"
-                                "  condition: one of (each quarter, each half, game total)\n"
-                                "  operator: one of (over, under, exactly)\n\n"
-                                "Props:\n" + "\n".join(f"{i+1}. {l}" for i, l in enumerate(lines))
+                                "Parse each player prop below into structured JSON.\n"
+                                "Return ONLY a JSON array — no markdown, no explanation.\n\n"
+                                "Rules:\n"
+                                "- If a line has TWO players (joined by & or 'and'), create TWO separate objects with the same stat/threshold/condition.\n"
+                                "- Skip lines about teams scoring, field goals, or non-player props (set player to null).\n"
+                                "- condition must be one of: each quarter, each half, game total\n"
+                                "- stat must be one of: Rushing Yards, Passing Yards, Receptions, Rushing TDs, Passing TDs, Receiving Yards, Interceptions\n"
+                                "- operator is always 'over' unless explicitly stated otherwise\n"
+                                "- line_index: the 0-based index of the original line (so multi-player lines share the same index)\n\n"
+                                "Fields per object: line_index (int), player (string), stat (string), threshold (number), condition (string), operator (string)\n\n"
+                                "Props:\n" +
+                                "\n".join(f"{i}. {l}" for i, l in enumerate(clean_lines))
                             )
                         }]
                     },
@@ -1057,6 +1071,8 @@ elif st.session_state.view == "boxscore":
                 raw   = resp.json()["content"][0]["text"].strip()
                 raw   = raw.replace("```json","").replace("```","").strip()
                 props = _json.loads(raw)
+                # Filter out null players
+                props = [p for p in props if p.get("player")]
             except Exception as e:
                 st.error(f"Could not parse props: {e}")
                 props = []
@@ -1134,15 +1150,58 @@ elif st.session_state.view == "boxscore":
                     won = hit(v)
 
                 return {
-                    "Player":  player,
-                    "Prop":    f"{prop.get('operator','over').title()} {threshold:.0f} {prop.get('stat','')}",
-                    "Scope":   prop.get("condition",""),
-                    **period_results,
-                    "Result":  "✅ Won" if won else "❌ Lost",
+                    "player":         player,
+                    "stat":           prop.get("stat",""),
+                    "threshold":      threshold,
+                    "condition":      prop.get("condition",""),
+                    "period_results": period_results,
+                    "won":            won,
                 }
 
-            graded    = [grade_prop(p) for p in props]
-            gdf       = pd.DataFrame(graded)
+            # Group props by line_index so dual-player props are graded together
+            from collections import defaultdict as _dd
+            by_line = _dd(list)
+            for p in props:
+                by_line[p.get('line_index', id(p))].append(p)
+            def grade_prop_group(group: list) -> dict:
+                """Grade one or more players for the same prop line.
+                For multi-player props, ALL players must hit the threshold
+                in ALL periods for the selection to Win."""
+                results = [grade_prop(p) for p in group]
+
+                players_str = " & ".join(r["player"] for r in results)
+                first       = results[0]
+                stat        = first.get("stat","")
+                threshold   = first.get("threshold", 0)
+                condition   = first.get("condition","")
+                period_keys = list(first.get("period_results", {}).keys())
+
+                # Build combined period columns: show all players' values
+                combined_periods = {}
+                for pk in period_keys:
+                    cell_parts = []
+                    all_hit = True
+                    for r in results:
+                        cell_val = r["period_results"].get(pk, "❌ 0")
+                        cell_parts.append(f"{r['player']}: {cell_val}")
+                        if cell_val.startswith("❌"):
+                            all_hit = False
+                    icon = "✅" if all_hit else "❌"
+                    combined_periods[pk] = f"{icon} " + " | ".join(cell_parts)
+
+                # Overall: ALL players must have won
+                overall_won = all(r["won"] for r in results)
+
+                return {
+                    "Players": players_str,
+                    "Prop":    f"Over {threshold:.0f} {stat}",
+                    "Scope":   condition,
+                    **combined_periods,
+                    "Result":  "✅ Won" if overall_won else "❌ Lost",
+                }
+
+            graded = [grade_prop_group(group) for group in by_line.values()]
+            gdf = pd.DataFrame(graded)
 
             def color_prop(val):
                 if isinstance(val, str):
@@ -1151,7 +1210,7 @@ elif st.session_state.view == "boxscore":
                     if val.startswith("⚠️"): return "color:#f59e0b;font-weight:700"
                 return ""
 
-            style_cols = [c for c in gdf.columns if c not in ("Player","Prop","Scope")]
+            style_cols = [c for c in gdf.columns if c not in ("Players","Prop","Scope")]
             st.dataframe(
                 gdf.style.map(color_prop, subset=style_cols),
                 use_container_width=True,
