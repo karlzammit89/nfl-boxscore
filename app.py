@@ -1500,12 +1500,15 @@ elif st.session_state.view == "boxscore":
                     ok = sum(1 for p in plays if "touchdown" in p) >= req_n
                 elif req_type == "fg":
                     ok = sum(1 for p in plays if "field goal" in p) >= req_n
-                else:  # score / points — any scoring play in this period
+                else:  # score / points
                     if scoring_df is not None and not scoring_df.empty and "Quarter" in scoring_df.columns:
-                        ok = (scoring_df["Quarter"] == period_label).any()
-                    elif scoring_df is not None and not scoring_df.empty and "Half" in scoring_df.columns:
-                        # For half periods use Half column
-                        ok = (scoring_df["Half"] == period_label).any()
+                        q_rows = scoring_df[scoring_df["Quarter"] == period_label]
+                        if each_team and "Team" in scoring_df.columns:
+                            # Each team must have scored in this period
+                            teams_scored = set(q_rows["Team"].dropna().unique())
+                            ok = len(teams_scored) >= 2
+                        else:
+                            ok = len(q_rows) > 0
                     else:
                         ok = pts > 0
                 if not ok:
