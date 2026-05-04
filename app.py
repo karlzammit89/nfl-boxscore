@@ -1414,7 +1414,19 @@ elif st.session_state.view == "boxscore":
                 st.write("**by_period Full Game defense:**", fg_def)
                 espn_def = data.get("defense", pd.DataFrame())
                 st.write("**ESPN defense df cols:**", list(espn_def.columns) if not espn_def.empty else "empty")
-                st.write("**ESPN defense sample:**", espn_def.head(5) if not espn_def.empty else "empty")
+                st.write("**ESPN defense sample:**", espn_def if not espn_def.empty else "empty (0 rows)")
+                # Also check raw boxscore for defensive stats
+                try:
+                    from nfl.api import get_game_summary as _gs2
+                    _s2 = _gs2(game_id)
+                    _bs = _s2.get("boxscore", {}) if _s2 else {}
+                    _players = _bs.get("players", [])
+                    st.write(f"**Boxscore teams:** {[t.get('team',{}).get('abbreviation') for t in _players]}")
+                    for _tp in _players:
+                        _cats = [c.get("name") for c in _tp.get("statistics",[])]
+                        st.write(f"**{_tp.get('team',{}).get('abbreviation')} stat categories:** {_cats}")
+                except Exception as _ex:
+                    st.write(f"Debug error: {_ex}")
                 # Show what 'Kenneth Walker' resolves to
                 kw_lower = "kenneth walker"
                 st.write(f"**'kenneth walker' in _full_name_team:**", kw_lower in _full_name_team)
