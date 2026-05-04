@@ -1414,46 +1414,6 @@ elif st.session_state.view == "boxscore":
         gdf = pd.DataFrame(graded) if graded else pd.DataFrame()
         if not gdf.empty:
             gdf = _sort(gdf, 'Players')
-            # ── Debug expander ───────────────────────────────────────────
-            with st.expander("🔍 Debug (remove later)", expanded=False):
-                st.write("**_full_name_team keys (sample):**", list(_full_name_team.items())[:20])
-                st.write("**_game_teams:**", _game_teams)
-                st.write("**_game_abbrs (sample):**", list(_game_abbrs)[:20])
-                fg_def = by_period.get("Full Game", {}).get("defense", pd.DataFrame())
-                st.write("**by_period Full Game defense:**", fg_def)
-                espn_def = data.get("defense", pd.DataFrame())
-                st.write("**ESPN defense df cols:**", list(espn_def.columns) if not espn_def.empty else "empty")
-                st.write(f"**ESPN defense rows:** {len(espn_def)}")
-                st.write("**ESPN defense head:**", espn_def.head(5) if not espn_def.empty else "EMPTY")
-                # Directly parse defensive from raw boxscore to bypass cache
-                try:
-                    from nfl.api import get_game_summary as _gs2
-                    _s2 = _gs2(game_id)
-                    _bs = _s2.get("boxscore", {}) if _s2 else {}
-                    _players = _bs.get("players", [])
-                    for _tp in _players:
-                        _team_a = _tp.get("team",{}).get("abbreviation","?")
-                        for _cat in _tp.get("statistics",[]):
-                            if _cat.get("name","").lower() == "defensive":
-                                _keys   = _cat.get("keys",[])
-                                _labels = _cat.get("labels", _keys)
-                                _aths   = _cat.get("athletes",[])
-                                st.write(f"**{_team_a} defensive keys:** {_keys}")
-                                st.write(f"**{_team_a} defensive labels:** {_labels}")
-                                st.write(f"**{_team_a} athlete count:** {len(_aths)}")
-                                if _aths:
-                                    _first = _aths[0]
-                                    st.write(f"**First athlete:** {_first.get('athlete',{}).get('displayName')} stats={_first.get('stats')}")
-                except Exception as _ex:
-                    st.write(f"Debug error: {_ex}")
-                # Show what 'Kenneth Walker' resolves to
-                kw_lower = "kenneth walker"
-                st.write(f"**'kenneth walker' in _full_name_team:**", kw_lower in _full_name_team)
-                st.write(f"**'kenneth walker iii' in _full_name_team:**", "kenneth walker iii" in _full_name_team)
-                # Show all keys containing 'walker'
-                walker_keys = [k for k in _full_name_team if 'walker' in k]
-                st.write("**walker keys:**", walker_keys)
-            # ────────────────────────────────────────────────────────────────
             np_  = len(gdf)
             nw_  = sum(1 for v in gdf['Result'] if 'Won'  in str(v))
             nl_  = sum(1 for v in gdf['Result'] if 'Lost' in str(v))
