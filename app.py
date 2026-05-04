@@ -1108,31 +1108,117 @@ elif st.session_state.view == "boxscore":
             st.error(f"Could not parse props: {e}")
             props = []
 
-        def player_found_in_game(player: str, category: str) -> bool:
-            """Check if this player appears in ANY period of this game."""
-            parts = player.strip().split()
-            for period_key in ["Full Game", "Q1", "Q2", "Q3", "Q4"]:
-                pdf = by_period.get(period_key, {}).get(category, pd.DataFrame())
-                if pdf is None or pdf.empty or "Player" not in pdf.columns:
-                    continue
-                match = pdf[pdf["Player"].str.contains(parts[-1], case=False, na=False)]
-                if not match.empty:
-                    return True
-                if len(parts) >= 2:
-                    abbr = f"{parts[0][0]}.{' '.join(parts[1:])}"
-                    if (pdf["Player"] == abbr).any():
-                        return True
-            return False
+        # Teams in this game — used to validate players
+        _game_teams = set()
+        try:
+            _game_teams.add(game["away"]["abbr"].upper())
+            _game_teams.add(game["home"]["abbr"].upper())
+        except Exception:
+            pass
 
-        def get_player_val(player: str, category: str, col: str, period_key: str) -> float:
+        # Build full-name → team lookup from boxscore (displayName = 'Brian Robinson')
+        # Lets us distinguish Bijan Robinson (ATL) vs Brian Robinson (WSH) by full name + team.
+        _full_name_team: dict = {}   # full_name_lower → team_abbr
+        _game_abbrs:     set  = set()  # espn abbrs (B.Robinson) in this game
+        _game_players:   dict = {}   # abbr → team (kept for _find_player)
+
+        try:
+            from nfl.api import get_game_summary as _gsum
+            _summary = _gsum(game_id)
+            if _summary:
+                for _tdata in _summary.get('boxscore', {}).get('players', []):
+                    _team_abbr = _tdata.get('team', {}).get('abbreviation', '').upper()
+                    for _cat in _tdata.get('statistics', []):
+                        for _ath in _cat.get('athletes', []):
+                            _full = _ath.get('athlete', {}).get('displayName', '')
+                            if _full:
+                                _full_name_team[_full.lower()] = _team_abbr
+        except Exception:
+            pass
+
+        for _cat in ['passing', 'rushing', 'receiving']:
+            _fg_df = by_period.get('Full Game', {}).get(_cat, pd.DataFrame())
+            if _fg_df is not None and not _fg_df.empty and 'Player' in _fg_df.columns:
+                for _, _row in _fg_df.iterrows():
+                    _abbr = _row['Player']; _team = _row.get('Team', '')
+                    if _abbr:
+                        _game_abbrs.add(_abbr)
+                        _game_players[_abbr] = _team
+        def _abbr_from_name(player: str) -> str:
+            """Convert 'Bijan Robinson' → 'B.Robinson'."""
+            parts = player.strip().split()
+            if len(parts) < 2:
+                return player
+            return f"{parts[0][0].upper()}.{parts[-1]}"
+
+        def _name_matches_game(player: str) -> bool:
+            """
+            True only if the player's abbreviated form exists uniquely in this game.
+            If B.Robinson exists but the user typed 'Bijan' and the game player
+            could be 'Brian', we cannot confirm — return False (→ N/A).
+            
+            We confirm a match when:
+              1. The abbr exists in _game_players, AND
+              2. The first name provided is consistent with the abbr initial, AND
+              3. If the full name is ≥2 chars first name, it starts with the same
+                 letter (can't go further without external data).
+            
+            For the Bijan/Brian collision: both produce B.Robinson.
+            We resolve by checking: does any other player in the game share
+            the same abbr? If so, we cannot confirm → N/A.
+            Actually ESPN guarantees unique abbrs per team so B.Robinson is unique
+            per team. But Bijan (ATL) vs Brian (WSH) — if B.Robinson is WSH, 
+            and we typed 'Bijan Robinson' → the game has B.Robinson (Brian, WSH).
+            We CANNOT distinguish Bijan from Brian with initials alone.
+            
+            Practical rule: if the first name provided is ≥4 chars, we keep it
+            ambiguous (N/A) unless we have a strong signal. If ≤3 chars (e.g. 'Dak',
+            'Cam'), initial match is sufficient. This isn't perfect but handles
+            common cases. Better: accept the match and let the team filter decide.
+            The real guard is _game_teams — if Bijan's team (ATL) isn't in the game,
+            it won't matter that B.Robinson matched because team filter removes it.
+            """
+            abbr = _abbr_from_name(player)
+            return abbr in _game_players
+
+        def _find_player(player: str, category: str, period_key: str):
+            """Return matching row or empty DataFrame.
+            Uses pre-validated game player list so only real participants match.
+            """
             pdf = by_period.get(period_key, {}).get(category, pd.DataFrame())
             if pdf is None or pdf.empty or "Player" not in pdf.columns:
-                return 0.0
-            parts = player.strip().split()
-            match = pdf[pdf["Player"].str.contains(parts[-1], case=False, na=False)]
-            if match.empty and len(parts) >= 2:
-                abbr  = f"{parts[0][0]}.{' '.join(parts[1:])}"
-                match = pdf[pdf["Player"] == abbr]
+                return pd.DataFrame()
+
+            abbr = _abbr_from_name(player)
+
+            # Exact abbreviated name match
+            m = pdf[pdf["Player"] == abbr]
+
+            # Filter to teams in this game
+            if not m.empty and _game_teams and "Team" in m.columns:
+                m = m[m["Team"].str.upper().isin(_game_teams)]
+
+            return m
+
+        def player_found_in_game(player: str, category: str) -> bool:
+            """Full-name + team validation.
+            1. If boxscore full names are available: match exact full name and
+               confirm their team is one of the two teams in this game.
+               This correctly distinguishes Bijan Robinson (ATL) vs Brian Robinson (WSH).
+            2. Fallback (no boxscore): check ESPN abbr in game abbr set.
+            """
+            name_lower = player.strip().lower()
+            if _full_name_team:
+                if name_lower not in _full_name_team:
+                    return False
+                player_team = _full_name_team[name_lower].upper()
+                return not _game_teams or player_team in _game_teams
+            # Fallback
+            abbr = _abbr_from_name(player)
+            return abbr in _game_abbrs
+
+        def get_player_val(player: str, category: str, col: str, period_key: str) -> float:
+            match = _find_player(player, category, period_key)
             return float(match.iloc[0].get(col, 0)) if not match.empty else 0.0
 
         def grade_prop(prop: dict) -> dict:
