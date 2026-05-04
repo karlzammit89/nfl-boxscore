@@ -1108,150 +1108,154 @@ elif st.session_state.view == "boxscore":
             st.error(f"Could not parse props: {e}")
             props = []
 
-            def get_player_val(player: str, category: str, col: str, period_key: str) -> float:
-                pdf = by_period.get(period_key, {}).get(category, pd.DataFrame())
-                if pdf is None or pdf.empty or "Player" not in pdf.columns:
-                    return 0.0
-                parts = player.strip().split()
-                # Try last name match, then abbreviated (D.Maye), then full
-                match = pdf[pdf["Player"].str.contains(parts[-1], case=False, na=False)]
-                if match.empty and len(parts) >= 2:
-                    abbr  = f"{parts[0][0]}.{' '.join(parts[1:])}"
-                    match = pdf[pdf["Player"] == abbr]
-                return float(match.iloc[0].get(col, 0)) if not match.empty else 0.0
+        def get_player_val(player: str, category: str, col: str, period_key: str) -> float:
+            pdf = by_period.get(period_key, {}).get(category, pd.DataFrame())
+            if pdf is None or pdf.empty or "Player" not in pdf.columns:
+                return 0.0
+            parts = player.strip().split()
+            # Try last name match, then abbreviated (D.Maye), then full
+            match = pdf[pdf["Player"].str.contains(parts[-1], case=False, na=False)]
+            if match.empty and len(parts) >= 2:
+                abbr  = f"{parts[0][0]}.{' '.join(parts[1:])}"
+                match = pdf[pdf["Player"] == abbr]
+            return float(match.iloc[0].get(col, 0)) if not match.empty else 0.0
 
-            def grade_prop(prop: dict) -> dict:
-                player    = prop.get("player","")
-                stat      = prop.get("stat","").lower()
-                threshold = float(prop.get("threshold", 0))
-                condition = prop.get("condition","game total").lower()
-                operator  = prop.get("operator","over").lower()
+        def grade_prop(prop: dict) -> dict:
+            player    = prop.get("player","")
+            stat      = prop.get("stat","").lower()
+            threshold = float(prop.get("threshold", 0))
+            condition = prop.get("condition","game total").lower()
+            operator  = prop.get("operator","over").lower()
 
-                stat_map = {
-                    "rushing yards":   ("rushing",   "YDS"),
-                    "rushing yds":     ("rushing",   "YDS"),
-                    "rushing td":      ("rushing",   "TD"),
-                    "rushing tds":     ("rushing",   "TD"),
-                    "passing yards":   ("passing",   "YDS"),
-                    "passing yds":     ("passing",   "YDS"),
-                    "passing td":      ("passing",   "TD"),
-                    "passing tds":     ("passing",   "TD"),
-                    "interceptions":   ("passing",   "INT"),
-                    "receptions":      ("receiving", "REC"),
-                    "receiving yards": ("receiving", "YDS"),
-                    "receiving yds":   ("receiving", "YDS"),
-                    "receiving td":    ("receiving", "TD"),
-                    "receiving tds":   ("receiving", "TD"),
-                }
-                category, col = None, None
-                for key, val in stat_map.items():
-                    if key in stat:
-                        category, col = val
-                        break
+            stat_map = {
+                "rushing yards":   ("rushing",   "YDS"),
+                "rushing yds":     ("rushing",   "YDS"),
+                "rushing td":      ("rushing",   "TD"),
+                "rushing tds":     ("rushing",   "TD"),
+                "passing yards":   ("passing",   "YDS"),
+                "passing yds":     ("passing",   "YDS"),
+                "passing td":      ("passing",   "TD"),
+                "passing tds":     ("passing",   "TD"),
+                "interceptions":   ("passing",   "INT"),
+                "receptions":      ("receiving", "REC"),
+                "receiving yards": ("receiving", "YDS"),
+                "receiving yds":   ("receiving", "YDS"),
+                "receiving td":    ("receiving", "TD"),
+                "receiving tds":   ("receiving", "TD"),
+            }
+            category, col = None, None
+            for key, val in stat_map.items():
+                if key in stat:
+                    category, col = val
+                    break
 
-                if not category:
-                    return {
-                        "player": player, "stat": prop.get("stat",""),
-                        "threshold": threshold, "condition": prop.get("condition",""),
-                        "period_results": {}, "won": None,
-                    }
-
-                def hit(v: float) -> bool:
-                    if operator == "under":   return v < threshold
-                    if operator == "exactly": return v == threshold
-                    return v >= threshold
-
-                period_results = {}
-
-                if "each quarter" in condition:
-                    for q in ["Q1","Q2","Q3","Q4"]:
-                        v = get_player_val(player, category, col, q)
-                        period_results[q] = f"{'✅' if hit(v) else '❌'} {v:.0f}"
-                    won = all(hit(get_player_val(player, category, col, q)) for q in ["Q1","Q2","Q3","Q4"])
-                elif "each half" in condition:
-                    for h, lbl in [("1H","1st Half"),("2H","2nd Half")]:
-                        v = get_player_val(player, category, col, h)
-                        period_results[lbl] = f"{'✅' if hit(v) else '❌'} {v:.0f}"
-                    won = all(hit(get_player_val(player, category, col, h)) for h in ["1H","2H"])
-                else:
-                    v = get_player_val(player, category, col, "Full Game")
-                    period_results["Game"] = f"{'✅' if hit(v) else '❌'} {v:.0f}"
-                    won = hit(v)
-
+            if not category:
                 return {
-                    "player":         player,
-                    "stat":           prop.get("stat",""),
-                    "threshold":      threshold,
-                    "condition":      prop.get("condition",""),
-                    "period_results": period_results,
-                    "won":            won,
+                    "player": player, "stat": prop.get("stat",""),
+                    "threshold": threshold, "condition": prop.get("condition",""),
+                    "period_results": {}, "won": None,
                 }
 
-            # Group props by line_index so dual-player props are graded together
-            from collections import defaultdict as _dd
-            by_line = _dd(list)
-            for p in props:
-                by_line[p.get('line_index', id(p))].append(p)
-            def grade_prop_group(group: list) -> dict:
-                """Grade one or more players for the same prop line.
-                For multi-player props, ALL players must hit the threshold
-                in ALL periods for the selection to Win."""
-                results = [grade_prop(p) for p in group]
+            def hit(v: float) -> bool:
+                if operator == "under":   return v < threshold
+                if operator == "exactly": return v == threshold
+                return v >= threshold
 
-                players_str = " & ".join(r["player"] for r in results)
-                first       = results[0]
-                stat        = first.get("stat","")
-                threshold   = first.get("threshold", 0)
-                condition   = first.get("condition","")
-                # Overall: ALL players must have won
-                if any(r['won'] is None for r in results):
-                    overall_won = None
-                else:
-                    overall_won = all(r['won'] for r in results)
+            period_results = {}
 
-                stat_short = {
-                    "Rushing Yards":   "Rush Yds",
-                    "Rushing TDs":     "Rush TDs",
-                    "Passing Yards":   "Pass Yds",
-                    "Passing TDs":     "Pass TDs",
-                    "Receiving Yards": "Rec Yds",
-                    "Receptions":      "Rec",
-                    "Interceptions":   "INTs",
-                }.get(stat, stat)
-                scope_short = {
-                    "each quarter": "Each Qrt",
-                    "each half":    "Each HF",
-                    "game total":   "Game",
-                }.get(condition.lower(), condition)
-                return {
-                    "Players": players_str,
-                    "Prop":    f"{threshold:.0f}+ {stat_short}",
-                    "Scope":   scope_short,
-                    "Result":  "✅ Won" if overall_won is True else ("⚠️ N/A" if overall_won is None else "❌ Lost"),
-                }
+            if "each quarter" in condition:
+                for q in ["Q1","Q2","Q3","Q4"]:
+                    v = get_player_val(player, category, col, q)
+                    period_results[q] = f"{'✅' if hit(v) else '❌'} {v:.0f}"
+                won = all(hit(get_player_val(player, category, col, q)) for q in ["Q1","Q2","Q3","Q4"])
+            elif "each half" in condition:
+                for h, lbl in [("1H","1st Half"),("2H","2nd Half")]:
+                    v = get_player_val(player, category, col, h)
+                    period_results[lbl] = f"{'✅' if hit(v) else '❌'} {v:.0f}"
+                won = all(hit(get_player_val(player, category, col, h)) for h in ["1H","2H"])
+            else:
+                v = get_player_val(player, category, col, "Full Game")
+                period_results["Game"] = f"{'✅' if hit(v) else '❌'} {v:.0f}"
+                won = hit(v)
 
-            graded = [grade_prop_group(group) for group in by_line.values()]
+            return {
+                "player":         player,
+                "stat":           prop.get("stat",""),
+                "threshold":      threshold,
+                "condition":      prop.get("condition",""),
+                "period_results": period_results,
+                "won":            won,
+            }
 
-            def _color(val):
-                if isinstance(val, str):
-                    if val.startswith('✅'): return 'color:#22c55e;font-weight:700'
-                    if val.startswith('❌'): return 'color:#ef4444;font-weight:700'
-                    if val.startswith('⚠️'): return 'color:#f59e0b;font-weight:700'
-                return ''
+        # Group props by line_index so dual-player props are graded together
+        from collections import defaultdict as _dd
+        by_line = _dd(list)
+        for p in props:
+            by_line[p.get('line_index', id(p))].append(p)
+        def grade_prop_group(group: list) -> dict:
+            """Grade one or more players for the same prop line.
+            For multi-player props, ALL players must hit the threshold
+            in ALL periods for the selection to Win."""
+            results = [grade_prop(p) for p in group]
 
-            def _sort(df, col):
-                if df.empty or 'Result' not in df.columns: return df
-                df = df.copy()
-                df['_w'] = df['Result'].apply(lambda x: 0 if 'Won' in str(x) else (2 if 'N/A' in str(x) else 1))
-                return df.sort_values(['_w', col]).drop(columns=['_w']).reset_index(drop=True)
+            players_str = " & ".join(r["player"] for r in results)
+            first       = results[0]
+            stat        = first.get("stat","")
+            threshold   = first.get("threshold", 0)
+            condition   = first.get("condition","")
+            # Overall: ALL players must have won
+            if any(r['won'] is None for r in results):
+                overall_won = None
+            else:
+                overall_won = all(r['won'] for r in results)
 
-            # ── Player props table ─────────────────────────────────────────
-            gdf = pd.DataFrame(graded) if graded else pd.DataFrame()
-            if not gdf.empty:
-                gdf = _sort(gdf, 'Players')
-                np_ = len(gdf); nw_ = sum(1 for v in gdf['Result'] if 'Won' in str(v))
-                st.markdown(f'**👤 Player Props** — {np_} props · {nw_} ✅ Won · {np_-nw_} ❌/⚠️')
-                ps = [c for c in gdf.columns if c not in ('Players','Prop','Scope')]
-                st.dataframe(gdf.style.map(_color, subset=ps), use_container_width=True, hide_index=True)
+            stat_short = {
+                "Rushing Yards":   "Rush Yds",
+                "Rushing TDs":     "Rush TDs",
+                "Passing Yards":   "Pass Yds",
+                "Passing TDs":     "Pass TDs",
+                "Receiving Yards": "Rec Yds",
+                "Receptions":      "Rec",
+                "Interceptions":   "INTs",
+            }.get(stat, stat)
+            scope_short = {
+                "each quarter": "Each Qrt",
+                "each half":    "Each HF",
+                "game total":   "Game",
+            }.get(condition.lower(), condition)
+            return {
+                "Players": players_str,
+                "Prop":    f"{threshold:.0f}+ {stat_short}",
+                "Scope":   scope_short,
+                "Result":  "✅ Won" if overall_won is True else ("⚠️ N/A" if overall_won is None else "❌ Lost"),
+            }
 
-            # ── Team / game props table ────────────────────────────────────
+        graded = [grade_prop_group(group) for group in by_line.values()]
+
+        def _color(val):
+            if isinstance(val, str):
+                if val.startswith('✅'): return 'color:#22c55e;font-weight:700'
+                if val.startswith('❌'): return 'color:#ef4444;font-weight:700'
+                if val.startswith('⚠️'): return 'color:#f59e0b;font-weight:700'
+            return ''
+
+        def _sort(df, col):
+            if df.empty or 'Result' not in df.columns: return df
+            df = df.copy()
+            df['_w'] = df['Result'].apply(lambda x: 0 if 'Won' in str(x) else (2 if 'N/A' in str(x) else 1))
+            return df.sort_values(['_w', col]).drop(columns=['_w']).reset_index(drop=True)
+
+        # ── Player props table ─────────────────────────────────────────
+        gdf = pd.DataFrame(graded) if graded else pd.DataFrame()
+        if not gdf.empty:
+            gdf = _sort(gdf, 'Players')
+            np_ = len(gdf); nw_ = sum(1 for v in gdf['Result'] if 'Won' in str(v))
+            st.markdown(f'**👤 Player Props** — {np_} props · {nw_} ✅ Won · {np_-nw_} ❌/⚠️')
+            ps = [c for c in gdf.columns if c not in ('Players','Prop','Scope')]
+            st.dataframe(gdf.style.map(_color, subset=ps), use_container_width=True, hide_index=True)
+
+        # Fallback if nothing graded
+        if not graded:
+            st.info('No player props could be parsed. Check that lines include a player name, stat type and threshold.')
+
+        # ── Team / game props table ────────────────────────────────────
