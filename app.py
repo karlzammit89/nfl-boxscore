@@ -1226,16 +1226,25 @@ elif st.session_state.view == "boxscore":
             """
             # Defense (sacks): check by_period and ESPN defense df
             if category == 'defense':
-                # defense df uses full displayName — match by full name or last name
+                parts = player.strip().split()
+                abbr  = f"{parts[0][0]}.{parts[-1]}" if len(parts) >= 2 else player
                 name_lower = player.strip().lower()
+
+                # 1. Check by_period Full Game defense (abbreviated names from PBP)
+                pbp_def = by_period.get('Full Game', {}).get('defense', pd.DataFrame())
+                if pbp_def is not None and not pbp_def.empty and 'Player' in pbp_def.columns:
+                    if (pbp_def['Player'] == abbr).any():
+                        return True
+
+                # 2. Check ESPN cumulative defense (full displayNames)
                 df2 = data.get('defense', pd.DataFrame())
                 if df2 is not None and not df2.empty and 'Player' in df2.columns:
                     if df2['Player'].str.lower().eq(name_lower).any():
                         return True
-                    parts = player.strip().split()
                     if df2['Player'].str.contains(parts[-1], case=False, na=False).any():
                         return True
-                # Fallback: _full_name_team with game team check
+
+                # 3. Fallback: _full_name_team (players in boxscore)
                 if name_lower in _full_name_team:
                     return not _game_teams or _full_name_team[name_lower].upper() in _game_teams
                 return False
@@ -1252,21 +1261,25 @@ elif st.session_state.view == "boxscore":
 
         def get_player_val(player: str, category: str, col: str, period_key: str) -> float:
             if category == 'defense':
-                # defense df uses full displayName (e.g. "Byron Murphy II"), not abbr
+                parts = player.strip().split()
+                abbr  = f"{parts[0][0]}.{parts[-1]}" if len(parts) >= 2 else player
+
+                # 1. Check by_period defense first — has per-period sacks from PBP
+                #    Stored with abbreviated names (C.Barmore, D.Lawrence)
+                pbp_def = by_period.get(period_key, {}).get('defense', pd.DataFrame())
+                if pbp_def is not None and not pbp_def.empty and 'Player' in pbp_def.columns:
+                    m = pbp_def[pbp_def['Player'] == abbr]
+                    if not m.empty:
+                        return float(m.iloc[0].get('SACKS', 0))
+
+                # 2. Fall back to ESPN cumulative defense (full displayName)
+                #    Use this only for Full Game / when PBP has no data for this period
                 pdf = data.get('defense', pd.DataFrame())
                 if pdf is None or pdf.empty or 'Player' not in pdf.columns:
                     return 0.0
                 name_lower = player.strip().lower()
-                # 1. Exact full name match (case-insensitive)
                 m = pdf[pdf['Player'].str.lower() == name_lower]
-                # 2. Normalised name (strip suffix)
                 if m.empty:
-                    import re as _re3
-                    norm = _re3.sub(r'\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$', '', name_lower, flags=_re3.I).strip()
-                    m = pdf[pdf['Player'].str.lower().str.replace(r'\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$', '', regex=True).str.strip() == norm]
-                # 3. Last name fallback
-                if m.empty:
-                    parts = player.strip().split()
                     m = pdf[pdf['Player'].str.contains(parts[-1], case=False, na=False)]
                 return float(m.iloc[0].get('SACKS', 0)) if not m.empty else 0.0
             match = _find_player(player, category, period_key)
