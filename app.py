@@ -1228,9 +1228,18 @@ elif st.session_state.view == "boxscore":
             if category == 'defense':
                 parts = player.strip().split()
                 abbr = f"{parts[0][0]}.{parts[-1]}" if len(parts) >= 2 else player
+                # Check ESPN defense df first (now includes all defenders)
                 df2 = data.get('defense', pd.DataFrame())
                 if df2 is not None and not df2.empty and 'Player' in df2.columns:
-                    return (df2['Player'] == abbr).any()
+                    if (df2['Player'] == abbr).any():
+                        return True
+                    # Last name fallback
+                    if df2['Player'].str.contains(parts[-1], case=False, na=False).any():
+                        return True
+                # Fallback: check if player is in _full_name_team with a game team
+                name_lower = player.strip().lower()
+                if name_lower in _full_name_team:
+                    return not _game_teams or _full_name_team[name_lower].upper() in _game_teams
                 return False
 
             name_lower = player.strip().lower()
