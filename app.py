@@ -1053,6 +1053,9 @@ elif st.session_state.view == "boxscore":
             (_re.compile(r'each quarter', _re.I),  "each quarter"),
             (_re.compile(r'each half',    _re.I),  "each half"),
         ]
+        THRESHOLD_RE = _re.compile(r'(\d+)\+?\s*(?:or more)?')
+        PLAYERS_RE   = _re.compile(
+            r'^(.+?)(?:\s+(?:&|and)\s+(.+?))\s+to\s+each\s+(?:record|have)', _re.I)
         SINGLE_RE    = _re.compile(r'^(.+?)\s+to\s+(?:record|have|score)', _re.I)
         RUSH_TD_RE2  = _re.compile(r'(\d+)\+?\s*rushing tds?', _re.I)
         PASS_TD_RE2  = _re.compile(r'(\d+)\+?\s*passing tds?', _re.I)
