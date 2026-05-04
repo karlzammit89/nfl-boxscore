@@ -1054,7 +1054,7 @@ elif st.session_state.view == "boxscore":
             (_re.compile(r'each half',    _re.I),  "each half"),
         ]
         TEAM_RE = _re.compile(
-            r'^(each team|both teams|points scored)', _re.I)
+            r'^(each team|both teams|points scored|\d+[+]?.*(?:tds?|touchdowns?|field goals?|fgs?|scored))', _re.I)
         THRESHOLD_RE = _re.compile(r'(\d+)\+?\s*(?:or more)?')
         PLAYERS_RE   = _re.compile(
             r'^(.+?)(?:\s+(?:&|and)\s+(.+?))\s+to\s+each\s+(?:record|have)', _re.I)
@@ -1145,20 +1145,76 @@ elif st.session_state.view == "boxscore":
                     return 0
                 return int(ls[period_label].sum())
 
-            def check_reqs(reqs, period_label):
-                plays = plays_in_period(period_label)
+            def scoring_plays_in_period(period_label):
+                """Return list of scoring play types for the period."""
+                if scoring_df is None or scoring_df.empty:
+                    return []
+                col = "Quarter" if "Quarter" in scoring_df.columns else None
+                if col is None:
+                    return []
+                rows = scoring_df[scoring_df[col] == period_label]
+                return rows["Type"].str.lower().tolist() if "Type" in rows.columns else []
+
+            def teams_in_period(period_label):
+                """Return set of teams that scored in this period."""
+                if scoring_df is None or scoring_df.empty:
+                    return set()
+                col = "Quarter" if "Quarter" in scoring_df.columns else None
+                if col is None:
+                    return set()
+                rows = scoring_df[scoring_df[col] == period_label]
+                if "Team" in rows.columns:
+                    return set(rows["Team"].dropna().unique())
+                return set()
+
+            def check_reqs(reqs, period_label, each_team=True):
+                plays = scoring_plays_in_period(period_label)
                 pts   = pts_in_period(period_label)
+                teams = teams_in_period(period_label)
+                # Get unique team abbreviations from the game
+                all_teams = set()
+                if data.get("linescore") is not None and not data["linescore"].empty:
+                    if "Team" in data["linescore"].columns:
+                        all_teams = set(data["linescore"]["Team"].dropna().unique())
+
                 for req_type, req_n in reqs:
                     if req_type == "rushing_td":
-                        ok = sum(1 for p in plays if "rush" in p and "touchdown" in p) >= req_n
+                        if each_team and all_teams:
+                            # Each team must have a rushing TD
+                            ok = True
+                            for team in all_teams:
+                                team_rows = scoring_df[
+                                    (scoring_df.get("Quarter","") == period_label) &
+                                    (scoring_df["Team"] == team)
+                                ] if "Team" in scoring_df.columns else pd.DataFrame()
+                                team_plays = team_rows["Type"].str.lower().tolist() if not team_rows.empty else []
+                                if sum(1 for p in team_plays if "rush" in p and "touchdown" in p) < req_n:
+                                    ok = False; break
+                        else:
+                            ok = sum(1 for p in plays if "rush" in p and "touchdown" in p) >= req_n
                     elif req_type == "passing_td":
                         ok = sum(1 for p in plays if "pass" in p and "touchdown" in p) >= req_n
                     elif req_type == "any_td":
-                        ok = sum(1 for p in plays if "touchdown" in p) >= req_n
+                        if each_team and all_teams:
+                            # Each team must have at least req_n TDs
+                            ok = True
+                            for team in all_teams:
+                                team_rows = scoring_df[
+                                    (scoring_df.get("Quarter","") == period_label) &
+                                    (scoring_df["Team"] == team)
+                                ] if "Team" in scoring_df.columns else pd.DataFrame()
+                                team_plays = team_rows["Type"].str.lower().tolist() if not team_rows.empty else []
+                                if sum(1 for p in team_plays if "touchdown" in p) < req_n:
+                                    ok = False; break
+                        else:
+                            ok = sum(1 for p in plays if "touchdown" in p) >= req_n
                     elif req_type == "fg":
                         ok = sum(1 for p in plays if "field goal" in p) >= req_n
-                    else:  # score
+                    elif req_type == "score":
+                        # "Points Scored in Each Quarter" — just any team scores
                         ok = pts > 0
+                    else:
+                        ok = True
                     if not ok:
                         return False
                 return True
@@ -1167,7 +1223,8 @@ elif st.session_state.view == "boxscore":
                 cond = tp["condition"]
                 reqs = tp["requirements"]
                 periods = ["Q1","Q2","Q3","Q4"] if cond == "each quarter" else ["1H","2H"]
-                won = all(check_reqs(reqs, p) for p in periods)
+                is_each_team = 'each team' in tp['line'].lower() or 'both teams' in tp['line'].lower()
+                won = all(check_reqs(reqs, p, each_team=is_each_team) for p in periods)
                 req_strs = []
                 for rt, rn in reqs:
                     label = {"rushing_td":"Rush TD","passing_td":"Pass TD",
@@ -1225,10 +1282,11 @@ elif st.session_state.view == "boxscore":
                         break
 
                 if not category:
-                    return {"Player": player,
-                            "Prop":   f"{prop.get('operator','over').title()} {threshold:.0f} {prop.get('stat','')}",
-                            "Scope":  prop.get("condition",""),
-                            "Result": "⚠️ Unknown stat"}
+                    return {
+                        "player": player, "stat": prop.get("stat",""),
+                        "threshold": threshold, "condition": prop.get("condition",""),
+                        "period_results": {}, "won": None,
+                    }
 
                 def hit(v: float) -> bool:
                     if operator == "under":   return v < threshold
@@ -1278,7 +1336,10 @@ elif st.session_state.view == "boxscore":
                 threshold   = first.get("threshold", 0)
                 condition   = first.get("condition","")
                 # Overall: ALL players must have won
-                overall_won = all(r["won"] for r in results)
+                if any(r['won'] is None for r in results):
+                    overall_won = None
+                else:
+                    overall_won = all(r['won'] for r in results)
 
                 stat_short = {
                     "Rushing Yards":   "Rush Yds",
@@ -1298,7 +1359,7 @@ elif st.session_state.view == "boxscore":
                     "Players": players_str,
                     "Prop":    f"{threshold:.0f}+ {stat_short}",
                     "Scope":   scope_short,
-                    "Result":  "✅ Won" if overall_won else "❌ Lost",
+                    "Result":  "✅ Won" if overall_won is True else ("⚠️ N/A" if overall_won is None else "❌ Lost"),
                 }
 
             graded = [grade_prop_group(group) for group in by_line.values()]
@@ -1307,7 +1368,7 @@ elif st.session_state.view == "boxscore":
                 tdf = pd.DataFrame(team_graded)
                 gdf = pd.concat([gdf, tdf], ignore_index=True) if not gdf.empty else tdf
             if not gdf.empty and "Result" in gdf.columns:
-                gdf["_won"] = gdf["Result"].apply(lambda x: 0 if "Won" in str(x) else 1)
+                gdf["_won"] = gdf["Result"].apply(lambda x: 0 if "Won" in str(x) else (2 if "N/A" in str(x) else 1))
                 gdf = gdf.sort_values(["_won", "Players"]).drop(columns=["_won"]).reset_index(drop=True)
 
             def color_prop(val):
@@ -1326,7 +1387,7 @@ elif st.session_state.view == "boxscore":
         elif run_grader:
             if team_graded:
                 tdf = pd.DataFrame(team_graded)
-                tdf["_won"] = tdf["Result"].apply(lambda x: 0 if "Won" in str(x) else 1)
+                tdf["_won"] = tdf["Result"].apply(lambda x: 0 if "Won" in str(x) else (2 if "N/A" in str(x) else 1))
                 tdf = tdf.sort_values(["_won","Players"]).drop(columns=["_won"]).reset_index(drop=True)
                 st.markdown("**Grading results:**")
                 def _color_t(val):
