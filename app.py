@@ -1053,18 +1053,41 @@ elif st.session_state.view == "boxscore":
             (_re.compile(r'each quarter', _re.I),  "each quarter"),
             (_re.compile(r'each half',    _re.I),  "each half"),
         ]
-        SKIP_RE = _re.compile(
-            r'^(each team|points scored|both teams)', _re.I)
+        TEAM_RE = _re.compile(
+            r'^(each team|both teams|points scored)', _re.I)
         THRESHOLD_RE = _re.compile(r'(\d+)\+?\s*(?:or more)?')
         PLAYERS_RE   = _re.compile(
             r'^(.+?)(?:\s+(?:&|and)\s+(.+?))\s+to\s+each\s+(?:record|have)', _re.I)
         SINGLE_RE    = _re.compile(r'^(.+?)\s+to\s+(?:record|have|score)', _re.I)
+        RUSH_TD_RE2  = _re.compile(r'(\d+)\+?\s*rushing tds?', _re.I)
+        PASS_TD_RE2  = _re.compile(r'(\d+)\+?\s*passing tds?', _re.I)
+        ANY_TD_RE    = _re.compile(r'(\d+)\+?\s*tds?(?!.*fg)', _re.I)
+        FG_RE2       = _re.compile(r'(\d+)\+?\s*(?:fgs?|field goals?)', _re.I)
+        COND_MAP_RE2 = [
+            (_re.compile(r'each quarter|all four quarters', _re.I), 'each quarter'),
+            (_re.compile(r'each half', _re.I), 'each half'),
+        ]
 
         props = []
+        team_props = []
         try:
             for i, line in enumerate(clean_lines):
-                if SKIP_RE.match(line):
+                if TEAM_RE.match(line):
+                    cond = next((lbl for pat,lbl in COND_MAP_RE2 if pat.search(line)), 'each quarter')
+                    requirements = []
+                    rtd = RUSH_TD_RE2.search(line)
+                    ptd = PASS_TD_RE2.search(line)
+                    atd = ANY_TD_RE.search(line)
+                    fg  = FG_RE2.search(line)
+                    if rtd: requirements.append(('rushing_td', int(rtd.group(1))))
+                    if ptd: requirements.append(('passing_td', int(ptd.group(1))))
+                    if not rtd and not ptd and atd: requirements.append(('any_td', int(atd.group(1))))
+                    if fg:  requirements.append(('fg', int(fg.group(1))))
+                    if not requirements: requirements.append(('score', 1))
+                    team_props.append({'line_index': i, 'line': line,
+                                       'condition': cond, 'requirements': requirements})
                     continue
+
 
                 # Detect stat
                 stat = None
@@ -1104,6 +1127,58 @@ elif st.session_state.view == "boxscore":
         except Exception as e:
             st.error(f"Could not parse props: {e}")
             props = []
+
+        # ── Grade team props using scoring_df and linescore ──────────────────
+        team_graded = []
+        if team_props:
+            scoring_df = data.get("scoring", pd.DataFrame())
+
+            def plays_in_period(period_label):
+                if scoring_df is None or scoring_df.empty or "Quarter" not in scoring_df.columns:
+                    return []
+                rows = scoring_df[scoring_df["Quarter"] == period_label]
+                return rows["Type"].str.lower().tolist() if "Type" in rows.columns else []
+
+            def pts_in_period(period_label):
+                ls = data.get("linescore", pd.DataFrame())
+                if ls is None or ls.empty or period_label not in ls.columns:
+                    return 0
+                return int(ls[period_label].sum())
+
+            def check_reqs(reqs, period_label):
+                plays = plays_in_period(period_label)
+                pts   = pts_in_period(period_label)
+                for req_type, req_n in reqs:
+                    if req_type == "rushing_td":
+                        ok = sum(1 for p in plays if "rush" in p and "touchdown" in p) >= req_n
+                    elif req_type == "passing_td":
+                        ok = sum(1 for p in plays if "pass" in p and "touchdown" in p) >= req_n
+                    elif req_type == "any_td":
+                        ok = sum(1 for p in plays if "touchdown" in p) >= req_n
+                    elif req_type == "fg":
+                        ok = sum(1 for p in plays if "field goal" in p) >= req_n
+                    else:  # score
+                        ok = pts > 0
+                    if not ok:
+                        return False
+                return True
+
+            for tp in team_props:
+                cond = tp["condition"]
+                reqs = tp["requirements"]
+                periods = ["Q1","Q2","Q3","Q4"] if cond == "each quarter" else ["1H","2H"]
+                won = all(check_reqs(reqs, p) for p in periods)
+                req_strs = []
+                for rt, rn in reqs:
+                    label = {"rushing_td":"Rush TD","passing_td":"Pass TD",
+                             "any_td":"TD","fg":"FG","score":"Points"}.get(rt, rt)
+                    req_strs.append(f"{rn}+ {label}")
+                team_graded.append({
+                    "Players": "Each Team",
+                    "Prop":    " & ".join(req_strs) if req_strs else "Score",
+                    "Scope":   {"each quarter":"Each Qrt","each half":"Each HF"}.get(cond,"Game"),
+                    "Result":  "✅ Won" if won else "❌ Lost",
+                })
 
         if props:
             st.markdown("**Grading results:**")
@@ -1228,6 +1303,9 @@ elif st.session_state.view == "boxscore":
 
             graded = [grade_prop_group(group) for group in by_line.values()]
             gdf = pd.DataFrame(graded)
+            if team_graded:
+                tdf = pd.DataFrame(team_graded)
+                gdf = pd.concat([gdf, tdf], ignore_index=True) if not gdf.empty else tdf
             if not gdf.empty and "Result" in gdf.columns:
                 gdf["_won"] = gdf["Result"].apply(lambda x: 0 if "Won" in str(x) else 1)
                 gdf = gdf.sort_values(["_won", "Players"]).drop(columns=["_won"]).reset_index(drop=True)
@@ -1246,7 +1324,20 @@ elif st.session_state.view == "boxscore":
                 hide_index=True,
             )
         elif run_grader:
-            st.info("No props could be parsed. Check your input format.")
+            if team_graded:
+                tdf = pd.DataFrame(team_graded)
+                tdf["_won"] = tdf["Result"].apply(lambda x: 0 if "Won" in str(x) else 1)
+                tdf = tdf.sort_values(["_won","Players"]).drop(columns=["_won"]).reset_index(drop=True)
+                st.markdown("**Grading results:**")
+                def _color_t(val):
+                    if isinstance(val, str):
+                        if val.startswith("✅"): return "color:#22c55e;font-weight:700"
+                        if val.startswith("❌"): return "color:#ef4444;font-weight:700"
+                    return ""
+                st.dataframe(tdf.style.map(_color_t, subset=["Result"]),
+                             use_container_width=True, hide_index=True)
+            else:
+                st.info("No props could be parsed. Check your input format.")
 
     st.divider()
     st.caption(f"⚡ Last updated at {et_now().strftime('%H:%M')} ET")
