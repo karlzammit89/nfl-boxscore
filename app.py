@@ -1091,6 +1091,9 @@ elif st.session_state.view == "boxscore":
                         break
                 tm = THRESHOLD_RE.search(line)
                 threshold = float(tm.group(1)) if tm else None
+                # For sack props "Record a Sack" implies threshold of 1
+                if threshold is None and stat == "Sacks":
+                    threshold = 1.0
                 condition = "game total"
                 for pat, label in COND_MAP_RE:
                     if pat.search(line):
@@ -1216,6 +1219,19 @@ elif st.session_state.view == "boxscore":
                This correctly distinguishes Bijan Robinson (ATL) vs Brian Robinson (WSH).
             2. Fallback (no boxscore): check ESPN abbr in game abbr set.
             """
+            # Defense (sacks): check by_period and ESPN defense df
+            if category == 'defense':
+                parts = player.strip().split()
+                abbr = f"{parts[0][0]}.{parts[-1]}" if len(parts) >= 2 else player
+                pdf = by_period.get('Full Game', {}).get('defense', pd.DataFrame())
+                if pdf is not None and not pdf.empty and 'Player' in pdf.columns:
+                    if (pdf['Player'] == abbr).any():
+                        return True
+                df2 = data.get('defense', pd.DataFrame())
+                if df2 is not None and not df2.empty and 'Player' in df2.columns:
+                    return (df2['Player'] == abbr).any()
+                return False
+
             name_lower = player.strip().lower()
             if _full_name_team:
                 if name_lower not in _full_name_team:
@@ -1227,6 +1243,20 @@ elif st.session_state.view == "boxscore":
             return abbr in _game_abbrs
 
         def get_player_val(player: str, category: str, col: str, period_key: str) -> float:
+            if category == 'defense':
+                # Use by_period defense (per-period sacks from play-by-play)
+                pdf = by_period.get(period_key, {}).get('defense', pd.DataFrame())
+                if pdf is None or pdf.empty:
+                    pdf = data.get('defense', pd.DataFrame())
+                if pdf is None or pdf.empty or 'Player' not in pdf.columns:
+                    return 0.0
+                parts = player.strip().split()
+                abbr  = f"{parts[0][0]}.{parts[-1]}" if len(parts) >= 2 else player
+                m = pdf[pdf['Player'] == abbr]
+                if m.empty:
+                    m = pdf[pdf['Player'].str.contains(parts[-1], case=False, na=False)]
+                real_col = 'SACKS' if col in ('SACKS','TOT','Sacks') else col
+                return float(m.iloc[0].get(real_col, 0)) if not m.empty else 0.0
             match = _find_player(player, category, period_key)
             return float(match.iloc[0].get(col, 0)) if not match.empty else 0.0
 
@@ -1371,15 +1401,19 @@ elif st.session_state.view == "boxscore":
         def _sort(df, col):
             if df.empty or 'Result' not in df.columns: return df
             df = df.copy()
-            df['_w'] = df['Result'].apply(lambda x: 0 if 'Won' in str(x) else (2 if 'N/A' in str(x) else 1))
+            df['_w'] = df['Result'].apply(lambda x: 0 if 'Won' in str(x) else (2 if 'N/A' in str(x) else (3 if 'Error' in str(x) else 1)))
             return df.sort_values(['_w', col]).drop(columns=['_w']).reset_index(drop=True)
 
         # ── Player props table ─────────────────────────────────────────
         gdf = pd.DataFrame(graded) if graded else pd.DataFrame()
         if not gdf.empty:
             gdf = _sort(gdf, 'Players')
-            np_ = len(gdf); nw_ = sum(1 for v in gdf['Result'] if 'Won' in str(v))
-            st.markdown(f'**👤 Player Props** — {np_} props · {nw_} ✅ Won · {np_-nw_} ❌/⚠️')
+            np_  = len(gdf)
+            nw_  = sum(1 for v in gdf['Result'] if 'Won'  in str(v))
+            nl_  = sum(1 for v in gdf['Result'] if 'Lost' in str(v))
+            nna_ = sum(1 for v in gdf['Result'] if 'N/A'  in str(v))
+            ne_  = sum(1 for v in gdf['Result'] if 'Error' in str(v))
+            st.markdown(f'**👤 Player Props** — {np_} props · ✅ {nw_} Won · ❌ {nl_} Loss · ⚠️ {nna_} N/A · ❗ {ne_} Error')
             ps = [c for c in gdf.columns if c not in ('Players','Prop','Scope')]
             st.dataframe(gdf.style.map(_color, subset=ps), use_container_width=True, hide_index=True)
 
