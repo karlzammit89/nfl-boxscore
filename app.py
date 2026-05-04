@@ -211,6 +211,7 @@ MONTH_NAMES = ["January","February","March","April","May","June",
 # ── Header ────────────────────────────────────────────────────────────────────
 
 st.markdown("## 🏈 NFL Box Scores")
+st.caption("Live stats · Quarter & half splits · All times Eastern")
 st.divider()
 
 # ── Data loaders ──────────────────────────────────────────────────────────────
@@ -998,6 +999,166 @@ elif st.session_state.view == "boxscore":
         with htabs[0]: show_half_prop_or_stats("passing",   "YDS")
         with htabs[1]: show_half_prop_or_stats("rushing",   "YDS")
         with htabs[2]: show_half_prop_or_stats("receiving", "YDS")
+
+    st.divider()
+
+    # ── Prop Text Grader ──────────────────────────────────────────────────────
+    st.markdown("<div class='sec-div'>🎯 Prop Grader — Enter Props as Text</div>",
+                unsafe_allow_html=True)
+    st.caption(
+        "Enter one prop per line in plain English. "
+        "Examples:\n"
+        "• Bijan Robinson to record 10+ Rushing Yards in Each Quarter\n"
+        "• Tua Tagovailoa Over 250 Passing Yards Game Total\n"
+        "• Tyreek Hill 3+ Receptions Each Half"
+    )
+
+    prop_text = st.text_area(
+        "Props",
+        placeholder="Bijan Robinson 10+ Rushing Yards Each Quarter\nTua Tagovailoa Over 250 Passing Yards Game Total",
+        height=140,
+        key="prop_text_input",
+        label_visibility="collapsed",
+    )
+
+    run_grader = st.button("⚡ Grade Props", key="grade_btn")
+
+    if run_grader and prop_text.strip():
+        import json as _json
+
+        lines = [l.strip() for l in prop_text.strip().splitlines() if l.strip()]
+
+        with st.spinner("Parsing props with Claude…"):
+            try:
+                import requests as _req
+                resp = _req.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={"Content-Type": "application/json"},
+                    json={
+                        "model": "claude-sonnet-4-20250514",
+                        "max_tokens": 1000,
+                        "messages": [{
+                            "role": "user",
+                            "content": (
+                                "Parse each of the following player props into structured JSON.\n"
+                                "Return ONLY a JSON array — no markdown, no explanation.\n"
+                                "Each item must have:\n"
+                                "  player: full player name\n"
+                                "  stat: one of (Rushing Yards, Passing Yards, Receptions, Rushing TDs, Passing TDs, Receiving Yards, Interceptions)\n"
+                                "  threshold: number\n"
+                                "  condition: one of (each quarter, each half, game total)\n"
+                                "  operator: one of (over, under, exactly)\n\n"
+                                "Props:\n" + "\n".join(f"{i+1}. {l}" for i, l in enumerate(lines))
+                            )
+                        }]
+                    },
+                    timeout=30,
+                )
+                raw   = resp.json()["content"][0]["text"].strip()
+                raw   = raw.replace("```json","").replace("```","").strip()
+                props = _json.loads(raw)
+            except Exception as e:
+                st.error(f"Could not parse props: {e}")
+                props = []
+
+        if props:
+            st.markdown("**Grading results:**")
+
+            def get_player_val(player: str, category: str, col: str, period_key: str) -> float:
+                pdf = by_period.get(period_key, {}).get(category, pd.DataFrame())
+                if pdf is None or pdf.empty or "Player" not in pdf.columns:
+                    return 0.0
+                parts = player.strip().split()
+                # Try last name match, then abbreviated (D.Maye), then full
+                match = pdf[pdf["Player"].str.contains(parts[-1], case=False, na=False)]
+                if match.empty and len(parts) >= 2:
+                    abbr  = f"{parts[0][0]}.{' '.join(parts[1:])}"
+                    match = pdf[pdf["Player"] == abbr]
+                return float(match.iloc[0].get(col, 0)) if not match.empty else 0.0
+
+            def grade_prop(prop: dict) -> dict:
+                player    = prop.get("player","")
+                stat      = prop.get("stat","").lower()
+                threshold = float(prop.get("threshold", 0))
+                condition = prop.get("condition","game total").lower()
+                operator  = prop.get("operator","over").lower()
+
+                stat_map = {
+                    "rushing yards":   ("rushing",   "YDS"),
+                    "rushing yds":     ("rushing",   "YDS"),
+                    "rushing td":      ("rushing",   "TD"),
+                    "rushing tds":     ("rushing",   "TD"),
+                    "passing yards":   ("passing",   "YDS"),
+                    "passing yds":     ("passing",   "YDS"),
+                    "passing td":      ("passing",   "TD"),
+                    "passing tds":     ("passing",   "TD"),
+                    "interceptions":   ("passing",   "INT"),
+                    "receptions":      ("receiving", "REC"),
+                    "receiving yards": ("receiving", "YDS"),
+                    "receiving yds":   ("receiving", "YDS"),
+                    "receiving td":    ("receiving", "TD"),
+                    "receiving tds":   ("receiving", "TD"),
+                }
+                category, col = None, None
+                for key, val in stat_map.items():
+                    if key in stat:
+                        category, col = val
+                        break
+
+                if not category:
+                    return {"Player": player,
+                            "Prop":   f"{prop.get('operator','over').title()} {threshold:.0f} {prop.get('stat','')}",
+                            "Scope":  prop.get("condition",""),
+                            "Result": "⚠️ Unknown stat"}
+
+                def hit(v: float) -> bool:
+                    if operator == "under":   return v < threshold
+                    if operator == "exactly": return v == threshold
+                    return v >= threshold
+
+                period_results = {}
+
+                if "each quarter" in condition:
+                    for q in ["Q1","Q2","Q3","Q4"]:
+                        v = get_player_val(player, category, col, q)
+                        period_results[q] = f"{'✅' if hit(v) else '❌'} {v:.0f}"
+                    won = all(hit(get_player_val(player, category, col, q)) for q in ["Q1","Q2","Q3","Q4"])
+                elif "each half" in condition:
+                    for h, lbl in [("1H","1st Half"),("2H","2nd Half")]:
+                        v = get_player_val(player, category, col, h)
+                        period_results[lbl] = f"{'✅' if hit(v) else '❌'} {v:.0f}"
+                    won = all(hit(get_player_val(player, category, col, h)) for h in ["1H","2H"])
+                else:
+                    v = get_player_val(player, category, col, "Full Game")
+                    period_results["Game"] = f"{'✅' if hit(v) else '❌'} {v:.0f}"
+                    won = hit(v)
+
+                return {
+                    "Player":  player,
+                    "Prop":    f"{prop.get('operator','over').title()} {threshold:.0f} {prop.get('stat','')}",
+                    "Scope":   prop.get("condition",""),
+                    **period_results,
+                    "Result":  "✅ Won" if won else "❌ Lost",
+                }
+
+            graded    = [grade_prop(p) for p in props]
+            gdf       = pd.DataFrame(graded)
+
+            def color_prop(val):
+                if isinstance(val, str):
+                    if val.startswith("✅"): return "color:#22c55e;font-weight:700"
+                    if val.startswith("❌"): return "color:#ef4444;font-weight:700"
+                    if val.startswith("⚠️"): return "color:#f59e0b;font-weight:700"
+                return ""
+
+            style_cols = [c for c in gdf.columns if c not in ("Player","Prop","Scope")]
+            st.dataframe(
+                gdf.style.map(color_prop, subset=style_cols),
+                use_container_width=True,
+                hide_index=True,
+            )
+        elif run_grader:
+            st.info("No props could be parsed. Check your input format.")
 
     st.divider()
     st.caption(f"⚡ Last updated at {et_now().strftime('%H:%M')} ET")
