@@ -1108,12 +1108,27 @@ elif st.session_state.view == "boxscore":
             st.error(f"Could not parse props: {e}")
             props = []
 
+        def player_found_in_game(player: str, category: str) -> bool:
+            """Check if this player appears in ANY period of this game."""
+            parts = player.strip().split()
+            for period_key in ["Full Game", "Q1", "Q2", "Q3", "Q4"]:
+                pdf = by_period.get(period_key, {}).get(category, pd.DataFrame())
+                if pdf is None or pdf.empty or "Player" not in pdf.columns:
+                    continue
+                match = pdf[pdf["Player"].str.contains(parts[-1], case=False, na=False)]
+                if not match.empty:
+                    return True
+                if len(parts) >= 2:
+                    abbr = f"{parts[0][0]}.{' '.join(parts[1:])}"
+                    if (pdf["Player"] == abbr).any():
+                        return True
+            return False
+
         def get_player_val(player: str, category: str, col: str, period_key: str) -> float:
             pdf = by_period.get(period_key, {}).get(category, pd.DataFrame())
             if pdf is None or pdf.empty or "Player" not in pdf.columns:
                 return 0.0
             parts = player.strip().split()
-            # Try last name match, then abbreviated (D.Maye), then full
             match = pdf[pdf["Player"].str.contains(parts[-1], case=False, na=False)]
             if match.empty and len(parts) >= 2:
                 abbr  = f"{parts[0][0]}.{' '.join(parts[1:])}"
@@ -1150,6 +1165,14 @@ elif st.session_state.view == "boxscore":
                     break
 
             if not category:
+                return {
+                    "player": player, "stat": prop.get("stat",""),
+                    "threshold": threshold, "condition": prop.get("condition",""),
+                    "period_results": {}, "won": None,
+                }
+
+            # If player doesn't appear in this game's data at all → N/A
+            if not player_found_in_game(player, category):
                 return {
                     "player": player, "stat": prop.get("stat",""),
                     "threshold": threshold, "condition": prop.get("condition",""),
