@@ -1238,7 +1238,6 @@ elif st.session_state.view == "boxscore":
                 })
 
         if props:
-            st.markdown("**Grading results:**")
 
             def get_player_val(player: str, category: str, col: str, period_key: str) -> float:
                 pdf = by_period.get(period_key, {}).get(category, pd.DataFrame())
@@ -1378,6 +1377,9 @@ elif st.session_state.view == "boxscore":
                     if val.startswith("⚠️"): return "color:#f59e0b;font-weight:700"
                 return ""
 
+            n_rows = len(gdf)
+            won_count = sum(1 for v in gdf["Result"] if "Won" in str(v))
+            st.markdown(f"**Grading results** — {n_rows} props · {won_count} ✅ Won · {n_rows - won_count} ❌/⚠️")
             style_cols = [c for c in gdf.columns if c not in ("Players","Prop","Scope")]
             st.dataframe(
                 gdf.style.map(color_prop, subset=style_cols),
@@ -1389,7 +1391,9 @@ elif st.session_state.view == "boxscore":
                 tdf = pd.DataFrame(team_graded)
                 tdf["_won"] = tdf["Result"].apply(lambda x: 0 if "Won" in str(x) else (2 if "N/A" in str(x) else 1))
                 tdf = tdf.sort_values(["_won","Players"]).drop(columns=["_won"]).reset_index(drop=True)
-                st.markdown("**Grading results:**")
+                n_t = len(tdf)
+                won_t = sum(1 for v in tdf["Result"] if "Won" in str(v))
+                st.markdown(f"**Grading results** — {n_t} props · {won_t} ✅ Won · {n_t - won_t} ❌/⚠️")
                 def _color_t(val):
                     if isinstance(val, str):
                         if val.startswith("✅"): return "color:#22c55e;font-weight:700"
