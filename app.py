@@ -1252,6 +1252,9 @@ elif st.session_state.view == "boxscore":
                 "receiving yds":   ("receiving", "YDS"),
                 "receiving td":    ("receiving", "TD"),
                 "receiving tds":   ("receiving", "TD"),
+                    "sack":            ("defense",   "SACKS"),
+                    "sacks":           ("defense",   "SACKS"),
+                    "record a sack":   ("defense",   "SACKS"),
             }
             category, col = None, None
             for key, val in stat_map.items():
