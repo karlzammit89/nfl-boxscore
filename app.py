@@ -1500,8 +1500,12 @@ elif st.session_state.view == "boxscore":
                     ok = sum(1 for p in plays if "touchdown" in p) >= req_n
                 elif req_type == "fg":
                     ok = sum(1 for p in plays if "field goal" in p) >= req_n
-                else:  # score / points
-                    ok = pts > 0
+                else:  # score / points — check linescore directly
+                    if linescore is not None and not linescore.empty and period_label in linescore.columns:
+                        col_vals = pd.to_numeric(linescore[period_label], errors="coerce").fillna(0)
+                        ok = col_vals.sum() > 0
+                    else:
+                        ok = pts > 0
                 if not ok:
                     return False
             return True
