@@ -1202,29 +1202,27 @@ elif st.session_state.view == "boxscore":
                 stat        = first.get("stat","")
                 threshold   = first.get("threshold", 0)
                 condition   = first.get("condition","")
-                period_keys = list(first.get("period_results", {}).keys())
-
-                # Build combined period columns: show all players' values
-                combined_periods = {}
-                for pk in period_keys:
-                    cell_parts = []
-                    all_hit = True
-                    for r in results:
-                        cell_val = r["period_results"].get(pk, "❌ 0")
-                        cell_parts.append(f"{r['player']}: {cell_val}")
-                        if cell_val.startswith("❌"):
-                            all_hit = False
-                    icon = "✅" if all_hit else "❌"
-                    combined_periods[pk] = f"{icon} " + " | ".join(cell_parts)
-
                 # Overall: ALL players must have won
                 overall_won = all(r["won"] for r in results)
 
+                stat_short = {
+                    "Rushing Yards":   "Rush Yds",
+                    "Rushing TDs":     "Rush TDs",
+                    "Passing Yards":   "Pass Yds",
+                    "Passing TDs":     "Pass TDs",
+                    "Receiving Yards": "Rec Yds",
+                    "Receptions":      "Rec",
+                    "Interceptions":   "INTs",
+                }.get(stat, stat)
+                scope_short = {
+                    "each quarter": "Each Qrt",
+                    "each half":    "Each HF",
+                    "game total":   "Game",
+                }.get(condition.lower(), condition)
                 return {
                     "Players": players_str,
-                    "Prop":    f"Over {threshold:.0f} {stat}",
-                    "Scope":   condition,
-                    **combined_periods,
+                    "Prop":    f"{threshold:.0f}+ {stat_short}",
+                    "Scope":   scope_short,
                     "Result":  "✅ Won" if overall_won else "❌ Lost",
                 }
 
