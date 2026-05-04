@@ -197,17 +197,47 @@ def get_receiving_stats(game_id: str) -> pd.DataFrame:
 
 def get_defensive_stats(game_id: str) -> pd.DataFrame:
     """
-    Defensive stats.
+    Defensive stats — includes ALL defenders (even those with 0 across the board
+    are kept so sack lookups work correctly).
     Typical cols: Player, Pos, Team, TOT, SOLO, SACKS, TFL, PD, QB HTS, TD
     """
     summary = get_game_summary(game_id)
     if not summary:
         return pd.DataFrame()
     boxscore = summary.get("boxscore", {})
-    rows = _parse_player_stats(boxscore, "defensive")
-    if not rows:
-        rows = _parse_player_stats(boxscore, "defensiveTotals")
-    return _make_df(rows, drop_cols=["Team Full"])
+
+    # Parse defensive stats keeping all players (including 0-stat rows for sack lookup)
+    players_data = []
+    for team_block in boxscore.get("players", []):
+        team_info = team_block.get("team", {})
+        team_abbr = team_info.get("abbreviation", "")
+        team_name = team_info.get("displayName", "")
+        for category in team_block.get("statistics", []):
+            cat_name = category.get("name", "").lower()
+            if cat_name not in ("defensive", "defensivetotals"):
+                continue
+            keys   = category.get("keys", [])
+            labels = category.get("labels", keys)
+            for athlete_entry in category.get("athletes", []):
+                athlete   = athlete_entry.get("athlete", {})
+                stats_raw = athlete_entry.get("stats", [])
+                if not stats_raw:
+                    continue
+                row = {
+                    "Player": athlete.get("displayName", "Unknown"),
+                    "Pos":    athlete.get("position", {}).get("abbreviation", ""),
+                    "Team":   team_abbr,
+                }
+                for label, val in zip(labels, stats_raw):
+                    row[label] = val
+                players_data.append(row)
+    if not players_data:
+        return pd.DataFrame()
+    df = pd.DataFrame(players_data)
+    # Ensure SACKS column is numeric
+    if "SACKS" in df.columns:
+        df["SACKS"] = pd.to_numeric(df["SACKS"], errors="coerce").fillna(0)
+    return df
 
 
 def get_kicking_stats(game_id: str) -> pd.DataFrame:
