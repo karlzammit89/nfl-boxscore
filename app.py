@@ -1260,28 +1260,30 @@ elif st.session_state.view == "boxscore":
             return abbr in _game_abbrs
 
         def get_player_val(player: str, category: str, col: str, period_key: str) -> float:
-            if category == 'defense':
-                parts = player.strip().split()
-                abbr  = f"{parts[0][0]}.{parts[-1]}" if len(parts) >= 2 else player
+            try:
+                if category == 'defense':
+                    parts = player.strip().split()
+                    abbr  = f"{parts[0][0]}.{parts[-1]}" if len(parts) >= 2 else player
 
-                # 1. Check by_period defense first — has per-period sacks from PBP
-                #    Stored with abbreviated names (C.Barmore, D.Lawrence)
-                pbp_def = by_period.get(period_key, {}).get('defense', pd.DataFrame())
-                if pbp_def is not None and not pbp_def.empty and 'Player' in pbp_def.columns:
-                    m = pbp_def[pbp_def['Player'] == abbr]
-                    if not m.empty:
-                        return float(m.iloc[0].get('SACKS', 0))
-
-                # 2. Fall back to ESPN cumulative defense (full displayName)
-                #    Use this only for Full Game / when PBP has no data for this period
-                pdf = data.get('defense', pd.DataFrame())
-                if pdf is None or pdf.empty or 'Player' not in pdf.columns:
-                    return 0.0
-                name_lower = player.strip().lower()
-                m = pdf[pdf['Player'].str.lower() == name_lower]
-                if m.empty:
-                    m = pdf[pdf['Player'].str.contains(parts[-1], case=False, na=False)]
-                return float(m.iloc[0].get('SACKS', 0)) if not m.empty else 0.0
+                    # 1. by_period defense (per-period sacks from PBP, abbreviated names)
+                    pbp_def = by_period.get(period_key, {}).get('defense', pd.DataFrame())
+                    if pbp_def is not None and not pbp_def.empty and 'Player' in pbp_def.columns:
+                        m = pbp_def[pbp_def['Player'] == abbr]
+                        if not m.empty:
+                            return float(m.iloc[0].get('SACKS', 0))
+                    # 2. ESPN cumulative defense (full displayName) — fallback
+                    pdf = data.get('defense', pd.DataFrame())
+                    if pdf is None or pdf.empty or 'Player' not in pdf.columns:
+                        return 0.0
+                    name_lower = player.strip().lower()
+                    m = pdf[pdf['Player'].str.lower() == name_lower]
+                    if m.empty:
+                        m = pdf[pdf['Player'].str.contains(parts[-1], case=False, na=False)]
+                    return float(m.iloc[0].get('SACKS', 0)) if not m.empty else 0.0
+                match = _find_player(player, category, period_key)
+                return float(match.iloc[0].get(col, 0)) if not match.empty else 0.0
+            except Exception:
+                return 0.0
             match = _find_player(player, category, period_key)
             return float(match.iloc[0].get(col, 0)) if not match.empty else 0.0
 
@@ -1451,8 +1453,97 @@ elif st.session_state.view == "boxscore":
             ps = [c for c in gdf.columns if c not in ('Players','Prop','Scope')]
             st.dataframe(gdf.style.map(_color, subset=ps), use_container_width=True, hide_index=True)
 
+        # ── Grade team props ──────────────────────────────────────────────
+        import re as _re_t
+        TEAM_LINE_RE = _re_t.compile(r'^(each team|both teams|points scored|\d+[+]?\s*(?:tds?|touchdowns?|field goals?|fgs?|scored))', _re_t.I)
+        RUSH_TD_T    = _re_t.compile(r'(\d+)\+?\s*rushing tds?', _re_t.I)
+        PASS_TD_T    = _re_t.compile(r'(\d+)\+?\s*passing tds?', _re_t.I)
+        ANY_TD_T     = _re_t.compile(r'(\d+)\+?\s*tds?', _re_t.I)
+        FG_T         = _re_t.compile(r'(\d+)\+?\s*(?:made\s+)?(?:fgs?|field goals?)', _re_t.I)
+        COND_T       = [
+            (_re_t.compile(r'each quarter|all four quarters', _re_t.I), "each quarter"),
+            (_re_t.compile(r'each half', _re_t.I), "each half"),
+        ]
+
+        team_graded = []
+        scoring_df  = data.get("scoring", pd.DataFrame())
+        linescore   = data.get("linescore", pd.DataFrame())
+
+        def _plays_in(period_label):
+            if scoring_df is None or scoring_df.empty or "Quarter" not in scoring_df.columns:
+                return []
+            rows = scoring_df[scoring_df["Quarter"] == period_label]
+            return rows["Type"].str.lower().tolist() if "Type" in rows.columns else []
+
+        def _pts_in(period_label):
+            if linescore is None or linescore.empty or period_label not in linescore.columns:
+                return 0
+            return int(linescore[period_label].sum())
+
+        def _check_reqs(reqs, period_label, each_team):
+            plays = _plays_in(period_label)
+            pts   = _pts_in(period_label)
+            for req_type, req_n in reqs:
+                if req_type == "rushing_td":
+                    ok = sum(1 for p in plays if "rush" in p and "touchdown" in p) >= req_n
+                elif req_type == "passing_td":
+                    ok = sum(1 for p in plays if "pass" in p and "touchdown" in p) >= req_n
+                elif req_type == "any_td":
+                    ok = sum(1 for p in plays if "touchdown" in p) >= req_n
+                elif req_type == "fg":
+                    ok = sum(1 for p in plays if "field goal" in p) >= req_n
+                else:  # score / points
+                    ok = pts > 0
+                if not ok:
+                    return False
+            return True
+
+        for i, line in enumerate(clean_lines):
+            if not TEAM_LINE_RE.match(line):
+                continue
+            is_each = "each team" in line.lower() or "both teams" in line.lower()
+            cond    = next((lbl for pat,lbl in COND_T if pat.search(line)), "each quarter")
+            rtd = RUSH_TD_T.search(line)
+            ptd = PASS_TD_T.search(line)
+            atd_m = _re_t.search(r'(\d+)\+?\s*tds?', line, _re_t.I)
+            atd = atd_m if atd_m and not rtd and not ptd else None
+            fg  = FG_T.search(line)
+            reqs = []
+            if rtd: reqs.append(("rushing_td", int(rtd.group(1))))
+            if ptd: reqs.append(("passing_td", int(ptd.group(1))))
+            if atd: reqs.append(("any_td", int(atd.group(1))))
+            if fg:  reqs.append(("fg", int(fg.group(1))))
+            if not reqs: reqs.append(("score", 1))
+            periods = ["Q1","Q2","Q3","Q4"] if cond == "each quarter" else ["1H","2H"]
+            won = all(_check_reqs(reqs, p, is_each) for p in periods)
+            req_strs = []
+            for rt, rn in reqs:
+                lbl = {"rushing_td":"Rush TD","passing_td":"Pass TD","any_td":"TD","fg":"FG","score":"Points"}.get(rt,rt)
+                req_strs.append(f"{rn}+ {lbl}")
+            who  = "Each Team" if is_each else "Any Team"
+            prop = f"{who}: {' & '.join(req_strs)}"
+            scope = {"each quarter":"Each Qrt","each half":"Each HF"}.get(cond,"Game")
+            team_graded.append({"Players": who, "Prop": prop, "Scope": scope,
+                                 "Result": "✅ Won" if won else "❌ Lost"})
+
         # Fallback if nothing graded
-        if not graded:
-            st.info('No player props could be parsed. Check that lines include a player name, stat type and threshold.')
+        if not graded and not team_graded:
+            st.info('No props could be parsed. Check your input format.')
 
         # ── Team / game props table ────────────────────────────────────
+        if team_graded:
+            tdf = pd.DataFrame(team_graded)
+            tdf["_w"] = tdf["Result"].apply(lambda x: 0 if "Won" in str(x) else (1 if "Error" in str(x) else 2))
+            tdf = tdf.sort_values(["_w","Players"]).drop(columns=["_w"]).reset_index(drop=True)
+            ntw = sum(1 for v in tdf["Result"] if "Won" in str(v))
+            nte = sum(1 for v in tdf["Result"] if "Error" in str(v))
+            ntl = len(tdf) - ntw - nte
+            st.markdown(f"**🏟 Team / Game Props** — {len(tdf)} props · ✅ {ntw} Won · ❗ {nte} Error · ❌ {ntl} Loss")
+            ts = [c for c in tdf.columns if c not in ("Players","Prop","Scope")]
+            def _color_t(val):
+                if isinstance(val, str):
+                    if val.startswith("✅"): return "color:#22c55e;font-weight:700"
+                    if val.startswith("❌"): return "color:#ef4444;font-weight:700"
+                    if val.startswith("❗"): return "color:#f59e0b;font-weight:700"
+                return ""
+            st.dataframe(tdf.style.map(_color_t, subset=ts), use_container_width=True, hide_index=True)
