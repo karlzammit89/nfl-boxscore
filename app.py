@@ -1510,6 +1510,10 @@ elif st.session_state.view == "boxscore":
                     return False
             return True
 
+        # Debug linescore columns
+        if linescore is not None and not linescore.empty:
+            st.caption(f"DEBUG linescore cols: {list(linescore.columns)} | Q1 vals: {linescore.get('Q1', 'NO Q1 COL')}")
+
         for i, line in enumerate(clean_lines):
             if not TEAM_LINE_RE.match(line):
                 continue
