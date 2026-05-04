@@ -1084,6 +1084,10 @@ elif st.session_state.view == "boxscore":
         error_rows = []
         try:
             for i, line in enumerate(clean_lines):
+                # Skip team/game market lines — handled separately below
+                import re as _re_skip
+                if _re_skip.match(r'^(each team|both teams|points scored|\d+[+]?\s*(?:tds?|touchdowns?|field goals?|fgs?|scored))', line, _re_skip.I):
+                    continue
                 stat = None
                 for pat, label in STAT_MAP_RE:
                     if pat.search(line):
