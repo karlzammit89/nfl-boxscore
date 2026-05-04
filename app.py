@@ -1066,47 +1066,56 @@ elif st.session_state.view == "boxscore":
             (_re.compile(r'each half', _re.I), 'each half'),
         ]
 
+        NAME_ALIASES = {
+            "kenneth walker iii": "kenneth walker",
+            "patrick mahomes ii": "patrick mahomes",
+            "odell beckham jr":   "odell beckham",
+            "odell beckham jr.":  "odell beckham",
+            "robert griffin iii": "robert griffin",
+        }
+
+        def normalise_name(n: str) -> str:
+            import re as _rn
+            n = n.strip()
+            n = _rn.sub(r'\s+(?:jr\.?|sr\.?|ii|iii|iv)\s*$', '', n, flags=_rn.I).strip()
+            return NAME_ALIASES.get(n.lower(), n)
+
         props = []
+        error_rows = []
         try:
             for i, line in enumerate(clean_lines):
-                # Detect stat
                 stat = None
                 for pat, label in STAT_MAP_RE:
                     if pat.search(line):
                         stat = label
                         break
-                if not stat:
-                    continue
-
-                # Detect threshold
                 tm = THRESHOLD_RE.search(line)
-                if not tm:
-                    continue
-                threshold = float(tm.group(1))
-
-                # Detect condition
+                threshold = float(tm.group(1)) if tm else None
                 condition = "game total"
                 for pat, label in COND_MAP_RE:
                     if pat.search(line):
                         condition = label
                         break
-
-                # Detect players
-                dual = PLAYERS_RE.match(line)
+                dual   = PLAYERS_RE.match(line)
+                single = SINGLE_RE.match(line) if not dual else None
+                if not stat or threshold is None or (not dual and not single):
+                    error_rows.append({"line_index": i, "raw_line": line})
+                    continue
                 if dual:
-                    for player in [dual.group(1).strip(), dual.group(2).strip()]:
+                    for player in [normalise_name(dual.group(1)),
+                                   normalise_name(dual.group(2))]:
                         props.append({"line_index": i, "player": player,
                                       "stat": stat, "threshold": threshold,
                                       "condition": condition, "operator": "over"})
                 else:
-                    single = SINGLE_RE.match(line)
-                    if single:
-                        props.append({"line_index": i, "player": single.group(1).strip(),
-                                      "stat": stat, "threshold": threshold,
-                                      "condition": condition, "operator": "over"})
+                    props.append({"line_index": i,
+                                  "player": normalise_name(single.group(1)),
+                                  "stat": stat, "threshold": threshold,
+                                  "condition": condition, "operator": "over"})
         except Exception as e:
             st.error(f"Could not parse props: {e}")
             props = []
+            error_rows = []
 
         # Teams in this game — used to validate players
         _game_teams = set()
@@ -1340,12 +1349,20 @@ elif st.session_state.view == "boxscore":
             }
 
         graded = [grade_prop_group(group) for group in by_line.values()]
+        for er in error_rows:
+            graded.append({
+                "Players": er.get("raw_line","")[:60],
+                "Prop":    "—",
+                "Scope":   "—",
+                "Result":  "❗ Error",
+            })
 
         def _color(val):
             if isinstance(val, str):
                 if val.startswith('✅'): return 'color:#22c55e;font-weight:700'
                 if val.startswith('❌'): return 'color:#ef4444;font-weight:700'
                 if val.startswith('⚠️'): return 'color:#f59e0b;font-weight:700'
+                if val.startswith('❗'): return 'color:#a855f7;font-weight:700'
             return ''
 
         def _sort(df, col):
