@@ -1230,11 +1230,19 @@ elif st.session_state.view == "boxscore":
                     label = {"rushing_td":"Rush TD","passing_td":"Pass TD",
                              "any_td":"TD","fg":"FG","score":"Points"}.get(rt, rt)
                     req_strs.append(f"{rn}+ {label}")
+                scope_lbl  = {"each quarter":"Each Qrt","each half":"Each HF"}.get(cond,"Game")
+                prop_label = " & ".join(req_strs) if req_strs else "Score"
+                if is_each_team:
+                    who = "Each Team"
+                    prop_display = f"Each Team: {prop_label}"
+                else:
+                    who = "Any Team"
+                    prop_display = f"Any Team: {prop_label}"
                 team_graded.append({
-                    "Players": "Each Team",
-                    "Prop":    " & ".join(req_strs) if req_strs else "Score",
-                    "Scope":   {"each quarter":"Each Qrt","each half":"Each HF"}.get(cond,"Game"),
-                    "Result":  "✅ Won" if won else "❌ Lost",
+                    "Market": who,
+                    "Prop":   prop_display,
+                    "Scope":  scope_lbl,
+                    "Result": "✅ Won" if won else "❌ Lost",
                 })
 
         if props:
@@ -1362,45 +1370,52 @@ elif st.session_state.view == "boxscore":
                 }
 
             graded = [grade_prop_group(group) for group in by_line.values()]
-            gdf = pd.DataFrame(graded)
+
+            def _color(val):
+                if isinstance(val, str):
+                    if val.startswith('✅'): return 'color:#22c55e;font-weight:700'
+                    if val.startswith('❌'): return 'color:#ef4444;font-weight:700'
+                    if val.startswith('⚠️'): return 'color:#f59e0b;font-weight:700'
+                return ''
+
+            def _sort(df, col):
+                if df.empty or 'Result' not in df.columns: return df
+                df = df.copy()
+                df['_w'] = df['Result'].apply(lambda x: 0 if 'Won' in str(x) else (2 if 'N/A' in str(x) else 1))
+                return df.sort_values(['_w', col]).drop(columns=['_w']).reset_index(drop=True)
+
+            # ── Player props table ─────────────────────────────────────────
+            gdf = pd.DataFrame(graded) if graded else pd.DataFrame()
+            if not gdf.empty:
+                gdf = _sort(gdf, 'Players')
+                np_ = len(gdf); nw_ = sum(1 for v in gdf['Result'] if 'Won' in str(v))
+                st.markdown(f'**👤 Player Props** — {np_} props · {nw_} ✅ Won · {np_-nw_} ❌/⚠️')
+                ps = [c for c in gdf.columns if c not in ('Players','Prop','Scope')]
+                st.dataframe(gdf.style.map(_color, subset=ps), use_container_width=True, hide_index=True)
+
+            # ── Team / game props table ────────────────────────────────────
             if team_graded:
                 tdf = pd.DataFrame(team_graded)
-                gdf = pd.concat([gdf, tdf], ignore_index=True) if not gdf.empty else tdf
-            if not gdf.empty and "Result" in gdf.columns:
-                gdf["_won"] = gdf["Result"].apply(lambda x: 0 if "Won" in str(x) else (2 if "N/A" in str(x) else 1))
-                gdf = gdf.sort_values(["_won", "Players"]).drop(columns=["_won"]).reset_index(drop=True)
-
-            def color_prop(val):
-                if isinstance(val, str):
-                    if val.startswith("✅"): return "color:#22c55e;font-weight:700"
-                    if val.startswith("❌"): return "color:#ef4444;font-weight:700"
-                    if val.startswith("⚠️"): return "color:#f59e0b;font-weight:700"
-                return ""
-
-            n_rows = len(gdf)
-            won_count = sum(1 for v in gdf["Result"] if "Won" in str(v))
-            st.markdown(f"**Grading results** — {n_rows} props · {won_count} ✅ Won · {n_rows - won_count} ❌/⚠️")
-            style_cols = [c for c in gdf.columns if c not in ("Players","Prop","Scope")]
-            st.dataframe(
-                gdf.style.map(color_prop, subset=style_cols),
-                use_container_width=True,
-                hide_index=True,
-            )
+                tdf = _sort(tdf, 'Market')
+                nt_ = len(tdf); ntw = sum(1 for v in tdf['Result'] if 'Won' in str(v))
+                st.markdown(f'**🏟 Team / Game Props** — {nt_} props · {ntw} ✅ Won · {nt_-ntw} ❌/⚠️')
+                ts = [c for c in tdf.columns if c not in ('Market','Prop','Scope')]
+                st.dataframe(tdf.style.map(_color, subset=ts), use_container_width=True, hide_index=True)
         elif run_grader:
             if team_graded:
-                tdf = pd.DataFrame(team_graded)
-                tdf["_won"] = tdf["Result"].apply(lambda x: 0 if "Won" in str(x) else (2 if "N/A" in str(x) else 1))
-                tdf = tdf.sort_values(["_won","Players"]).drop(columns=["_won"]).reset_index(drop=True)
-                n_t = len(tdf)
-                won_t = sum(1 for v in tdf["Result"] if "Won" in str(v))
-                st.markdown(f"**Grading results** — {n_t} props · {won_t} ✅ Won · {n_t - won_t} ❌/⚠️")
-                def _color_t(val):
+                def _c2(val):
                     if isinstance(val, str):
                         if val.startswith("✅"): return "color:#22c55e;font-weight:700"
                         if val.startswith("❌"): return "color:#ef4444;font-weight:700"
+                        if val.startswith("⚠️"): return "color:#f59e0b;font-weight:700"
                     return ""
-                st.dataframe(tdf.style.map(_color_t, subset=["Result"]),
-                             use_container_width=True, hide_index=True)
+                tdf = pd.DataFrame(team_graded)
+                tdf["_w"] = tdf["Result"].apply(lambda x: 0 if "Won" in str(x) else (2 if "N/A" in str(x) else 1))
+                tdf = tdf.sort_values(["_w","Market"]).drop(columns=["_w"]).reset_index(drop=True)
+                nt_ = len(tdf); ntw = sum(1 for v in tdf["Result"] if "Won" in str(v))
+                st.markdown(f"**🏟 Team / Game Props** — {nt_} props · {ntw} ✅ Won · {nt_-ntw} ❌/⚠️")
+                ts = [c for c in tdf.columns if c not in ("Market","Prop","Scope")]
+                st.dataframe(tdf.style.map(_c2, subset=ts), use_container_width=True, hide_index=True)
             else:
                 st.info("No props could be parsed. Check your input format.")
 
