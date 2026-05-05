@@ -1037,8 +1037,6 @@ elif st.session_state.view == "boxscore":
     )
 
     run_grader = st.button("⚡ Grade Props", key="grade_btn")
-    if st.session_state.get('_score_dbg'):
-        st.info(st.session_state['_score_dbg'])
 
     if run_grader and prop_text.strip():
         def strip_odds(line: str) -> str:
@@ -1446,7 +1444,7 @@ elif st.session_state.view == "boxscore":
                 players_str2=" & ".join(players_list)
                 if operator=="combine":
                     won2=total2>=thr2 if all_found2 else None
-                    scope2=f"Total:{total2:.0f} | {detail2}"
+                    scope2=f"Total: {total2:.0f} | {detail2}"
                 elif operator=="or":
                     won2=any(v2>=thr2 for v2 in vals2.values()) if all_found2 else None
                     scope2=detail2
@@ -1712,7 +1710,6 @@ elif st.session_state.view == "boxscore":
         ]
 
         team_graded = []
-        st.session_state['_score_dbg'] = f"scoring cols={list(data.get('scoring',pd.DataFrame()).columns)} rows={len(data.get('scoring',pd.DataFrame()))} sample={data.get('scoring',pd.DataFrame()).head(2).to_dict('records')}"
         scoring_df  = data.get("scoring", pd.DataFrame())
         linescore   = data.get("linescore", pd.DataFrame())
 
@@ -1779,15 +1776,24 @@ elif st.session_state.view == "boxscore":
 
         for i, line in enumerate(clean_lines):
             if _SCORELESS_RE2.search(line):
-                _ls2 = data.get('linescore', pd.DataFrame())
-                q_had_score = {q: _any_score_in_q(q) for q in ['Q1','Q2','Q3','Q4']}
+                _sdf_s = data.get("scoring", pd.DataFrame())
+                def _q_totals(sdf):
+                    """Derive per-quarter points (both teams) from cumulative scoring_df."""
+                    if sdf is None or sdf.empty: return {}
+                    lpq = sdf.groupby("Quarter", sort=False).last().reset_index()
+                    prev_a, prev_h, out = 0, 0, {}
+                    for q in ["Q1","Q2","Q3","Q4"]:
+                        r = lpq[lpq["Quarter"] == q]
+                        if r.empty: out[q] = 0; continue
+                        a = int(pd.to_numeric(r.iloc[0]["Away Score"], errors="coerce") or 0)
+                        h = int(pd.to_numeric(r.iloc[0]["Home Score"], errors="coerce") or 0)
+                        out[q] = (a - prev_a) + (h - prev_h)
+                        prev_a, prev_h = a, h
+                    return out
+                _qtot = _q_totals(_sdf_s)
+                q_had_score = {q: _any_score_in_q(q) for q in ["Q1","Q2","Q3","Q4"]}
                 won = any(not v for v in q_had_score.values())
-                from nfl.stats import build_linescore_df as _bls
-                _ls_fresh = _bls(game_id)
-                def _tot_q(q):
-                    if _ls_fresh is None or _ls_fresh.empty or q not in _ls_fresh.columns: return "?"
-                    return str(int(pd.to_numeric(_ls_fresh[q], errors="coerce").fillna(0).sum()))
-                _score_detail = ' | '.join(f'{q}: {_tot_q(q)}' for q in ['Q1','Q2','Q3','Q4'])
+                _score_detail = ' | '.join(f'{q}: {_qtot.get(q, 0)}' for q in ["Q1","Q2","Q3","Q4"])
                 team_graded.append({'Prop': line, 'Data': _score_detail,
                     'Result': '✅ Won' if won else '❌ Lost'})
                 continue
@@ -1796,13 +1802,35 @@ elif st.session_state.view == "boxscore":
                 team_abbr = _tq_m.group(1).strip().split()[0].upper()
                 q_had_score = {q: _team_scored_in_q(team_abbr, q) for q in ['Q1','Q2','Q3','Q4']}
                 won = all(q_had_score.values())
-                from nfl.stats import build_linescore_df as _bls2
-                _ls_fresh2 = _bls2(game_id)
-                def _team_q_pts(t, q):
-                    if _ls_fresh2 is None or _ls_fresh2.empty or "Team" not in _ls_fresh2.columns or q not in _ls_fresh2.columns: return "?"
-                    row = _ls_fresh2[_ls_fresh2["Team"].str.upper() == t.upper()]
-                    return str(int(pd.to_numeric(row.iloc[0][q], errors="coerce") or 0)) if not row.empty else "?"
-                _tq_detail = ' | '.join(f'{q}: {_team_q_pts(team_abbr, q)}' for q in ['Q1','Q2','Q3','Q4'])
+                _sdf_t = data.get("scoring", pd.DataFrame())
+                def _team_q_pts_from_sdf(t, sdf):
+                    """Derive per-quarter points for one team from cumulative scoring_df."""
+                    if sdf is None or sdf.empty: return {}
+                    # Determine Away or Home by seeing which score column moves with this team
+                    t_rows = sdf[sdf["Team"].str.upper() == t.upper()] if "Team" in sdf.columns else pd.DataFrame()
+                    if t_rows.empty: return {q: 0 for q in ["Q1","Q2","Q3","Q4"]}
+                    # Check first scoring play of this team
+                    fr = t_rows.iloc[0]
+                    # Get score before this play (prior row or 0)
+                    idx0 = t_rows.index[0]
+                    prev = sdf.loc[:idx0-1].iloc[-1] if idx0 > 0 else None
+                    prev_a = int(pd.to_numeric(prev["Away Score"], errors="coerce") or 0) if prev is not None else 0
+                    prev_h = int(pd.to_numeric(prev["Home Score"], errors="coerce") or 0) if prev is not None else 0
+                    delta_a = int(pd.to_numeric(fr["Away Score"], errors="coerce") or 0) - prev_a
+                    delta_h = int(pd.to_numeric(fr["Home Score"], errors="coerce") or 0) - prev_h
+                    col = "Away Score" if delta_a > 0 else "Home Score"
+                    # Now derive per-quarter from cumulative col
+                    lpq = sdf.groupby("Quarter", sort=False).last().reset_index()
+                    prev_val, out = 0, {}
+                    for q in ["Q1","Q2","Q3","Q4"]:
+                        r = lpq[lpq["Quarter"] == q]
+                        if r.empty: out[q] = 0; continue
+                        val = int(pd.to_numeric(r.iloc[0][col], errors="coerce") or 0)
+                        out[q] = val - prev_val
+                        prev_val = val
+                    return out
+                _tq_scores = _team_q_pts_from_sdf(team_abbr, _sdf_t)
+                _tq_detail = ' | '.join(f'{q}: {_tq_scores.get(q, 0)}' for q in ["Q1","Q2","Q3","Q4"])
                 team_graded.append({'Prop': line, 'Data': _tq_detail,
                     'Result': '✅ Won' if won else '❌ Lost'})
                 continue
