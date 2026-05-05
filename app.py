@@ -1636,13 +1636,14 @@ elif st.session_state.view == "boxscore":
                     v_parts = v.strip().split()
                     icon = v_parts[0] if v_parts else ""
                     num  = v_parts[-1] if len(v_parts) > 1 else v_parts[0]
+                    icon_str = "✅" if v_parts[0] == "✅" else "❌"
                     if k == "Game":
-                        parts_pr.append(f"{num}")
+                        parts_pr.append(f"{icon_str} {num}")
                     else:
-                        parts_pr.append(f"{k}: {num}")
+                        parts_pr.append(f"{k}: {icon_str} {num}")
                 detail = " | ".join(parts_pr)
                 if list(pr.keys()) == ["Game"]:
-                    scope_display = detail  # just the value, no prefix
+                    scope_display = f"Game:{parts_pr[0]}"
                 else:
                     scope_display = f"{scope_short} | {detail}"
             else:
@@ -1695,9 +1696,7 @@ elif st.session_state.view == "boxscore":
             ne_  = sum(1 for v in gdf['Result'] if 'Error' in str(v))
             st.markdown(f'**👤 Player Props** — {np_} props · ✅ {nw_} Won · ❗ {ne_} Error · ❌ {nl_} Lost')
             ps = [c for c in gdf.columns if c not in ('Prop','Data')]
-            def _amber(v): return 'color:#f59e0b;font-weight:600' if isinstance(v,str) and v else ''
-            st.dataframe(gdf.style.map(_color, subset=ps).map(_amber, subset=['Data'] if 'Data' in gdf.columns else []),
-                use_container_width=True, hide_index=True)
+            st.dataframe(gdf.style.map(_color, subset=ps), use_container_width=True, hide_index=True)
 
         # ── Grade team props ──────────────────────────────────────────────
         import re as _re_t
@@ -1778,22 +1777,30 @@ elif st.session_state.view == "boxscore":
 
         for i, line in enumerate(clean_lines):
             if _SCORELESS_RE2.search(line):
-                q_had_score = {q: _any_score_in_q(q) for q in ["Q1","Q2","Q3","Q4"]}
-                won = any(not v for v in q_had_score.values())  # any quarter scoreless
-                _score_detail = " | ".join(f"Q{j+1}: {'0' if not v else '1+'}" for j,(q,v) in enumerate(q_had_score.items()))
-                team_graded.append({"Prop": line, "Data": _score_detail,
-                    "Result": "✅ Won" if won else "❌ Lost"})
+                _ls2 = data.get('linescore', pd.DataFrame())
+                q_had_score = {q: _any_score_in_q(q) for q in ['Q1','Q2','Q3','Q4']}
+                won = any(not v for v in q_had_score.values())
+                def _tot_q(q):
+                    if _ls2 is None or _ls2.empty or q not in _ls2.columns: return '?'
+                    return str(int(pd.to_numeric(_ls2[q], errors='coerce').fillna(0).sum()))
+                _score_detail = ' | '.join(f'{q}:{_tot_q(q)}' for q in ['Q1','Q2','Q3','Q4'])
+                team_graded.append({'Prop': line, 'Data': _score_detail,
+                    'Result': '✅ Won' if won else '❌ Lost'})
                 continue
             _tq_m = _TEAM_Q_RE2.match(line)
             if _tq_m:
                 team_abbr = _tq_m.group(1).strip().split()[0].upper()
-                q_had_score = {q: _team_scored_in_q(team_abbr, q) for q in ["Q1","Q2","Q3","Q4"]}
-                won = all(q_had_score.values())  # team scored in all 4 quarters
-                _score_detail = " | ".join(f"Q{j+1}: {'0' if not v else '1+'}" for j,(q,v) in enumerate(q_had_score.items()))
-                team_graded.append({"Prop": line, "Data": _score_detail,
-                    "Result": "✅ Won" if won else "❌ Lost"})
+                q_had_score = {q: _team_scored_in_q(team_abbr, q) for q in ['Q1','Q2','Q3','Q4']}
+                won = all(q_had_score.values())
+                _ls3 = data.get('linescore', pd.DataFrame())
+                def _team_q_pts(t, q):
+                    if _ls3 is None or _ls3.empty or 'Team' not in _ls3.columns or q not in _ls3.columns: return '?'
+                    _r3 = _ls3[_ls3['Team'].str.upper() == t.upper()]
+                    return str(int(pd.to_numeric(_r3.iloc[0][q], errors='coerce') or 0)) if not _r3.empty else '?'
+                _tq_detail = ' | '.join(f'{q}:{_team_q_pts(team_abbr, q)}' for q in ['Q1','Q2','Q3','Q4'])
+                team_graded.append({'Prop': line, 'Data': _tq_detail,
+                    'Result': '✅ Won' if won else '❌ Lost'})
                 continue
-            if not TEAM_LINE_RE.match(line):
                 continue
             is_each = "each team" in line.lower() or "both teams" in line.lower()
             cond    = next((lbl for pat,lbl in COND_T if pat.search(line)), "each quarter")
@@ -1840,6 +1847,4 @@ elif st.session_state.view == "boxscore":
                     if val.startswith("❌"): return "color:#ef4444;font-weight:700"
                     if val.startswith("❗"): return "color:#f59e0b;font-weight:700"
                 return ""
-            st.dataframe(tdf.style.map(_color_t, subset=ts)
-                .map(lambda v: 'color:#f59e0b;font-weight:600' if isinstance(v,str) and v else '', subset=['Data'] if 'Data' in tdf.columns else []),
-                use_container_width=True, hide_index=True)
+            st.dataframe(tdf.style.map(_color_t, subset=ts), use_container_width=True, hide_index=True)
