@@ -523,11 +523,13 @@ def get_player_stats_by_period(game_id: str) -> dict:
                     if is_td:
                         d["td"] += 1
 
-            # ── Sack plays ────────────────────────────────────────────────────
-            if "sack" in ptype.lower():
+            # ── Sack plays — detect from text since ESPN labels as Pass type ──
+            # Search all plays for "sacked by X" pattern regardless of play type
+            if "sack" in text.lower():
                 sm = _SACK_RE.search(text)
                 if sm:
                     sacker = sm.group(1).strip()
+                    # Try to determine sacker's team from context (opposite of drive team)
                     sacking[period][sacker]["sacks"] += 1
 
     # ── DataFrame builders ────────────────────────────────────────────────
