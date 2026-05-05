@@ -1102,6 +1102,11 @@ elif st.session_state.view == "boxscore":
                 import re as _re_skip
                 if _re_skip.match(r'^(each team|both teams|points scored|\d+[+]?\s*(?:tds?|touchdowns?|field goals?|fgs?|scored))', line, _re_skip.I):
                     continue
+                # Skip team/game lines handled by team props
+                if _re_skip.search(r'any quarter.*scoreless|scoreless.*quarter', line, _re_skip.I):
+                    continue
+                if _re_skip.match(r'^[A-Z]{2,4}[\w\s]*\s+to\s+score\s+in\s+all\s+four\s+quarters', line, _re_skip.I):
+                    continue
                 stat = None
                 for pat, label in STAT_MAP_RE:
                     if pat.search(line):
@@ -1388,6 +1393,53 @@ elif st.session_state.view == "boxscore":
             threshold = float(prop.get("threshold", 0))
             condition = prop.get("condition","game total").lower()
             operator  = prop.get("operator","over").lower()
+
+            # Handle combine/or/each operators early — before stat_map lookup
+            if operator in ("combine","or","each"):
+                players_list = prop.get("players_list", [prop.get("player",""), prop.get("player2","")])
+                cat2 = prop.get("category","")
+                col2 = prop.get("col","YDS")
+                thr2 = threshold
+                def _fg2(p, c, cl):
+                    df2 = data.get(c, pd.DataFrame())
+                    if df2 is None or df2.empty or "Player" not in df2.columns: return None
+                    abbr2 = _abbr_from_name(p)
+                    m2 = df2[df2["Player"] == abbr2]
+                    if m2.empty:
+                        import re as _r3; nl2=p.strip().lower()
+                        nm2=_r3.sub(r'\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$','',nl2,flags=_r3.I).strip()
+                        pl2=df2["Player"].str.lower(); m2=df2[pl2.eq(nl2)|pl2.eq(nm2)]
+                    if m2.empty:
+                        parts2=p.strip().split()
+                        m2=df2[df2["Player"].str.contains(parts2[-1],case=False,na=False)]
+                        if not m2.empty and _game_teams and "Team" in df2.columns:
+                            m2=m2[m2["Team"].str.upper().isin(_game_teams)]
+                    return float(pd.to_numeric(m2.iloc[0].get(cl,0),errors="coerce") or 0) if not m2.empty else None
+                def _mltd2(p):
+                    return (_fg2(p,"rushing","TD") or 0)+(_fg2(p,"receiving","TD") or 0)
+                vals2={}; all_found2=True
+                for p2 in players_list:
+                    v2=_mltd2(p2) if cat2=="multi" else _fg2(p2,cat2,col2)
+                    if v2 is None: all_found2=False; v2=0
+                    vals2[p2]=v2
+                total2=sum(vals2.values())
+                detail2=" | ".join(f"{p2.split()[-1]}:{v2:.0f}" for p2,v2 in vals2.items())
+                players_str2=" & ".join(players_list)
+                if operator=="combine":
+                    won2=total2>=thr2 if all_found2 else None
+                    scope2=f"Total:{total2:.0f} | {detail2}"
+                elif operator=="or":
+                    won2=any(v2>=thr2 for v2 in vals2.values()) if all_found2 else None
+                    scope2=detail2
+                else:
+                    won2=all(v2>=thr2 for v2 in vals2.values()) if all_found2 else None
+                    scope2=detail2
+                return {
+                    "player": players_str2, "stat": prop.get("stat",""),
+                    "threshold": thr2, "condition": scope2,
+                    "period_results": {}, "won": won2 is True,
+                    "raw_line": prop.get("raw_line",""),
+                }
 
             stat_map = {
                 "rushing yards":   ("rushing",   "YDS"),
