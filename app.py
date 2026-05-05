@@ -1415,13 +1415,6 @@ elif st.session_state.view == "boxscore":
                 "Result":  "✅ Won" if overall_won is True else ("❗ Error" if overall_won is None else "❌ Lost"),
             }
 
-        # Quick defense df check — remove after debugging
-        _def_df = data.get('defense', pd.DataFrame())
-        if not _def_df.empty:
-            st.caption(f"Defense df rows={len(_def_df)} | Sample: {_def_df['Player'].head(5).tolist()}")
-        else:
-            st.caption("Defense df is EMPTY")
-
         def safe_grade(group):
             try:
                 return grade_prop_group(group)
@@ -1429,7 +1422,7 @@ elif st.session_state.view == "boxscore":
                 p = group[0] if group else {}
                 return {
                     "Players": p.get("player", "?"),
-                    "Prop":    f"{p.get('threshold','')}+ {p.get('stat','')}",
+                    "Prop":    f"{p.get('threshold','')}+ {p.get('stat','')} [EXC: {str(_ge)[:60]}]",
                     "Scope":   p.get("condition",""),
                     "Result":  "❗ Error",
                 }
