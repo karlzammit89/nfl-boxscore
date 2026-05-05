@@ -1121,12 +1121,12 @@ elif st.session_state.view == "boxscore":
                     error_rows.append({"line_index": i, "raw_line": line})
                     continue
                 if dual:
-                    for player in [normalise_name(dual.group(1)), normalise_name(dual.group(2))]:
+                    for player in [dual.group(1).strip(), dual.group(2).strip()]:
                         props.append({"line_index": i, "player": player, "stat": stat,
                                       "threshold": threshold, "condition": condition, "operator": operator})
                 else:
-                    player_raw = (single or alt).group(1)
-                    props.append({"line_index": i, "player": normalise_name(player_raw), "stat": stat,
+                    player_raw = (single or alt).group(1).strip()
+                    props.append({"line_index": i, "player": player_raw, "stat": stat,
                                   "threshold": threshold, "condition": condition, "operator": operator})
         except Exception as e:
             st.error(f"Could not parse props: {e}")
@@ -1239,20 +1239,28 @@ elif st.session_state.view == "boxscore":
             """
             # Defense (sacks): check by_period and ESPN defense df
             if category == 'defense':
-                parts      = player.strip().split()
-                name_lower = player.strip().lower()
                 import re as _ren
+                name_lower = player.strip().lower()
+                # Strip suffix for normalised match (Byron Murphy II → byron murphy)
                 norm_lower = _ren.sub(r'\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$', '', name_lower, flags=_ren.I).strip()
+                parts = player.strip().split()
+                # Last name: skip suffix tokens
+                suffix_words = {'jr','jr.','sr','sr.','ii','iii','iv'}
+                last = next((p for p in reversed(parts) if p.lower() not in suffix_words), parts[-1])
 
-                # Primary: ESPN defense df has ALL defenders (tackles, sacks, PD etc)
-                # Player column = full displayName e.g. "Christian Barmore"
+                # Primary: ESPN defense df (full displayName e.g. "Byron Murphy II")
                 df2 = data.get('defense', pd.DataFrame())
                 if df2 is not None and not df2.empty and 'Player' in df2.columns:
-                    players_lower = df2['Player'].str.lower()
-                    if players_lower.eq(name_lower).any() or players_lower.eq(norm_lower).any():
+                    pl = df2['Player'].str.lower()
+                    # Exact match on raw name or suffix-stripped name
+                    if pl.eq(name_lower).any() or pl.eq(norm_lower).any():
                         return True
-                    # Last name match within game teams
-                    last = parts[-1]
+                    # Suffix-stripped df names vs our norm (e.g. df has "Byron Murphy II", we have "Byron Murphy")
+                    df_norm = df2['Player'].str.lower().str.replace(
+                        r'\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$', '', regex=True).str.strip()
+                    if df_norm.eq(norm_lower).any():
+                        return True
+                    # Last name match with team filter
                     last_match = df2[df2['Player'].str.contains(last, case=False, na=False)]
                     if not last_match.empty:
                         if not _game_teams or "Team" not in df2.columns:
@@ -1260,13 +1268,12 @@ elif st.session_state.view == "boxscore":
                         if last_match["Team"].str.upper().isin(_game_teams).any():
                             return True
 
-                # Fallback: boxscore full name dict
+                # Fallback: _full_name_team
                 for _n in [name_lower, norm_lower]:
                     if _n in _full_name_team:
                         t = _full_name_team[_n].upper()
                         if not _game_teams or t in _game_teams:
                             return True
-
                 return False
 
             name_lower = player.strip().lower()
@@ -1282,19 +1289,22 @@ elif st.session_state.view == "boxscore":
         def get_player_val(player: str, category: str, col: str, period_key: str) -> float:
             try:
                 if category == 'defense':
-                    parts      = player.strip().split()
-                    abbr       = f"{parts[0][0]}.{parts[-1]}" if len(parts) >= 2 else player
-                    name_lower = player.strip().lower()
                     import re as _ren2
+                    parts      = player.strip().split()
+                    name_lower = player.strip().lower()
                     norm_lower = _ren2.sub(r'\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$', '', name_lower, flags=_ren2.I).strip()
+                    # Abbreviate using first letter of first name + last non-suffix word
+                    suffix_w = {'jr','jr.','sr','sr.','ii','iii','iv'}
+                    last_w = next((p for p in reversed(parts) if p.lower() not in suffix_w), parts[-1])
+                    abbr = f"{parts[0][0]}.{last_w}" if len(parts) >= 2 else player
 
-                    # 1. by_period defense — per-period/half sacks from PBP (abbreviated names)
+                    # 1. by_period defense (PBP sacks, abbreviated names like C.Barmore)
                     pbp_def = by_period.get(period_key, {}).get('defense', pd.DataFrame())
                     if pbp_def is not None and not pbp_def.empty and 'Player' in pbp_def.columns:
                         m = pbp_def[pbp_def['Player'] == abbr]
                         if not m.empty:
                             return float(m.iloc[0].get('SACKS', 0))
-                    # Player found in game but 0 sacks in this period → return 0 (Lost, not Error)
+                    # Player in game but 0 sacks this period → Lost not Error
                     return 0.0
                 match = _find_player(player, category, period_key)
                 return float(match.iloc[0].get(col, 0)) if not match.empty else 0.0
