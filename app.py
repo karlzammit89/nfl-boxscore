@@ -1120,6 +1120,68 @@ elif st.session_state.view == "boxscore":
                 dual   = PLAYERS_RE.match(line)
                 single = SINGLE_RE.match(line) if not dual else None
                 alt    = None
+
+                # ── New prop formats ────────────────────────────────────────
+                # "Bo Nix and Dak Prescott to Combine for 500+ Passing Yards"
+                # "Bo Nix or Dak Prescott to record 400+ Passing Yards"
+                # "Both Bo Nix and Dak Prescott to Each Complete 25+ Passes"
+                # "CeeDee Lamb, Courtland Sutton, and George Pickens to Combine for 4+ TDs"
+                _COMBINE_STAT_RE = _re.compile(
+                    r'(\d+\.?\d*)\+?\s*(passing tds?|pass tds?|rushing tds?|rush tds?|receiving tds?|rec tds?|tds?|touchdowns?|passing yards?|rushing yards?|receiving yards?|rec yards?|rec yds?|rush yards?|rush yds?|completions?|passes?|receptions?)', _re.I)
+                _OR_RE      = _re.compile(r'^(.+?)\s+or\s+(.+?)\s+to\s+(?:record|have|score)', _re.I)
+                _EACH_RE    = _re.compile(r'^(?:both\s+)?(.+?)\s+and\s+(.+?)\s+to\s+each\s+(?:complete|record|have|score)', _re.I)
+                _CMB3_RE    = _re.compile(r'^(.+?),\s+(.+?),?\s+and\s+(.+?)\s+to\s+combine', _re.I)
+                _CMB2_RE    = _re.compile(r'^(.+?)\s+and\s+(.+?)\s+to\s+combine', _re.I)
+
+                _cm = _COMBINE_STAT_RE.search(line)
+                if not dual and not single and _cm:
+                    _thr = float(_cm.group(1))
+                    _stat_raw = _cm.group(2).strip().lower()
+                    # Map to category/col
+                    _SMAP = {
+                        "passing tds":"passing/TD","pass tds":"passing/TD",
+                        "rushing tds":"rushing/TD","rush tds":"rushing/TD",
+                        "receiving tds":"receiving/TD","rec tds":"receiving/TD",
+                        "tds":"multi/TD","touchdowns":"multi/TD","td":"multi/TD","touchdown":"multi/TD",
+                        "passing yards":"passing/YDS","rushing yards":"rushing/YDS",
+                        "receiving yards":"receiving/YDS","rec yards":"receiving/YDS",
+                        "rec yds":"receiving/YDS","rush yards":"rushing/YDS","rush yds":"rushing/YDS",
+                        "completions":"passing/COMP","passes":"passing/COMP",
+                        "receptions":"receiving/REC","reception":"receiving/REC",
+                    }
+                    _cat_col = next((v for k,v in sorted(_SMAP.items(), key=lambda x:-len(x[0])) if k in _stat_raw), None)
+                    if _cat_col:
+                        _cat, _col = _cat_col.split("/")
+                        _or_m   = _OR_RE.match(line)
+                        _each_m = _EACH_RE.match(line)
+                        _c3_m   = _CMB3_RE.match(line)
+                        _c2_m   = _CMB2_RE.match(line)
+                        if _or_m:
+                            props.append({"line_index": i, "player": _or_m.group(1).strip(),
+                                "player2": _or_m.group(2).strip(), "stat": _stat_raw,
+                                "threshold": _thr, "condition": condition, "operator": "or",
+                                "category": _cat, "col": _col, "raw_line": line})
+                            continue
+                        elif _each_m:
+                            props.append({"line_index": i, "player": _each_m.group(1).strip(),
+                                "player2": _each_m.group(2).strip(), "stat": _stat_raw,
+                                "threshold": _thr, "condition": condition, "operator": "each",
+                                "category": _cat, "col": _col, "raw_line": line})
+                            continue
+                        elif _c3_m:
+                            props.append({"line_index": i,
+                                "players_list": [_c3_m.group(1).strip(), _c3_m.group(2).strip(), _c3_m.group(3).strip()],
+                                "player": _c3_m.group(1).strip(),
+                                "stat": _stat_raw, "threshold": _thr, "condition": condition,
+                                "operator": "combine", "category": _cat, "col": _col, "raw_line": line})
+                            continue
+                        elif _c2_m:
+                            props.append({"line_index": i,
+                                "players_list": [_c2_m.group(1).strip(), _c2_m.group(2).strip()],
+                                "player": _c2_m.group(1).strip(),
+                                "stat": _stat_raw, "threshold": _thr, "condition": condition,
+                                "operator": "combine", "category": _cat, "col": _col, "raw_line": line})
+                            continue
                 pm = _INLINE_PERIOD.search(line)
                 if pm and condition == "game total":
                     n2, t2 = pm.group(1), pm.group(2).upper()
@@ -1353,10 +1415,58 @@ elif st.session_state.view == "boxscore":
                     break
 
             if not category:
+                operator2 = prop.get('operator','over')
+                if operator2 in ('combine','or','each'):
+                    players_list = prop.get('players_list', [prop.get('player',''), prop.get('player2','')])
+                    cat2 = prop.get('category','')
+                    col2 = prop.get('col','TD')
+                    thr2 = threshold
+                    def _fg(p, c, cl):
+                        df2 = data.get(c, pd.DataFrame())
+                        if df2 is None or df2.empty or 'Player' not in df2.columns: return None
+                        abbr2 = _abbr_from_name(p)
+                        m2 = df2[df2['Player'] == abbr2]
+                        if m2.empty:
+                            import re as _r3; nl2 = p.strip().lower()
+                            import re as _r4; nm2 = _r4.sub(r'\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$','',nl2,flags=_r4.I).strip()
+                            pl2 = df2['Player'].str.lower()
+                            m2 = df2[pl2.eq(nl2)|pl2.eq(nm2)]
+                        if m2.empty:
+                            parts2 = p.strip().split()
+                            m2 = df2[df2['Player'].str.contains(parts2[-1], case=False, na=False)]
+                            if not m2.empty and _game_teams and 'Team' in df2.columns:
+                                m2 = m2[m2['Team'].str.upper().isin(_game_teams)]
+                        return float(pd.to_numeric(m2.iloc[0].get(cl,0), errors='coerce') or 0) if not m2.empty else None
+                    def _multi_td2(p):
+                        return (_fg(p,'rushing','TD') or 0) + (_fg(p,'receiving','TD') or 0)
+                    vals2 = {}
+                    all_found2 = True
+                    for p2 in players_list:
+                        v2 = _multi_td2(p2) if cat2 == 'multi' else _fg(p2, cat2, col2)
+                        if v2 is None: all_found2 = False; v2 = 0
+                        vals2[p2] = v2
+                    total2 = sum(vals2.values())
+                    detail2 = ' | '.join(f"{p2.split()[-1]}:{v2:.0f}" for p2,v2 in vals2.items())
+                    players_str2 = ' & '.join(players_list)
+                    if operator2 == 'combine':
+                        won2 = total2 >= thr2 if all_found2 else None
+                        scope2 = f'Total:{total2:.0f} | {detail2}'
+                    elif operator2 == 'or':
+                        won2 = any(v2 >= thr2 for v2 in vals2.values()) if all_found2 else None
+                        scope2 = detail2
+                    else:
+                        won2 = all(v2 >= thr2 for v2 in vals2.values()) if all_found2 else None
+                        scope2 = detail2
+                    return {
+                        'player': players_str2, 'stat': prop.get('stat',''),
+                        'threshold': thr2, 'condition': scope2,
+                        'period_results': {}, 'won': won2 is True,
+                        'raw_line': prop.get('raw_line',''),
+                    }
                 return {
-                    "player": player, "stat": prop.get("stat",""),
-                    "threshold": threshold, "condition": prop.get("condition",""),
-                    "period_results": {}, "won": None, "raw_line": prop.get("raw_line",""),
+                    'player': player, 'stat': prop.get('stat',''),
+                    'threshold': threshold, 'condition': prop.get('condition',''),
+                    'period_results': {}, 'won': None, 'raw_line': prop.get('raw_line',''),
                 }
 
             # If player doesn't appear in this game's data at all → N/A
@@ -1494,267 +1604,7 @@ elif st.session_state.view == "boxscore":
             st.dataframe(gdf.style.map(_color, subset=ps), use_container_width=True, hide_index=True)
 
         # ── Grade team props ──────────────────────────────────────────────
-        # ── Special prop parsers ────────────────────────────────────────────
-        import re as _re_sp
-        special_props = []   # list of dicts with type and grading info
-
-        SCORELESS_RE  = _re_sp.compile(r'any quarter.*scoreless|scoreless.*quarter', _re_sp.I)
-        COMBINE_STAT  = _re_sp.compile(r'(\d+\.?\d*)\+?\s*(passing yards?|rushing yards?|receiving yards?|tds?|touchdowns?|receptions?|completions?|passes)', _re_sp.I)
-        OR_PLAYER_RE  = _re_sp.compile(r'^(.+?)\s+or\s+(.+?)\s+to\s+(?:record|have|score)', _re_sp.I)
-        EACH_BOTH_RE  = _re_sp.compile(r'^(?:both\s+)?(.+?)\s+and\s+(.+?)\s+to\s+each\s+(?:complete|record|have|score)', _re_sp.I)
-        COMBINE_3_RE  = _re_sp.compile(r'^(.+?),\s+(.+?),?\s+and\s+(.+?)\s+to\s+combine', _re_sp.I)
-        COMBINE_2_RE  = _re_sp.compile(r'^(.+?)\s+and\s+(.+?)\s+to\s+combine', _re_sp.I)
-        TEAM_Q_RE     = _re_sp.compile(r'^([A-Z]{2,4}[\s\w]*)\s+to\s+score\s+in\s+all\s+four\s+quarters', _re_sp.I)
-
-        STAT_MAP_SPECIAL = {
-            "passing yards": ("passing",   "YDS"),
-            "passing yard":  ("passing",   "YDS"),
-            "rushing yards": ("rushing",   "YDS"),
-            "rushing yard":  ("rushing",   "YDS"),
-            "receiving yards": ("receiving","YDS"),
-            "receiving yard":  ("receiving","YDS"),
-            "completions":   ("passing",   "COMP"),
-            "completion":    ("passing",   "COMP"),
-            "passes":        ("passing",   "COMP"),
-            "passing tds":   ("passing",   "TD"),   # explicit passing TDs
-            "passing td":    ("passing",   "TD"),
-            "pass tds":      ("passing",   "TD"),
-            "pass td":       ("passing",   "TD"),
-            "rushing tds":   ("rushing",   "TD"),   # explicit rushing TDs
-            "rushing td":    ("rushing",   "TD"),
-            "rush tds":      ("rushing",   "TD"),
-            "rush td":       ("rushing",   "TD"),
-            "receiving tds": ("receiving", "TD"),   # explicit receiving TDs
-            "receiving td":  ("receiving", "TD"),
-            "rec tds":       ("receiving", "TD"),
-            "rec td":        ("receiving", "TD"),
-            "tds":           ("multi",     "TD"),   # generic = rush+recv only
-            "td":            ("multi",     "TD"),
-            "touchdowns":    ("multi",     "TD"),
-            "touchdown":     ("multi",     "TD"),
-            "receptions":    ("receiving", "REC"),
-            "reception":     ("receiving", "REC"),
-        }
-
-        def _get_full_game_val(player_name, category, col):
-            """Get a stat value from Full Game ESPN boxscore data."""
-            df = data.get(category, pd.DataFrame())
-            if df is None or df.empty or "Player" not in df.columns:
-                return 0.0
-            abbr = _abbr_from_name(player_name)
-            name_lower = player_name.strip().lower()
-            import re as _rsp2
-            norm = _rsp2.sub(r'\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$', '', name_lower, flags=_rsp2.I).strip()
-            m = df[df["Player"] == abbr]
-            if m.empty:
-                pl = df["Player"].str.lower()
-                m = df[pl.eq(name_lower) | pl.eq(norm)]
-            if m.empty:
-                parts = player_name.strip().split()
-                last = parts[-1] if parts else ""
-                m = df[df["Player"].str.contains(last, case=False, na=False)]
-                if not m.empty and _game_teams and "Team" in df.columns:
-                    m = m[m["Team"].str.upper().isin(_game_teams)]
-            if m.empty:
-                return None  # not found
-            val = m.iloc[0].get(col, 0)
-            return float(pd.to_numeric(val, errors="coerce") or 0)
-
-        def _get_multi_td(player_name, include_passing=False):
-            """Get total TDs for a player. Passing TDs excluded by default."""
-            rush_td = _get_full_game_val(player_name, "rushing",   "TD") or 0
-            recv_td = _get_full_game_val(player_name, "receiving",  "TD") or 0
-            total   = rush_td + recv_td
-            if include_passing:
-                total += _get_full_game_val(player_name, "passing", "TD") or 0
-            return total
-
-        def _parse_stat_key(stat_text):
-            """Map stat text to (category, col). Longer keys checked first."""
-            st = stat_text.strip().lower()
-            # Sort by key length descending so "passing tds" matches before "tds"
-            for key, val in sorted(STAT_MAP_SPECIAL.items(), key=lambda x: -len(x[0])):
-                if key in st:
-                    return val
-            return None, None
-
-        def _linescore_q(q_label):
-            """Total points scored in a quarter (both teams) from linescore."""
-            ls = data.get("linescore", pd.DataFrame())
-            if ls is None or ls.empty or q_label not in ls.columns:
-                return 0
-            return int(pd.to_numeric(ls[q_label], errors="coerce").fillna(0).sum())
-
-        def _team_q_score(team_abbr, q_label):
-            """Points scored by a specific team in a quarter."""
-            ls = data.get("linescore", pd.DataFrame())
-            if ls is None or ls.empty:
-                return 0
-            if "Team" not in ls.columns or q_label not in ls.columns:
-                return 0
-            row = ls[ls["Team"].str.upper() == team_abbr.upper()]
-            if row.empty:
-                return 0
-            return int(pd.to_numeric(row.iloc[0][q_label], errors="coerce") or 0)
-
-        for i, line in enumerate(clean_lines):
-            # Skip lines already handled by team or player parsers
-            if TEAM_LINE_RE.match(line) if hasattr(_re_t, "compile") else False:
-                continue
-
-            prop_type = None
-
-            if SCORELESS_RE.search(line):
-                prop_type = "scoreless_quarter"
-
-            elif TEAM_Q_RE.match(line):
-                m = TEAM_Q_RE.match(line)
-                team_raw = m.group(1).strip()
-                # Extract team abbr (first word if it looks like abbr, else search)
-                team_abbr = team_raw.split()[0].upper()
-                prop_type = "team_all_quarters"
-                special_props.append({
-                    "line_index": i, "raw_line": line,
-                    "type": prop_type, "team_abbr": team_abbr,
-                })
-                continue
-
-            elif OR_PLAYER_RE.match(line):
-                m = OR_PLAYER_RE.match(line)
-                cm = COMBINE_STAT.search(line)
-                if cm:
-                    cat, col = _parse_stat_key(cm.group(2))
-                    if cat:
-                        special_props.append({
-                            "line_index": i, "raw_line": line,
-                            "type": "or_players",
-                            "players": [m.group(1).strip(), m.group(2).strip()],
-                            "threshold": float(cm.group(1)),
-                            "category": cat, "col": col,
-                        })
-                        continue
-
-            elif EACH_BOTH_RE.match(line):
-                m = EACH_BOTH_RE.match(line)
-                cm = COMBINE_STAT.search(line)
-                if cm:
-                    cat, col = _parse_stat_key(cm.group(2))
-                    if cat:
-                        special_props.append({
-                            "line_index": i, "raw_line": line,
-                            "type": "each_player",
-                            "players": [m.group(1).strip(), m.group(2).strip()],
-                            "threshold": float(cm.group(1)),
-                            "category": cat, "col": col,
-                        })
-                        continue
-
-            elif COMBINE_3_RE.match(line):
-                m = COMBINE_3_RE.match(line)
-                cm = COMBINE_STAT.search(line)
-                if cm:
-                    cat, col = _parse_stat_key(cm.group(2))
-                    if cat:
-                        special_props.append({
-                            "line_index": i, "raw_line": line,
-                            "type": "combine",
-                            "players": [m.group(1).strip(), m.group(2).strip(), m.group(3).strip()],
-                            "threshold": float(cm.group(1)),
-                            "category": cat, "col": col,
-                        })
-                        continue
-
-            elif COMBINE_2_RE.match(line):
-                m = COMBINE_2_RE.match(line)
-                cm = COMBINE_STAT.search(line)
-                if cm:
-                    cat, col = _parse_stat_key(cm.group(2))
-                    if cat:
-                        special_props.append({
-                            "line_index": i, "raw_line": line,
-                            "type": "combine",
-                            "players": [m.group(1).strip(), m.group(2).strip()],
-                            "threshold": float(cm.group(1)),
-                            "category": cat, "col": col,
-                        })
-                        continue
-
-            if prop_type == "scoreless_quarter":
-                special_props.append({"line_index": i, "raw_line": line, "type": "scoreless_quarter"})
-
-        # ── Grade special props ──────────────────────────────────────────────
-        special_graded = []
-        for sp in special_props:
-            sp_type = sp["type"]
-            raw = sp["raw_line"]
-
-            if sp_type == "scoreless_quarter":
-                q_scores = {q: _linescore_q(q) for q in ["Q1","Q2","Q3","Q4"]}
-                won = any(v == 0 for v in q_scores.values())
-                detail = " | ".join(f"{q}:{v}" for q,v in q_scores.items())
-                special_graded.append({"Prop": raw, "Scope": "Each Qrt",
-                    "Result": f"{'✅ Won' if won else '❌ Lost'} ({detail})"})
-
-            elif sp_type == "team_all_quarters":
-                team_abbr = sp["team_abbr"]
-                q_scores = {q: _team_q_score(team_abbr, q) for q in ["Q1","Q2","Q3","Q4"]}
-                won = all(v > 0 for v in q_scores.values())
-                detail = " | ".join(f"{q}:{v}" for q,v in q_scores.items())
-                special_graded.append({"Prop": raw, "Scope": "Each Qrt",
-                    "Result": f"{'✅ Won' if won else '❌ Lost'} ({detail})"})
-
-            elif sp_type == "combine":
-                players = sp["players"]; thr = sp["threshold"]
-                cat = sp["category"]; col = sp["col"]
-                vals = {}
-                all_found = True
-                for p in players:
-                    if cat == "multi":
-                        v = _get_multi_td(p, include_passing=False)
-                    elif cat == "passing" and col == "TD":
-                        v = _get_full_game_val(p, "passing", "TD")
-                    else:
-                        v = _get_full_game_val(p, cat, col)
-                    if v is None: all_found = False; v = 0
-                    vals[p] = v
-                total = sum(vals.values())
-                won = total >= thr if all_found else None
-                detail = " + ".join(f"{p.split()[-1]}:{v:.0f}" for p,v in vals.items())
-                result = "✅ Won" if won is True else ("❗ Error" if won is None else "❌ Lost")
-                special_graded.append({"Prop": raw, "Scope": "Game",
-                    "Result": f"{result} (Total:{total:.0f} | {detail})"})
-
-            elif sp_type == "or_players":
-                players = sp["players"]; thr = sp["threshold"]
-                cat = sp["category"]; col = sp["col"]
-                vals = {}
-                all_found = True
-                for p in players:
-                    v = _get_full_game_val(p, cat, col)
-                    if v is None: all_found = False; v = 0
-                    vals[p] = v
-                won = any(v >= thr for v in vals.values()) if all_found else None
-                detail = " | ".join(f"{p.split()[-1]}:{v:.0f}" for p,v in vals.items())
-                result = "✅ Won" if won is True else ("❗ Error" if won is None else "❌ Lost")
-                special_graded.append({"Prop": raw, "Scope": "Game",
-                    "Result": f"{result} ({detail})"})
-
-            elif sp_type == "each_player":
-                players = sp["players"]; thr = sp["threshold"]
-                cat = sp["category"]; col = sp["col"]
-                vals = {}
-                all_found = True
-                for p in players:
-                    v = _get_full_game_val(p, cat, col)
-                    if v is None: all_found = False; v = 0
-                    vals[p] = v
-                won = all(v >= thr for v in vals.values()) if all_found else None
-                detail = " | ".join(f"{p.split()[-1]}:{v:.0f}" for p,v in vals.items())
-                result = "✅ Won" if won is True else ("❗ Error" if won is None else "❌ Lost")
-                special_graded.append({"Prop": raw, "Scope": "Game",
-                    "Result": f"{result} ({detail})"})
-
-                import re as _re_t
+        import re as _re_t
         TEAM_LINE_RE = _re_t.compile(r'^(each team|both teams|points scored|\d+[+]?\s*(?:tds?|touchdowns?|field goals?|fgs?|scored))', _re_t.I)
         RUSH_TD_T    = _re_t.compile(r'(\d+)\+?\s*rushing tds?', _re_t.I)
         PASS_TD_T    = _re_t.compile(r'(\d+)\+?\s*passing tds?', _re_t.I)
@@ -1811,7 +1661,35 @@ elif st.session_state.view == "boxscore":
                     return False
             return True
 
+        _SCORELESS_RE2 = _re_t.compile(r'any quarter.*scoreless|scoreless.*quarter', _re_t.I)
+        _TEAM_Q_RE2    = _re_t.compile(r'^([A-Z]{2,4}[\w\s]*)\s+to\s+score\s+in\s+all\s+four\s+quarters', _re_t.I)
+
+        def _linescore_q2(q_label):
+            ls = data.get("linescore", pd.DataFrame())
+            if ls is None or ls.empty or q_label not in ls.columns: return 0
+            return int(pd.to_numeric(ls[q_label], errors="coerce").fillna(0).sum())
+
+        def _team_q_score2(team_abbr, q_label):
+            ls = data.get("linescore", pd.DataFrame())
+            if ls is None or ls.empty or "Team" not in ls.columns or q_label not in ls.columns: return 0
+            row = ls[ls["Team"].str.upper() == team_abbr.upper()]
+            return int(pd.to_numeric(row.iloc[0][q_label], errors="coerce") or 0) if not row.empty else 0
+
         for i, line in enumerate(clean_lines):
+            if _SCORELESS_RE2.search(line):
+                q_scores = {q: _linescore_q2(q) for q in ["Q1","Q2","Q3","Q4"]}
+                won = any(v == 0 for v in q_scores.values())
+                team_graded.append({"Prop": line, "Scope": "Each Qrt",
+                    "Result": "✅ Won" if won else "❌ Lost"})
+                continue
+            _tq_m = _TEAM_Q_RE2.match(line)
+            if _tq_m:
+                team_abbr = _tq_m.group(1).strip().split()[0].upper()
+                q_scores = {q: _team_q_score2(team_abbr, q) for q in ["Q1","Q2","Q3","Q4"]}
+                won = all(v > 0 for v in q_scores.values())
+                team_graded.append({"Prop": line, "Scope": "Each Qrt",
+                    "Result": "✅ Won" if won else "❌ Lost"})
+                continue
             if not TEAM_LINE_RE.match(line):
                 continue
             is_each = "each team" in line.lower() or "both teams" in line.lower()
@@ -1840,26 +1718,8 @@ elif st.session_state.view == "boxscore":
                                  "Result": "✅ Won" if won else "❌ Lost"})
 
         # Fallback if nothing graded
-        if not graded and not team_graded and not special_graded:
+        if not graded and not team_graded:
             st.info('No props could be parsed. Check your input format.')
-
-        # ── Special props table ────────────────────────────────────────────
-        if special_graded:
-            sdf = pd.DataFrame(special_graded)
-            sdf["_w"] = sdf["Result"].apply(lambda x: 0 if "Won" in str(x) else (1 if "Error" in str(x) else 2))
-            sdf = sdf.sort_values(["_w","Prop"]).drop(columns=["_w"]).reset_index(drop=True)
-            nsw = sum(1 for v in sdf["Result"] if "Won" in str(v))
-            nse = sum(1 for v in sdf["Result"] if "Error" in str(v))
-            nsl = len(sdf) - nsw - nse
-            st.markdown(f"**🎲 Special Props** — {len(sdf)} props · ✅ {nsw} Won · ❗ {nse} Error · ❌ {nsl} Lost")
-            def _color_s(val):
-                if isinstance(val, str):
-                    if val.startswith("✅"): return "color:#22c55e;font-weight:700"
-                    if val.startswith("❌"): return "color:#ef4444;font-weight:700"
-                    if val.startswith("❗"): return "color:#f59e0b;font-weight:700"
-                return ""
-            ss = [c for c in sdf.columns if c not in ("Prop","Scope")]
-            st.dataframe(sdf.style.map(_color_s, subset=ss), use_container_width=True, hide_index=True)
 
         # ── Team / game props table ────────────────────────────────────────────
         if team_graded:
