@@ -361,8 +361,7 @@ if st.session_state.view == "calendar":
                         st.session_state.selected_date       = ds
                         st.session_state.selected_date_games = day_games
                         st.session_state.view = "day"
-                        st.rerun()
-
+            
                 else:
                     today_cls = " today" if is_today else ""
                     st.markdown(
@@ -444,7 +443,6 @@ elif st.session_state.view == "day":
     with b1:
         if st.button("← Calendar", use_container_width=True):
             st.session_state.view = "calendar"
-            st.rerun()
 
     st.markdown(
         f"<div class='sec-div' style='margin-top:12px'>"
@@ -511,8 +509,7 @@ elif st.session_state.view == "day":
                 st.session_state.selected_game_id = g["id"]
                 st.session_state.selected_game    = g
                 st.session_state.view = "boxscore"
-                st.rerun()
-            st.markdown("</div>", unsafe_allow_html=True)
+                st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -538,15 +535,12 @@ elif st.session_state.view == "boxscore":
     with b1:
         if st.button("← Calendar", use_container_width=True):
             st.session_state.view = "calendar"
-            st.rerun()
     with b2:
         if st.button(f"← {date_label}", use_container_width=True):
             st.session_state.view = "day"
-            st.rerun()
     with b3:
         if st.button("🔄 Refresh", use_container_width=True):
             st.cache_data.clear()
-            st.rerun()
 
     away  = game["away"]; home = game["home"]
     state = game["status_state"]
@@ -1026,9 +1020,6 @@ elif st.session_state.view == "boxscore":
     )
 
     run_grader = st.button("⚡ Grade Props", key="grade_btn")
-    if st.session_state.get("_def_debug"):
-        with st.expander("🔍 Defense debug", expanded=True):
-            st.text(st.session_state["_def_debug"])
 
     if run_grader and prop_text.strip():
         def strip_odds(line: str) -> str:
@@ -1447,26 +1438,24 @@ elif st.session_state.view == "boxscore":
                     "Scope":   p.get("condition",""),
                     "Result":  "❗ Error",
                 }
-        # Store defense debug in session state so it survives rerender
-        _def_props = [p for group in by_line.values() for p in group
-                      if p.get("stat","").lower() in ("sacks","sack","record a sack")]
-        if _def_props:
-            import re as _rdbg
-            _dbg_lines = []
-            for _dp in _def_props:
-                _pl  = _dp["player"]
-                _nl  = _pl.lower()
-                _nm  = _rdbg.sub(r"\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$","",_nl,flags=_rdbg.I).strip()
-                _fnt = _nl in _full_name_team or _nm in _full_name_team
-                _t   = _full_name_team.get(_nl) or _full_name_team.get(_nm,"NOT FOUND")
-                _dbg_lines.append(f"• `{_pl}` → nl=`{_nl}` nm=`{_nm}` in_fnt=`{_fnt}` team=`{_t}`")
-            _def_df = data.get("defense", pd.DataFrame())
-            _dbg_lines.append(f"Defense df: {len(_def_df)} rows, SACKS col={'yes' if 'SACKS' in _def_df.columns else 'NO'}")
-            st.session_state["_def_debug"] = "\n".join(_dbg_lines)
-        else:
-            st.session_state["_def_debug"] = "(No sack props found in input)"
-            st.rerun()
         graded = [safe_grade(group) for group in by_line.values()]
+        import re as _rdbg
+        _dbg = []
+        _dbg.append(f"Props parsed: {len(props)} | Error rows: {len(error_rows)}")
+        _dbg.append(f"game_teams: {_game_teams}")
+        _dbg.append(f"_full_name_team sample: {list(_full_name_team.items())[:5]}")
+        _def_props = [(p["player"], p.get("stat","")) for group in by_line.values() for p in group]
+        _dbg.append(f"by_line players: {_def_props}")
+        for _er in error_rows[:5]:
+            _dbg.append(f"error_row: {_er.get('raw_line','')}")
+        for _pl, _st in _def_props:
+            if "sack" in _st.lower():
+                _nl = _pl.lower()
+                _nm = _rdbg.sub(r"\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$","",_nl,flags=_rdbg.I).strip()
+                _fnt = _nl in _full_name_team or _nm in _full_name_team
+                _t = _full_name_team.get(_nl) or _full_name_team.get(_nm,"NOT FOUND")
+                _dbg.append(f"SACK: '{_pl}' in_fnt={_fnt} team={_t}")
+        st.session_state["run_grader_debug"] = "\n".join(_dbg)
         for er in error_rows:
             graded.append({
                 "Prop":   er.get("raw_line",""),
@@ -1608,10 +1597,9 @@ elif st.session_state.view == "boxscore":
             st.dataframe(tdf.style.map(_color_t, subset=ts), use_container_width=True, hide_index=True)
 
 
-    # ── Defense debug — always visible, populated after Grade Props ──────
+    # ── Defense debug — always visible ────────────────────────────────────
     with st.expander("🔍 Defense debug", expanded=True):
-        _dbg = st.session_state.get("_def_debug")
-        if _dbg:
-            st.text(_dbg)
+        if "run_grader_debug" in st.session_state:
+            st.text(st.session_state["run_grader_debug"])
         else:
-            st.caption("Grade any props with sack lines to see debug here.")
+            st.caption("Click Grade Props to see debug output here.")
