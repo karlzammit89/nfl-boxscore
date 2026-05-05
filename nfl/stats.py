@@ -422,11 +422,11 @@ _SKIP_PTYPES = {"kickoff", "punt", "field goal", "extra point", "penalty",
                 "kick off", "no play", ""}
 
 # Matches both ESPN sack formats:
-# "QB sacked by D.Lawrence for -8 yards"
-# "QB sacked at WAS 22 for -9 yards by D.Lawrence"
+# '(Shotgun) D.Maye sacked at CLV 18 for -10 yards (M.Garrett)'  <- parentheses
+# 'T.Tagovailoa sacked by C.Young for -8 yards'                  <- by format
 _SACK_RE = _re.compile(
-    r'sacked\s+(?:at\s+[\w\s]+?)?\s*(?:for\s+-?\d+\s+yards?\s+)?by\s+'
-    r'([A-Z][a-z]?\.[A-Z][A-Za-z\'\-]+(?:\s+[A-Z][A-Za-z\'\-]+)?)',
+    r'sacked\s+(?:at\s+\w+\s+\w+\s+)?for\s+-?\d+\s+yards?\s+\(([A-Z][a-z]?\.[A-Z][A-Za-z\'\-]+)\)'
+    r'|sacked\s+(?:at\s+[\w\s]+?)?\s*(?:for\s+-?\d+\s+yards?\s+)?by\s+([A-Z][a-z]?\.[A-Z][A-Za-z\'\-]+)',
     _re.I
 )
 
@@ -528,11 +528,9 @@ def get_player_stats_by_period(game_id: str) -> dict:
             if "sacked" in text.lower():
                 sm = _SACK_RE.search(text)
                 if sm:
-                    sacker = sm.group(1).strip()
-                    # Clean trailing "for" which regex may capture
-                    if sacker.lower().endswith(" for"):
-                        sacker = sacker[:-4].strip()
-                    sacking[period][sacker]["sacks"] += 1
+                    sacker = (sm.group(1) or sm.group(2) or "").strip()
+                    if sacker:
+                        sacking[period][sacker]["sacks"] += 1
 
     # ── DataFrame builders ────────────────────────────────────────────────
 
