@@ -1037,6 +1037,8 @@ elif st.session_state.view == "boxscore":
     )
 
     run_grader = st.button("⚡ Grade Props", key="grade_btn")
+    if st.session_state.get('_ls_debug'):
+        st.info(st.session_state['_ls_debug'])
 
     if run_grader and prop_text.strip():
         def strip_odds(line: str) -> str:
@@ -1777,6 +1779,7 @@ elif st.session_state.view == "boxscore":
         for i, line in enumerate(clean_lines):
             if _SCORELESS_RE2.search(line):
                 _ls2 = data.get('linescore', pd.DataFrame())
+                st.session_state['_ls_debug'] = f"linescore cols: {list(_ls2.columns)} | rows: {len(_ls2)} | sample: {_ls2.to_dict('records')[:2] if not _ls2.empty else 'empty'}" 
                 q_had_score = {q: _any_score_in_q(q) for q in ['Q1','Q2','Q3','Q4']}
                 won = any(not v for v in q_had_score.values())
                 def _tot_q(q):
