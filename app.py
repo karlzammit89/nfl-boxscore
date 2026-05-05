@@ -1042,6 +1042,7 @@ elif st.session_state.view == "boxscore":
             (_re.compile(r'receiving yards?|receiving yds?|rec yards?|rec yds?', _re.I), "Receiving Yards"),
             (_re.compile(r'receptions?', _re.I),                   "Receptions"),
             (_re.compile(r'interceptions?', _re.I),                "Interceptions"),
+            (_re.compile(r'sacks?|record a sack', _re.I),          "Sacks"),
         ]
         COND_MAP_RE = [
             (_re.compile(r'each quarter', _re.I),  "each quarter"),
@@ -1439,23 +1440,6 @@ elif st.session_state.view == "boxscore":
                     "Result":  "❗ Error",
                 }
         graded = [safe_grade(group) for group in by_line.values()]
-        import re as _rdbg
-        _dbg = []
-        _dbg.append(f"Props parsed: {len(props)} | Error rows: {len(error_rows)}")
-        _dbg.append(f"game_teams: {_game_teams}")
-        _dbg.append(f"_full_name_team sample: {list(_full_name_team.items())[:5]}")
-        _def_props = [(p["player"], p.get("stat","")) for group in by_line.values() for p in group]
-        _dbg.append(f"by_line players: {_def_props}")
-        for _er in error_rows[:5]:
-            _dbg.append(f"error_row: {_er.get('raw_line','')}")
-        for _pl, _st in _def_props:
-            if "sack" in _st.lower():
-                _nl = _pl.lower()
-                _nm = _rdbg.sub(r"\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$","",_nl,flags=_rdbg.I).strip()
-                _fnt = _nl in _full_name_team or _nm in _full_name_team
-                _t = _full_name_team.get(_nl) or _full_name_team.get(_nm,"NOT FOUND")
-                _dbg.append(f"SACK: '{_pl}' in_fnt={_fnt} team={_t}")
-        st.session_state["run_grader_debug"] = "\n".join(_dbg)
         for er in error_rows:
             graded.append({
                 "Prop":   er.get("raw_line",""),
@@ -1595,11 +1579,3 @@ elif st.session_state.view == "boxscore":
                     if val.startswith("❗"): return "color:#f59e0b;font-weight:700"
                 return ""
             st.dataframe(tdf.style.map(_color_t, subset=ts), use_container_width=True, hide_index=True)
-
-
-    # ── Defense debug — always visible ────────────────────────────────────
-    with st.expander("🔍 Defense debug", expanded=True):
-        if "run_grader_debug" in st.session_state:
-            st.text(st.session_state["run_grader_debug"])
-        else:
-            st.caption("Click Grade Props to see debug output here.")
