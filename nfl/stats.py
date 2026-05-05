@@ -422,7 +422,9 @@ _SKIP_PTYPES = {"kickoff", "punt", "field goal", "extra point", "penalty",
                 "timeout", "end period", "end of half", "two-point conversion",
                 "two point conversion", "kick off", "no play", "",
                 "extra point good", "field goal good", "field goal missed",
-                "punt downed", "punt out of bounds", "kickoff return touchdown"}
+                "punt downed", "punt out of bounds", "kickoff return touchdown",
+                "kickoff return", "two-point conversion attempt",
+                "two point conversion attempt"}
 
 _PENALTY_RE = _re.compile(r'PENALTY|No Play', _re.I)
 
