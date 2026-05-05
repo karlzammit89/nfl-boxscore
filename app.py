@@ -1300,8 +1300,17 @@ elif st.session_state.view == "boxscore":
                 pdf = data.get(category, pd.DataFrame())
                 if pdf is None or pdf.empty or "Player" not in pdf.columns:
                     return pd.DataFrame()
-                # ESPN boxscore uses abbreviated names too
+                # Try standard abbr (R.Harvey), then full-first-name abbr (RJ.Harvey)
                 m = pdf[pdf["Player"] == abbr]
+                if m.empty:
+                    parts = player.strip().split()
+                    if len(parts) >= 2:
+                        full_abbr = f"{parts[0]}.{parts[-1]}"  # RJ.Harvey
+                        m = pdf[pdf["Player"] == full_abbr]
+                if m.empty:
+                    # Last name fallback
+                    parts = player.strip().split()
+                    m = pdf[pdf["Player"].str.contains(parts[-1], case=False, na=False)]
                 if not m.empty and _game_teams and "Team" in m.columns:
                     m = m[m["Team"].str.upper().isin(_game_teams)]
                 return m
@@ -1621,8 +1630,21 @@ elif st.session_state.view == "boxscore":
             raw_line = results[0].get("raw_line", f"{threshold:.0f}+ {stat_short}")
             pr = results[0].get("period_results", {})
             if pr:
-                detail = " | ".join(f"{k}:{v.split()[-1]}" for k,v in pr.items())
-                scope_display = f"{scope_short} ({detail})"
+                parts_pr = []
+                for k, v in pr.items():
+                    # v is like "✅ 247" or "❌ 14" — extract number and icon
+                    v_parts = v.strip().split()
+                    icon = v_parts[0] if v_parts else ""
+                    num  = v_parts[-1] if len(v_parts) > 1 else v_parts[0]
+                    if k == "Game":
+                        parts_pr.append(f"**{num}**")
+                    else:
+                        parts_pr.append(f"{k}: **{num}**")
+                detail = " | ".join(parts_pr)
+                if list(pr.keys()) == ["Game"]:
+                    scope_display = detail  # just the value, no prefix
+                else:
+                    scope_display = f"{scope_short} | {detail}"
             else:
                 scope_display = scope_short
             return {
@@ -1756,7 +1778,8 @@ elif st.session_state.view == "boxscore":
             if _SCORELESS_RE2.search(line):
                 q_had_score = {q: _any_score_in_q(q) for q in ["Q1","Q2","Q3","Q4"]}
                 won = any(not v for v in q_had_score.values())  # any quarter scoreless
-                team_graded.append({"Prop": line, "Data":   "Each Qrt",
+                _score_detail = " | ".join(f"Q{j+1}: **{'0' if not v else '1+'}**" for j,(q,v) in enumerate(q_had_score.items()))
+                team_graded.append({"Prop": line, "Data": _score_detail,
                     "Result": "✅ Won" if won else "❌ Lost"})
                 continue
             _tq_m = _TEAM_Q_RE2.match(line)
@@ -1764,7 +1787,8 @@ elif st.session_state.view == "boxscore":
                 team_abbr = _tq_m.group(1).strip().split()[0].upper()
                 q_had_score = {q: _team_scored_in_q(team_abbr, q) for q in ["Q1","Q2","Q3","Q4"]}
                 won = all(q_had_score.values())  # team scored in all 4 quarters
-                team_graded.append({"Prop": line, "Data":   "Each Qrt",
+                _score_detail = " | ".join(f"Q{j+1}: **{'0' if not v else '1+'}**" for j,(q,v) in enumerate(q_had_score.items()))
+                team_graded.append({"Prop": line, "Data": _score_detail,
                     "Result": "✅ Won" if won else "❌ Lost"})
                 continue
             if not TEAM_LINE_RE.match(line):
