@@ -1026,6 +1026,9 @@ elif st.session_state.view == "boxscore":
     )
 
     run_grader = st.button("⚡ Grade Props", key="grade_btn")
+    if st.session_state.get("_def_debug"):
+        with st.expander("🔍 Defense debug", expanded=True):
+            st.text(st.session_state["_def_debug"])
 
     if run_grader and prop_text.strip():
         def strip_odds(line: str) -> str:
@@ -1444,6 +1447,22 @@ elif st.session_state.view == "boxscore":
                     "Scope":   p.get("condition",""),
                     "Result":  "❗ Error",
                 }
+        # Store defense debug in session state so it survives rerender
+        _def_props = [p for group in by_line.values() for p in group
+                      if p.get("stat","").lower() in ("sacks","sack","record a sack")]
+        if _def_props:
+            import re as _rdbg
+            _dbg_lines = []
+            for _dp in _def_props:
+                _pl  = _dp["player"]
+                _nl  = _pl.lower()
+                _nm  = _rdbg.sub(r"\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$","",_nl,flags=_rdbg.I).strip()
+                _fnt = _nl in _full_name_team or _nm in _full_name_team
+                _t   = _full_name_team.get(_nl) or _full_name_team.get(_nm,"NOT FOUND")
+                _dbg_lines.append(f"• `{_pl}` → nl=`{_nl}` nm=`{_nm}` in_fnt=`{_fnt}` team=`{_t}`")
+            _def_df = data.get("defense", pd.DataFrame())
+            _dbg_lines.append(f"Defense df: {len(_def_df)} rows, SACKS col={'yes' if 'SACKS' in _def_df.columns else 'NO'}")
+            st.session_state["_def_debug"] = "\n".join(_dbg_lines)
         graded = [safe_grade(group) for group in by_line.values()]
         for er in error_rows:
             graded.append({
