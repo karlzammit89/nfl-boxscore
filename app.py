@@ -1037,8 +1037,6 @@ elif st.session_state.view == "boxscore":
     )
 
     run_grader = st.button("⚡ Grade Props", key="grade_btn")
-    if st.session_state.get('or_debug'):
-        st.info(st.session_state['or_debug'])
 
     if run_grader and prop_text.strip():
         def strip_odds(line: str) -> str:
@@ -1441,7 +1439,6 @@ elif st.session_state.view == "boxscore":
                 elif operator=="or":
                     won2=any(v2>=thr2 for v2 in vals2.values()) if all_found2 else None
                     scope2=detail2
-                    st.session_state['or_debug'] = f"OR: players={players_list} cat={cat2} col={col2} vals={vals2} thr={thr2} found={all_found2} won={won2}"
                 else:
                     won2=all(v2>=thr2 for v2 in vals2.values()) if all_found2 else None
                     scope2=detail2
