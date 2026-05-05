@@ -1037,8 +1037,6 @@ elif st.session_state.view == "boxscore":
     )
 
     run_grader = st.button("⚡ Grade Props", key="grade_btn")
-    if st.session_state.get('_ls_debug'):
-        st.info(st.session_state['_ls_debug'])
 
     if run_grader and prop_text.strip():
         def strip_odds(line: str) -> str:
@@ -1641,7 +1639,7 @@ elif st.session_state.view == "boxscore":
                     if k == "Game":
                         parts_pr.append(f"{num}")
                     else:
-                        parts_pr.append(f"{k}:{num}")
+                        parts_pr.append(f"{k}: {num}")
                 detail = " | ".join(parts_pr)
                 if list(pr.keys()) == ["Game"]:
                     scope_display = f"Game:{parts_pr[0]}"
@@ -1779,13 +1777,14 @@ elif st.session_state.view == "boxscore":
         for i, line in enumerate(clean_lines):
             if _SCORELESS_RE2.search(line):
                 _ls2 = data.get('linescore', pd.DataFrame())
-                st.session_state['_ls_debug'] = f"linescore cols: {list(_ls2.columns)} | rows: {len(_ls2)} | sample: {_ls2.to_dict('records')[:2] if not _ls2.empty else 'empty'}" 
                 q_had_score = {q: _any_score_in_q(q) for q in ['Q1','Q2','Q3','Q4']}
                 won = any(not v for v in q_had_score.values())
+                from nfl.stats import build_linescore_df as _bls
+                _ls_fresh = _bls(game_id)
                 def _tot_q(q):
-                    if _ls2 is None or _ls2.empty or q not in _ls2.columns: return '?'
-                    return str(int(pd.to_numeric(_ls2[q], errors='coerce').fillna(0).sum()))
-                _score_detail = ' | '.join(f'{q}:{_tot_q(q)}' for q in ['Q1','Q2','Q3','Q4'])
+                    if _ls_fresh is None or _ls_fresh.empty or q not in _ls_fresh.columns: return "?"
+                    return str(int(pd.to_numeric(_ls_fresh[q], errors="coerce").fillna(0).sum()))
+                _score_detail = ' | '.join(f'{q}: {_tot_q(q)}' for q in ['Q1','Q2','Q3','Q4'])
                 team_graded.append({'Prop': line, 'Data': _score_detail,
                     'Result': '✅ Won' if won else '❌ Lost'})
                 continue
@@ -1794,12 +1793,13 @@ elif st.session_state.view == "boxscore":
                 team_abbr = _tq_m.group(1).strip().split()[0].upper()
                 q_had_score = {q: _team_scored_in_q(team_abbr, q) for q in ['Q1','Q2','Q3','Q4']}
                 won = all(q_had_score.values())
-                _ls3 = data.get('linescore', pd.DataFrame())
+                from nfl.stats import build_linescore_df as _bls2
+                _ls_fresh2 = _bls2(game_id)
                 def _team_q_pts(t, q):
-                    if _ls3 is None or _ls3.empty or 'Team' not in _ls3.columns or q not in _ls3.columns: return '?'
-                    _r3 = _ls3[_ls3['Team'].str.upper() == t.upper()]
-                    return str(int(pd.to_numeric(_r3.iloc[0][q], errors='coerce') or 0)) if not _r3.empty else '?'
-                _tq_detail = ' | '.join(f'{q}:{_team_q_pts(team_abbr, q)}' for q in ['Q1','Q2','Q3','Q4'])
+                    if _ls_fresh2 is None or _ls_fresh2.empty or "Team" not in _ls_fresh2.columns or q not in _ls_fresh2.columns: return "?"
+                    row = _ls_fresh2[_ls_fresh2["Team"].str.upper() == t.upper()]
+                    return str(int(pd.to_numeric(row.iloc[0][q], errors="coerce") or 0)) if not row.empty else "?"
+                _tq_detail = ' | '.join(f'{q}: {_team_q_pts(team_abbr, q)}' for q in ['Q1','Q2','Q3','Q4'])
                 team_graded.append({'Prop': line, 'Data': _tq_detail,
                     'Result': '✅ Won' if won else '❌ Lost'})
                 continue
