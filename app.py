@@ -1037,6 +1037,8 @@ elif st.session_state.view == "boxscore":
     )
 
     run_grader = st.button("⚡ Grade Props", key="grade_btn")
+    if st.session_state.get('_score_dbg'):
+        st.info(st.session_state['_score_dbg'])
 
     if run_grader and prop_text.strip():
         def strip_odds(line: str) -> str:
@@ -1710,6 +1712,7 @@ elif st.session_state.view == "boxscore":
         ]
 
         team_graded = []
+        st.session_state['_score_dbg'] = f"scoring cols={list(data.get('scoring',pd.DataFrame()).columns)} rows={len(data.get('scoring',pd.DataFrame()))} sample={data.get('scoring',pd.DataFrame()).head(2).to_dict('records')}"
         scoring_df  = data.get("scoring", pd.DataFrame())
         linescore   = data.get("linescore", pd.DataFrame())
 
