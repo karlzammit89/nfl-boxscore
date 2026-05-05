@@ -1341,15 +1341,6 @@ elif st.session_state.view == "boxscore":
                     "period_results": {}, "won": None,
                 }
 
-            # Debug defense lookup
-            if category == 'defense':
-                import re as _rdbg
-                _nl = player.strip().lower()
-                _nm = _rdbg.sub(r'\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$','',_nl,flags=_rdbg.I).strip()
-                _in_fnt = _nl in _full_name_team or _nm in _full_name_team
-                _fnt_val = _full_name_team.get(_nl) or _full_name_team.get(_nm)
-                st.caption(f"DEF DEBUG: player='{player}' nl='{_nl}' nm='{_nm}' in_fnt={_in_fnt} team={_fnt_val} game_teams={_game_teams}")
-
             # If player doesn't appear in this game's data at all → N/A
             if not player_found_in_game(player, category):
                 return {
@@ -1428,8 +1419,8 @@ elif st.session_state.view == "boxscore":
                 "Interceptions":   "INTs",
             }.get(stat, stat)
             scope_short = {
-                "each quarter": "Each Qrt",
-                "each half":    "Each HF",
+                "each quarter": "Each Quarter",
+                "each half":    "Each Half",
                 "game total":   "Game",
             }.get(condition.lower(), condition)
             return {
