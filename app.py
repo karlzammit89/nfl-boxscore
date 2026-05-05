@@ -1445,6 +1445,7 @@ elif st.session_state.view == "boxscore":
                     "threshold": thr2, "condition": scope2,
                     "period_results": {}, "won": won2 is True,
                     "raw_line": prop.get("raw_line",""),
+                    "_pre_graded": True,
                 }
 
             stat_map = {
@@ -1520,6 +1521,7 @@ elif st.session_state.view == "boxscore":
                         'threshold': thr2, 'condition': scope2,
                         'period_results': {}, 'won': won2 is True,
                         'raw_line': prop.get('raw_line',''),
+                        '_pre_graded': True,
                     }
                 return {
                     'player': player, 'stat': prop.get('stat',''),
@@ -1591,7 +1593,11 @@ elif st.session_state.view == "boxscore":
             threshold   = first.get("threshold", 0)
             condition   = first.get("condition","")
             # Overall: ALL players must have won
-            if any(r['won'] is None for r in results):
+            # Pre-graded (combine/or/each) → use result directly
+            if any(r.get('_pre_graded') for r in results):
+                pg = next(r for r in results if r.get('_pre_graded'))
+                overall_won = None if pg['won'] is None else bool(pg['won'])
+            elif any(r['won'] is None for r in results):
                 overall_won = None
             else:
                 overall_won = all(r['won'] for r in results)
