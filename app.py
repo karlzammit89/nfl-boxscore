@@ -1101,6 +1101,7 @@ elif st.session_state.view == "boxscore":
 
         props = []
         error_rows = []
+        graded = []
         try:
             for i, line in enumerate(clean_lines):
                 # Skip team/game market lines — handled separately below
@@ -1703,7 +1704,7 @@ elif st.session_state.view == "boxscore":
                     "Data":   p.get("condition",""),
                     "Result":  "❗ Error",
                 }
-        graded = [safe_grade(group) for group in by_line.values()]
+        graded += [safe_grade(group) for group in by_line.values()]
         for er in error_rows:
             graded.append({
                 "Prop":   er.get("raw_line",""),
