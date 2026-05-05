@@ -1603,3 +1603,12 @@ elif st.session_state.view == "boxscore":
                     if val.startswith("❗"): return "color:#f59e0b;font-weight:700"
                 return ""
             st.dataframe(tdf.style.map(_color_t, subset=ts), use_container_width=True, hide_index=True)
+
+
+    # ── Defense debug — always visible, populated after Grade Props ──────
+    with st.expander("🔍 Defense debug", expanded=True):
+        _dbg = st.session_state.get("_def_debug")
+        if _dbg:
+            st.text(_dbg)
+        else:
+            st.caption("Grade any props with sack lines to see debug here.")
