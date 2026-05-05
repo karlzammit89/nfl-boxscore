@@ -1636,11 +1636,10 @@ elif st.session_state.view == "boxscore":
                     v_parts = v.strip().split()
                     icon = v_parts[0] if v_parts else ""
                     num  = v_parts[-1] if len(v_parts) > 1 else v_parts[0]
-                    icon_str = "✅" if v_parts[0] == "✅" else "❌"
                     if k == "Game":
-                        parts_pr.append(f"{icon_str} {num}")
+                        parts_pr.append(f"{num}")
                     else:
-                        parts_pr.append(f"{k}: {icon_str} {num}")
+                        parts_pr.append(f"{k}:{num}")
                 detail = " | ".join(parts_pr)
                 if list(pr.keys()) == ["Game"]:
                     scope_display = f"Game:{parts_pr[0]}"
@@ -1801,6 +1800,7 @@ elif st.session_state.view == "boxscore":
                 team_graded.append({'Prop': line, 'Data': _tq_detail,
                     'Result': '✅ Won' if won else '❌ Lost'})
                 continue
+            if not TEAM_LINE_RE.match(line):
                 continue
             is_each = "each team" in line.lower() or "both teams" in line.lower()
             cond    = next((lbl for pat,lbl in COND_T if pat.search(line)), "each quarter")
