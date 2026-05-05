@@ -652,8 +652,16 @@ elif st.session_state.view == "boxscore":
     with tabs[0]: show_period_df("passing",   "YDS")
     with tabs[1]: show_period_df("rushing",   "YDS")
     with tabs[2]: show_period_df("receiving", "YDS")
-    with tabs[3]: show_df(data["defense"],  period_filter, "TOT", drop_cols=["Pos"])
-    with tabs[4]: show_df(data["kicking"],  period_filter, drop_cols=["Pos"])
+    with tabs[3]:
+        if period_filter == "Full Game":
+            show_df(data["defense"], period_filter, "TOT", drop_cols=["Pos"])
+        else:
+            st.info("ℹ️ Defensive stats are only available for Full Game. Per-quarter/half breakdowns are not provided in this view.")
+    with tabs[4]:
+        if period_filter == "Full Game":
+            show_df(data["kicking"], period_filter, drop_cols=["Pos"])
+        else:
+            st.info("ℹ️ Kicking stats are only available for Full Game. Per-quarter/half breakdowns are not provided in this view.")
 
     # ── Prop Checker ──────────────────────────────────────────────────────────
     with st.expander("🎯 Prop Checker by Quarter", expanded=False):
