@@ -424,6 +424,8 @@ _SKIP_PTYPES = {"kickoff", "punt", "field goal", "extra point", "penalty",
                 "extra point good", "field goal good", "field goal missed",
                 "punt downed", "punt out of bounds", "kickoff return touchdown"}
 
+_PENALTY_RE = _re.compile(r'PENALTY|No Play', _re.I)
+
 # Matches both ESPN sack formats:
 # '(Shotgun) D.Maye sacked at CLV 18 for -10 yards (M.Garrett)'  <- parentheses
 # 'T.Tagovailoa sacked by C.Young for -8 yards'                  <- by format
