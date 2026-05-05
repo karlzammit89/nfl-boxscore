@@ -1041,11 +1041,11 @@ elif st.session_state.view == "boxscore":
         import re as _re
 
         STAT_MAP_RE = [
-            (_re.compile(r'rushing yards?|rushing yds?', _re.I),   "Rushing Yards"),
+            (_re.compile(r'rushing yards?|rushing yds?|rush yards?|rush yds?|rush yd\\b', _re.I),   "Rushing Yards"),
             (_re.compile(r'rushing tds?|rushing touchdowns?', _re.I), "Rushing TDs"),
             (_re.compile(r'passing yards?|passing yds?', _re.I),   "Passing Yards"),
             (_re.compile(r'passing tds?|passing touchdowns?', _re.I), "Passing TDs"),
-            (_re.compile(r'receiving yards?|receiving yds?', _re.I), "Receiving Yards"),
+            (_re.compile(r'receiving yards?|receiving yds?|rec yards?|rec yds?', _re.I), "Receiving Yards"),
             (_re.compile(r'receptions?', _re.I),                   "Receptions"),
             (_re.compile(r'interceptions?', _re.I),                "Interceptions"),
         ]
@@ -1053,10 +1053,16 @@ elif st.session_state.view == "boxscore":
             (_re.compile(r'each quarter', _re.I),  "each quarter"),
             (_re.compile(r'each half',    _re.I),  "each half"),
         ]
-        THRESHOLD_RE = _re.compile(r'(\d+)\+?\s*(?:or more)?')
+        _INLINE_PERIOD = _re.compile(r'\\b([1-4])([QH])\\b', _re.I)
+        THRESHOLD_RE = _re.compile(r'(\d+\.?\d*)\+?(?!(?:st|nd|rd|th))\s*(?:or more)?')
         PLAYERS_RE   = _re.compile(
             r'^(.+?)(?:\s+(?:&|and)\s+(.+?))\s+to\s+each\s+(?:record|have)', _re.I)
         SINGLE_RE    = _re.compile(r'^(.+?)\s+to\s+(?:record|have|score)', _re.I)
+        # Abbreviated format: 'H. Henry 1Q Under 4.5 Rec Yards'
+        ALT_PLAYER_RE = _re.compile(
+            r'^([A-Z][a-z]?\.?\s*[A-Z][A-Za-z\'\-]+(?:\s+[A-Z][A-Za-z\'\-]+)?)'
+            r'\s+(?:[1-4][QH]\s+|\d+(?:st|nd|rd|th)?\s+)?(?:over|under|\d)', _re.I
+        )
         RUSH_TD_RE2  = _re.compile(r'(\d+)\+?\s*rushing tds?', _re.I)
         PASS_TD_RE2  = _re.compile(r'(\d+)\+?\s*passing tds?', _re.I)
         ANY_TD_RE    = _re.compile(r'(\d+)\+?\s*tds?(?!.*fg)', _re.I)
@@ -1105,20 +1111,23 @@ elif st.session_state.view == "boxscore":
                         break
                 dual   = PLAYERS_RE.match(line)
                 single = SINGLE_RE.match(line) if not dual else None
-                if not stat or threshold is None or (not dual and not single):
+                alt    = ALT_PLAYER_RE.match(line) if not dual and not single else None
+                pm = _INLINE_PERIOD.search(line)
+                if pm and condition == "game total":
+                    n2, t2 = pm.group(1), pm.group(2).upper()
+                    condition = f"Q{n2}" if t2 == "Q" else ("1st Half" if n2 in "12" else "2nd Half")
+                operator = "under" if _re.search(r'under', line, _re.I) else "over"
+                if not stat or threshold is None or (not dual and not single and not alt):
                     error_rows.append({"line_index": i, "raw_line": line})
                     continue
                 if dual:
-                    for player in [normalise_name(dual.group(1)),
-                                   normalise_name(dual.group(2))]:
-                        props.append({"line_index": i, "player": player,
-                                      "stat": stat, "threshold": threshold,
-                                      "condition": condition, "operator": "over"})
+                    for player in [normalise_name(dual.group(1)), normalise_name(dual.group(2))]:
+                        props.append({"line_index": i, "player": player, "stat": stat,
+                                      "threshold": threshold, "condition": condition, "operator": operator})
                 else:
-                    props.append({"line_index": i,
-                                  "player": normalise_name(single.group(1)),
-                                  "stat": stat, "threshold": threshold,
-                                  "condition": condition, "operator": "over"})
+                    player_raw = (single or alt).group(1)
+                    props.append({"line_index": i, "player": normalise_name(player_raw), "stat": stat,
+                                  "threshold": threshold, "condition": condition, "operator": operator})
         except Exception as e:
             st.error(f"Could not parse props: {e}")
             props = []
@@ -1345,8 +1354,11 @@ elif st.session_state.view == "boxscore":
                 if operator == "under":   return v < threshold
                 if operator == "exactly": return v == threshold
                 return v >= threshold
+            _INLINE_MAP = {"Q1":"Q1","Q2":"Q2","Q3":"Q3","Q4":"Q4","1st Half":"1H","2nd Half":"2H"}
+
 
             period_results = {}
+            _pk = _INLINE_MAP.get(condition)
 
             if "each quarter" in condition:
                 for q in ["Q1","Q2","Q3","Q4"]:
@@ -1358,6 +1370,10 @@ elif st.session_state.view == "boxscore":
                     v = get_player_val(player, category, col, h)
                     period_results[lbl] = f"{'✅' if hit(v) else '❌'} {v:.0f}"
                 won = all(hit(get_player_val(player, category, col, h)) for h in ["1H","2H"])
+            elif _pk:
+                v = get_player_val(player, category, col, _pk)
+                period_results[condition] = f"{'✅' if hit(v) else '❌'} {v:.0f}"
+                won = hit(v)
             else:
                 v = get_player_val(player, category, col, "Full Game")
                 period_results["Game"] = f"{'✅' if hit(v) else '❌'} {v:.0f}"
