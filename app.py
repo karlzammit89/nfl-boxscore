@@ -629,7 +629,6 @@ elif st.session_state.view == "boxscore":
         Full Game uses ESPN boxscore (accurate); periods use play-by-play."""
         stats_key = _PERIOD_KEY.get(period_filter, period_filter)
         if stats_key == "Full Game":
-            # Use ESPN official boxscore data for accuracy
             df = data.get(category)
         else:
             period_data = by_period.get(stats_key, {})
@@ -644,12 +643,17 @@ elif st.session_state.view == "boxscore":
                 df = tmp.sort_values(sort, ascending=False)
             except Exception:
                 pass
+        # Remove Pos column if present
+        if isinstance(df, pd.DataFrame) and "Pos" in df.columns:
+            df = df.drop(columns=["Pos"])
         st.dataframe(df, use_container_width=True, hide_index=True)
 
-    tabs = st.tabs(["Passing","Rushing","Receiving"])
+    tabs = st.tabs(["Passing","Rushing","Receiving","Defense","Kicking"])
     with tabs[0]: show_period_df("passing",   "YDS")
     with tabs[1]: show_period_df("rushing",   "YDS")
     with tabs[2]: show_period_df("receiving", "YDS")
+    with tabs[3]: show_df(data["defense"],  period_filter, "TOT", drop_cols=["Pos"])
+    with tabs[4]: show_df(data["kicking"],  period_filter, drop_cols=["Pos"])
 
     # ── Prop Checker ──────────────────────────────────────────────────────────
     with st.expander("🎯 Prop Checker by Quarter", expanded=False):
@@ -1477,7 +1481,7 @@ elif st.session_state.view == "boxscore":
             nw_  = sum(1 for v in gdf['Result'] if 'Won'   in str(v))
             nl_  = sum(1 for v in gdf['Result'] if 'Lost'  in str(v))
             ne_  = sum(1 for v in gdf['Result'] if 'Error' in str(v))
-            st.markdown(f'**👤 Player Props** — {np_} props · ✅ {nw_} Won · ❗ {ne_} Error · ❌ {nl_} Loss')
+            st.markdown(f'**👤 Player Props** — {np_} props · ✅ {nw_} Won · ❗ {ne_} Error · ❌ {nl_} Lost')
             ps = [c for c in gdf.columns if c not in ('Prop','Scope')]
             st.dataframe(gdf.style.map(_color, subset=ps), use_container_width=True, hide_index=True)
 
@@ -1579,7 +1583,7 @@ elif st.session_state.view == "boxscore":
             ntw = sum(1 for v in tdf["Result"] if "Won" in str(v))
             nte = sum(1 for v in tdf["Result"] if "Error" in str(v))
             ntl = len(tdf) - ntw - nte
-            st.markdown(f"**🏟 Team / Game Props** — {len(tdf)} props · ✅ {ntw} Won · ❗ {nte} Error · ❌ {ntl} Loss")
+            st.markdown(f"**🏟 Team / Game Props** — {len(tdf)} props · ✅ {ntw} Won · ❗ {nte} Error · ❌ {ntl} Lost")
             ts = [c for c in tdf.columns if c not in ("Prop","Scope")]
             def _color_t(val):
                 if isinstance(val, str):
