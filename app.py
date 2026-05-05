@@ -1151,7 +1151,7 @@ elif st.session_state.view == "boxscore":
                         "passing yards":"passing/YDS","rushing yards":"rushing/YDS",
                         "receiving yards":"receiving/YDS","rec yards":"receiving/YDS",
                         "rec yds":"receiving/YDS","rush yards":"rushing/YDS","rush yds":"rushing/YDS",
-                        "completions":"passing/COMP","passes":"passing/COMP",
+                        "completions":"passing/COMP","passes":"passing/COMP","completed passes":"passing/COMP",
                         "receptions":"receiving/REC","reception":"receiving/REC",
                     }
                     _cat_col = next((v for k,v in sorted(_SMAP.items(), key=lambda x:-len(x[0])) if k in _stat_raw), None)
@@ -1414,7 +1414,13 @@ elif st.session_state.view == "boxscore":
                         m2=df2[df2["Player"].str.contains(parts2[-1],case=False,na=False)]
                         if not m2.empty and _game_teams and "Team" in df2.columns:
                             m2=m2[m2["Team"].str.upper().isin(_game_teams)]
-                    return float(pd.to_numeric(m2.iloc[0].get(cl,0),errors="coerce") or 0) if not m2.empty else None
+                    if m2.empty: return None
+                    row2 = m2.iloc[0]
+                    # Completions: ESPN stores as "C/ATT" e.g. "19/29" — extract comp part
+                    if cl == "COMP" and "C/ATT" in row2.index:
+                        try: return float(str(row2["C/ATT"]).split("/")[0])
+                        except: return 0.0
+                    return float(pd.to_numeric(row2.get(cl, 0), errors="coerce") or 0)
                 def _mltd2(p):
                     return (_fg2(p,"rushing","TD") or 0)+(_fg2(p,"receiving","TD") or 0)
                 vals2={}; all_found2=True
