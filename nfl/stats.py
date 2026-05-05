@@ -496,12 +496,9 @@ def get_player_stats_by_period(game_id: str) -> dict:
             if ptype in _SKIP_PTYPES or not text:
                 continue
 
-            # Skip two-point conversion plays (ESPN sometimes sends ptype="rush" for these)
-            if _re.search(r'two.point conversion', text, _re.I):
-                continue
-
-            # Skip any play where ESPN text flags a penalty or no-play
-            if _PENALTY_RE.search(text):
+            # Skip only ENFORCED penalties (those with "No Play" marker).
+            # Declined penalties keep their stats — the play still counts.
+            if _re.search(r'No Play', text, _re.I):
                 continue
 
             # TD: use ESPN's scoringPlay flag first, fallback to play type
