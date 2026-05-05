@@ -1123,11 +1123,13 @@ elif st.session_state.view == "boxscore":
                 if dual:
                     for player in [dual.group(1).strip(), dual.group(2).strip()]:
                         props.append({"line_index": i, "player": player, "stat": stat,
-                                      "threshold": threshold, "condition": condition, "operator": operator})
+                                      "threshold": threshold, "condition": condition,
+                                      "operator": operator, "raw_line": line})
                 else:
                     player_raw = (single or alt).group(1).strip()
                     props.append({"line_index": i, "player": player_raw, "stat": stat,
-                                  "threshold": threshold, "condition": condition, "operator": operator})
+                                  "threshold": threshold, "condition": condition,
+                                  "operator": operator, "raw_line": line})
         except Exception as e:
             st.error(f"Could not parse props: {e}")
             props = []
@@ -1338,7 +1340,7 @@ elif st.session_state.view == "boxscore":
                 return {
                     "player": player, "stat": prop.get("stat",""),
                     "threshold": threshold, "condition": prop.get("condition",""),
-                    "period_results": {}, "won": None,
+                    "period_results": {}, "won": None, "raw_line": prop.get("raw_line",""),
                 }
 
             # If player doesn't appear in this game's data at all → N/A
@@ -1346,7 +1348,7 @@ elif st.session_state.view == "boxscore":
                 return {
                     "player": player, "stat": prop.get("stat",""),
                     "threshold": threshold, "condition": prop.get("condition",""),
-                    "period_results": {}, "won": None,
+                    "period_results": {}, "won": None, "raw_line": prop.get("raw_line",""),
                 }
 
             def hit(v: float) -> bool:
@@ -1385,6 +1387,7 @@ elif st.session_state.view == "boxscore":
                 "condition":      prop.get("condition",""),
                 "period_results": period_results,
                 "won":            won,
+                "raw_line":       prop.get("raw_line",""),
             }
 
         # Group props by line_index so dual-player props are graded together
@@ -1423,11 +1426,11 @@ elif st.session_state.view == "boxscore":
                 "each half":    "Each Half",
                 "game total":   "Game",
             }.get(condition.lower(), condition)
+            raw_line = results[0].get("raw_line", f"{threshold:.0f}+ {stat_short}")
             return {
-                "Players": players_str,
-                "Prop":    f"{threshold:.0f}+ {stat_short}",
-                "Scope":   scope_short,
-                "Result":  "✅ Won" if overall_won is True else ("❗ Error" if overall_won is None else "❌ Lost"),
+                "Prop":   raw_line,
+                "Scope":  scope_short,
+                "Result": "✅ Won" if overall_won is True else ("❗ Error" if overall_won is None else "❌ Lost"),
             }
 
         def safe_grade(group):
@@ -1444,10 +1447,9 @@ elif st.session_state.view == "boxscore":
         graded = [safe_grade(group) for group in by_line.values()]
         for er in error_rows:
             graded.append({
-                "Players": er.get("raw_line","")[:60],
-                "Prop":    "—",
-                "Scope":   "—",
-                "Result":  "❗ Error",
+                "Prop":   er.get("raw_line",""),
+                "Scope":  "—",
+                "Result": "❗ Error",
             })
 
         def _color(val):
@@ -1466,13 +1468,13 @@ elif st.session_state.view == "boxscore":
         # ── Player props table ─────────────────────────────────────────
         gdf = pd.DataFrame(graded) if graded else pd.DataFrame()
         if not gdf.empty:
-            gdf = _sort(gdf, 'Players')
+            gdf = _sort(gdf, 'Prop')
             np_  = len(gdf)
             nw_  = sum(1 for v in gdf['Result'] if 'Won'   in str(v))
             nl_  = sum(1 for v in gdf['Result'] if 'Lost'  in str(v))
             ne_  = sum(1 for v in gdf['Result'] if 'Error' in str(v))
             st.markdown(f'**👤 Player Props** — {np_} props · ✅ {nw_} Won · ❗ {ne_} Error · ❌ {nl_} Loss')
-            ps = [c for c in gdf.columns if c not in ('Players','Prop','Scope')]
+            ps = [c for c in gdf.columns if c not in ('Prop','Scope')]
             st.dataframe(gdf.style.map(_color, subset=ps), use_container_width=True, hide_index=True)
 
         # ── Grade team props ──────────────────────────────────────────────
