@@ -1120,6 +1120,9 @@ elif st.session_state.view == "boxscore":
                     continue
                 if _re_skip.match(r'^successful\s+2\s*pt\s+conversion', line, _re_skip.I):
                     continue
+                if _re_skip.search(r'to\s+score\s+the\s+first\s+td', line, _re_skip.I) and "special teams" not in line.lower():
+                    # Handled in team loop but output to graded — skip normal player parse
+                    continue
                 stat = None
                 for pat, label in STAT_MAP_RE:
                     if pat.search(line):
@@ -1872,8 +1875,9 @@ elif st.session_state.view == "boxscore":
                     _has_td = _sdf_n["Type"].str.lower().isin(_td_types).any()
                 else:
                     _has_td = False
+                _td_count = _sdf_n["Type"].str.lower().isin(_td_types).sum() if _sdf_n is not None and not _sdf_n.empty and "Type" in _sdf_n.columns else 0
                 won = not _has_td
-                team_graded.append({"Prop": line, "Data": f"TDs: {int(_has_td)}",
+                team_graded.append({"Prop": line, "Data": f"TDs: {_td_count}",
                     "Result": "✅ Won" if won else "❌ Lost"})
                 continue
 
@@ -1886,7 +1890,12 @@ elif st.session_state.view == "boxscore":
                     _has_2pt = _has_2pt or _desc_2pt
                 else:
                     _has_2pt = False
-                team_graded.append({"Prop": line, "Data": "Found" if _has_2pt else "Not found",
+                if _has_2pt and _sdf_2 is not None and not _sdf_2.empty:
+                    _2pt_rows = _sdf_2[_sdf_2["Description"].str.lower().str.contains("two.point|2pt|2-pt", na=False)] if "Description" in _sdf_2.columns else pd.DataFrame()
+                    _2pt_data = _2pt_rows.iloc[0]["Description"][:60] if not _2pt_rows.empty else "Found"
+                else:
+                    _2pt_data = "Not found"
+                team_graded.append({"Prop": line, "Data": _2pt_data,
                     "Result": "✅ Won" if _has_2pt else "❌ Lost"})
                 continue
 
@@ -1913,6 +1922,16 @@ elif st.session_state.view == "boxscore":
                             _away_t = _ls_ot.iloc[0]["Team"] if len(_ls_ot) > 0 else ""
                             _home_t = _ls_ot.iloc[1]["Team"] if len(_ls_ot) > 1 else ""
                             _ot_winner = _away_t if _aw > _hw else _home_t
+                # If no OT, get regular game winner from final scores
+                if not _has_ot and not _sdf_ot.empty:
+                    _last_all = _sdf_ot.iloc[-1]
+                    _aw_f = int(pd.to_numeric(_last_all.get("Away Score", 0), errors="coerce") or 0)
+                    _hw_f = int(pd.to_numeric(_last_all.get("Home Score", 0), errors="coerce") or 0)
+                    _ls_ot2 = data.get("linescore", pd.DataFrame())
+                    if not _ls_ot2.empty and "Team" in _ls_ot2.columns:
+                        _away_t2 = _ls_ot2.iloc[0]["Team"] if len(_ls_ot2) > 0 else ""
+                        _home_t2 = _ls_ot2.iloc[1]["Team"] if len(_ls_ot2) > 1 else ""
+                        _ot_winner = _away_t2 if _aw_f > _hw_f else _home_t2
                 won = _has_ot and (_ot_winner and _ot_winner.upper() == _winner_abbr)
                 _data_ot = f"OT: {'Yes' if _has_ot else 'No'} | Winner: {_ot_winner or '—'}"
                 team_graded.append({"Prop": line, "Data": _data_ot,
@@ -1951,19 +1970,19 @@ elif st.session_state.view == "boxscore":
                         (_sdf_st["Team"].str.upper() == _st_team2)
                     ] if "Team" in _sdf_st.columns else pd.DataFrame()
                     won = not _st_plays.empty
-                    _st_detail = " | ".join(_st_plays["Type"].tolist()) if won else "No ST TD"
+                    _st_detail = " | ".join(_st_plays["Type"].tolist()) if won else f"No {_st_team2} ST TD"
                 team_graded.append({"Prop": line, "Data": _st_detail,
                     "Result": "✅ Won" if won else "❌ Lost"})
                 continue
 
-            # ── First TD scorer (player) ───────────────────────────────────────
+            # ── First TD scorer (player) → goes to player props graded ──────────
             _ftd_m = _FIRST_TD_RE.match(line)
             if _ftd_m and "special teams" not in line.lower():
                 _p1 = _ftd_m.group(1).strip()
                 _p2 = _ftd_m.group(2).strip() if _ftd_m.group(2) else None
                 _players_ftd = [p for p in [_p1, _p2] if p]
                 _sdf_ftd = data.get("scoring", pd.DataFrame())
-                won = False
+                won = None
                 _ftd_detail = "No TDs"
                 if _sdf_ftd is not None and not _sdf_ftd.empty and "Type" in _sdf_ftd.columns:
                     _td_rows2 = _sdf_ftd[_sdf_ftd["Type"].str.lower().isin(_ALL_TD_TYPES)]
@@ -1974,8 +1993,8 @@ elif st.session_state.view == "boxscore":
                             p.split()[-1].lower() in _first_desc2.lower()
                             for p in _players_ftd
                         )
-                team_graded.append({"Prop": line, "Data": f"First TD: {_ftd_detail}",
-                    "Result": "✅ Won" if won else "❌ Lost"})
+                _ftd_res = "✅ Won" if won is True else ("❗ Error" if won is None else "❌ Lost")
+                graded.append({"Prop": line, "Data": f"First TD: {_ftd_detail}", "Result": _ftd_res})
                 continue
 
             if _SCORELESS_RE2.search(line):
