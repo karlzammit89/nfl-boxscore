@@ -459,6 +459,9 @@ def get_player_stats_by_period(game_id: str) -> dict:
     if not all_drives:
         return {}
 
+    # Deduplicate plays by play ID to avoid double-counting
+    _seen_play_ids = set()
+
     def new_pass(): return {"Team":"","comp":0,"att":0,"yds":0,"td":0,"int":0}
     def new_rush(): return {"Team":"","car":0,"yds":0,"td":0}
     def new_recv(): return {"Team":"","rec":0,"yds":0,"td":0}
@@ -479,8 +482,19 @@ def get_player_stats_by_period(game_id: str) -> dict:
             text     = play.get("text", "") or ""
             stat_yds = _safe_int(play.get("statYardage", 0))
 
+            # Deduplicate by play ID
+            play_id = play.get("id", "")
+            if play_id and play_id in _seen_play_ids:
+                continue
+            if play_id:
+                _seen_play_ids.add(play_id)
+
             # Skip play types we don't care about
             if ptype in _SKIP_PTYPES or not text:
+                continue
+
+            # Skip two-point conversion plays (ESPN sometimes sends ptype="rush" for these)
+            if _re.search(r'two.point conversion', text, _re.I):
                 continue
 
             # Skip any play where ESPN text flags a penalty or no-play
