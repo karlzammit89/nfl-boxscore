@@ -1463,6 +1463,9 @@ elif st.session_state.view == "boxscore":
             _def_df = data.get("defense", pd.DataFrame())
             _dbg_lines.append(f"Defense df: {len(_def_df)} rows, SACKS col={'yes' if 'SACKS' in _def_df.columns else 'NO'}")
             st.session_state["_def_debug"] = "\n".join(_dbg_lines)
+        else:
+            st.session_state["_def_debug"] = "(No sack props found in input)"
+            st.rerun()
         graded = [safe_grade(group) for group in by_line.values()]
         for er in error_rows:
             graded.append({
