@@ -416,6 +416,7 @@ _TD_RE  = _re.compile(r'touchdown', _re.I)
 _INT_RE = _re.compile(r'intercepted', _re.I)
 
 _PASS_PTYPES = {"pass reception", "pass incompletion", "passing touchdown",
+                "receiving touchdown",
                 "interception", "interception return", "pass"}
 _RUSH_PTYPES = {"rush", "rushing touchdown", "scramble"}
 _SKIP_PTYPES = {"kickoff", "punt", "field goal", "extra point", "penalty",
@@ -503,9 +504,10 @@ def get_player_stats_by_period(game_id: str) -> dict:
             if _PENALTY_RE.search(text):
                 continue
 
-            # TD strictly from play type — never from text search
-            is_td  = ptype in ("passing touchdown", "rushing touchdown",
-                               "receiving touchdown", "touchdown")
+            # TD: use ESPN's scoringPlay flag first, fallback to play type
+            is_scoring = play.get("scoringPlay", False)
+            is_td = is_scoring or ptype in ("passing touchdown", "rushing touchdown",
+                                             "receiving touchdown", "touchdown")
             is_int = "interception" in ptype
 
             # ── Pass plays ─────────────────────────────────────────────────────
@@ -517,7 +519,7 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 d = passing[period][passer]
                 d["Team"] = team
                 d["att"] += 1
-                is_complete = ptype in ("pass reception", "passing touchdown")
+                is_complete = ptype in ("pass reception", "passing touchdown", "receiving touchdown")
                 if is_complete:
                     d["comp"] += 1
                     d["yds"]  += stat_yds
