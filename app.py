@@ -1105,7 +1105,7 @@ elif st.session_state.view == "boxscore":
                 # Skip team/game lines handled by team props
                 if _re_skip.search(r'any quarter.*scoreless|scoreless.*quarter', line, _re_skip.I):
                     continue
-                if _re_skip.match(r'^[A-Z]{2,4}[\w\s]*\s+to\s+score\s+in\s+all\s+four\s+quarters', line, _re_skip.I):
+                if _re_skip.search(r'to\s+score\s+in\s+all\s+four\s+quarters', line, _re_skip.I):
                     continue
                 stat = None
                 for pat, label in STAT_MAP_RE:
@@ -1756,7 +1756,66 @@ elif st.session_state.view == "boxscore":
             return True
 
         _SCORELESS_RE2 = _re_t.compile(r'any quarter.*scoreless|scoreless.*quarter', _re_t.I)
-        _TEAM_Q_RE2    = _re_t.compile(r'^([A-Z]{2,4}[\w\s]*)\s+to\s+score\s+in\s+all\s+four\s+quarters', _re_t.I)
+        _TEAM_Q_RE2    = _re_t.compile(r'^([\w\s]+?)\s+to\s+score\s+in\s+all\s+four\s+quarters', _re_t.I)
+
+        # Team name → ESPN abbreviation lookup
+        _NFL_TEAMS = {
+            "arizona":"ARI","cardinals":"ARI",
+            "atlanta":"ATL","falcons":"ATL",
+            "baltimore":"BAL","ravens":"BAL",
+            "buffalo":"BUF","bills":"BUF",
+            "carolina":"CAR","panthers":"CAR",
+            "chicago":"CHI","bears":"CHI",
+            "cincinnati":"CIN","bengals":"CIN",
+            "cleveland":"CLE","browns":"CLE",
+            "dallas":"DAL","cowboys":"DAL",
+            "denver":"DEN","broncos":"DEN",
+            "detroit":"DET","lions":"DET",
+            "green bay":"GB","packers":"GB",
+            "houston":"HOU","texans":"HOU",
+            "indianapolis":"IND","colts":"IND",
+            "jacksonville":"JAX","jaguars":"JAX",
+            "kansas city":"KC","chiefs":"KC",
+            "las vegas":"LV","raiders":"LV",
+            "la chargers":"LAC","los angeles chargers":"LAC","chargers":"LAC",
+            "la rams":"LAR","los angeles rams":"LAR","rams":"LAR",
+            "miami":"MIA","dolphins":"MIA",
+            "minnesota":"MIN","vikings":"MIN",
+            "new england":"NE","patriots":"NE",
+            "new orleans":"NO","saints":"NO",
+            "new york giants":"NYG","giants":"NYG",
+            "new york jets":"NYJ","jets":"NYJ",
+            "philadelphia":"PHI","eagles":"PHI",
+            "pittsburgh":"PIT","steelers":"PIT",
+            "san francisco":"SF","49ers":"SF","niners":"SF",
+            "seattle":"SEA","seahawks":"SEA",
+            "tampa bay":"TB","buccaneers":"TB","bucs":"TB",
+            "tennessee":"TEN","titans":"TEN",
+            "washington":"WSH","commanders":"WSH",
+        }
+
+        def _resolve_team(raw):
+            """Resolve any team name format to ESPN abbreviation.
+            Handles: DAL, Dallas, Cowboys, Dallas Cowboys, DAL Cowboys etc."""
+            raw = raw.strip()
+            # Try direct abbr first (DAL, DEN)
+            if raw.upper() in _game_teams:
+                return raw.upper()
+            low = raw.lower()
+            # Try exact lookup (catches "dallas cowboys", "dallas", "cowboys" etc)
+            if low in _NFL_TEAMS:
+                return _NFL_TEAMS[low]
+            # Try each word — catches "Cowboys", "Dallas", "Patriots"
+            for word in low.split():
+                if word in _NFL_TEAMS:
+                    return _NFL_TEAMS[word]
+            # Try any word stripped of trailing s ("cowboys" → "cowboy" not needed
+            # since we have the full nickname in lookup)
+            # Partial match against game teams as last resort
+            for abbr in _game_teams:
+                if abbr.lower() in low or low in abbr.lower():
+                    return abbr
+            return raw.upper()
 
         def _any_score_in_q(q_label):
             """Return True if any scoring play occurred in this quarter."""
@@ -1799,7 +1858,7 @@ elif st.session_state.view == "boxscore":
                 continue
             _tq_m = _TEAM_Q_RE2.match(line)
             if _tq_m:
-                team_abbr = _tq_m.group(1).strip().split()[0].upper()
+                team_abbr = _resolve_team(_tq_m.group(1).strip())
                 q_had_score = {q: _team_scored_in_q(team_abbr, q) for q in ['Q1','Q2','Q3','Q4']}
                 won = all(q_had_score.values())
                 _sdf_t = data.get("scoring", pd.DataFrame())
