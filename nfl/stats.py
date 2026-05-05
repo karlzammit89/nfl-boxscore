@@ -421,11 +421,12 @@ _SKIP_PTYPES = {"kickoff", "punt", "field goal", "extra point", "penalty",
                 "timeout", "end period", "end of half", "two-point conversion",
                 "kick off", "no play", ""}
 
-_SACK_PTYPE = {"sack"}
-_SACK_RE    = _re.compile(
-    r'(?:[A-Z][a-z]?\.[A-Z][A-Za-z\'-]+(?:\s+[A-Z][A-Za-z\'-]+)?)'
-    r'\s+sacked\s+by\s+'
-    r'([A-Z][a-z]?\.[A-Z][A-Za-z\'-]+(?:\s+[A-Z][A-Za-z\'-]+)?)',
+# Matches both ESPN sack formats:
+# "QB sacked by D.Lawrence for -8 yards"
+# "QB sacked at WAS 22 for -9 yards by D.Lawrence"
+_SACK_RE = _re.compile(
+    r'sacked\s+(?:at\s+[\w\s]+?)?\s*(?:for\s+-?\d+\s+yards?\s+)?by\s+'
+    r'([A-Z][a-z]?\.[A-Z][A-Za-z\'\-]+(?:\s+[A-Z][A-Za-z\'\-]+)?)',
     _re.I
 )
 
@@ -523,13 +524,14 @@ def get_player_stats_by_period(game_id: str) -> dict:
                     if is_td:
                         d["td"] += 1
 
-            # ── Sack plays — detect from text since ESPN labels as Pass type ──
-            # Search all plays for "sacked by X" pattern regardless of play type
-            if "sack" in text.lower():
+            # ── Sack plays ────────────────────────────────────────────────────
+            if "sacked" in text.lower():
                 sm = _SACK_RE.search(text)
                 if sm:
                     sacker = sm.group(1).strip()
-                    # Try to determine sacker's team from context (opposite of drive team)
+                    # Clean trailing "for" which regex may capture
+                    if sacker.lower().endswith(" for"):
+                        sacker = sacker[:-4].strip()
                     sacking[period][sacker]["sacks"] += 1
 
     # ── DataFrame builders ────────────────────────────────────────────────
