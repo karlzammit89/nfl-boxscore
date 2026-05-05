@@ -405,9 +405,10 @@ _INCOMP_RE = _re.compile(r'pass\s+incomplete', _re.I)
 
 # Rusher: name followed by direction/motion keyword
 _RUSH_RE = _re.compile(
-    rf'({_NAME}(?:\s+{_NAME})?)\s+'
+    # Rusher name must appear at start of play text (not after "to"/"for")
+    rf'(?:^\s*|\)\s*)({_NAME}(?:\s+{_NAME})?)\s+'
     r'(?:up the middle|left end|right end|left tackle|right tackle|'
-    r'left guard|right guard|left\s|right\s|rushes?|scrambles?)',
+    r'left guard|right guard|rushes?\s|scrambles?\s)',
     _re.I
 )
 
@@ -419,7 +420,9 @@ _PASS_PTYPES = {"pass reception", "pass incompletion", "passing touchdown",
 _RUSH_PTYPES = {"rush", "rushing touchdown", "scramble"}
 _SKIP_PTYPES = {"kickoff", "punt", "field goal", "extra point", "penalty",
                 "timeout", "end period", "end of half", "two-point conversion",
-                "kick off", "no play", ""}
+                "two point conversion", "kick off", "no play", "",
+                "extra point good", "field goal good", "field goal missed",
+                "punt downed", "punt out of bounds", "kickoff return touchdown"}
 
 # Matches both ESPN sack formats:
 # '(Shotgun) D.Maye sacked at CLV 18 for -10 yards (M.Garrett)'  <- parentheses
@@ -470,61 +473,65 @@ def get_player_stats_by_period(game_id: str) -> dict:
         team = drive.get("team", {}).get("abbreviation", "")
         for play in drive.get("plays", []):
             period   = _safe_int(play.get("period", {}).get("number", 0))
-            if period == 0:
-                continue
             ptype    = play.get("type", {}).get("text", "").lower().strip()
             text     = play.get("text", "") or ""
             stat_yds = _safe_int(play.get("statYardage", 0))
-            is_td    = bool(_TD_RE.search(text))
-            is_int   = bool(_INT_RE.search(text))
 
+            # Skip play types we don't care about
             if ptype in _SKIP_PTYPES or not text:
                 continue
 
-            # ── Pass plays ────────────────────────────────────────────────
-            if ptype in _PASS_PTYPES or "pass" in ptype:
+            # Skip any play where ESPN text flags a penalty or no-play
+            if _PENALTY_RE.search(text):
+                continue
+
+            # TD strictly from play type — never from text search
+            is_td  = ptype in ("passing touchdown", "rushing touchdown",
+                               "receiving touchdown", "touchdown")
+            is_int = "interception" in ptype
+
+            # ── Pass plays ─────────────────────────────────────────────────────
+            if ptype in _PASS_PTYPES:
                 pm = _PASSER_RE.search(text)
                 if not pm:
                     continue
-                passer     = pm.group(1).strip()
-                incomplete = bool(_INCOMP_RE.search(text))
-                complete   = not incomplete
-
+                passer = pm.group(1).strip()
                 d = passing[period][passer]
-                d["Team"]  = team
-                d["att"]  += 1
-                if complete:
+                d["Team"] = team
+                d["att"] += 1
+                is_complete = ptype in ("pass reception", "passing touchdown")
+                if is_complete:
                     d["comp"] += 1
                     d["yds"]  += stat_yds
                     if is_td:
                         d["td"] += 1
-                    # Receiver
                     rv = _RECV_RE.search(text)
                     if rv:
                         receiver = rv.group(1).strip()
                         rd = receiving[period][receiver]
-                        rd["Team"]  = team
-                        rd["rec"]  += 1
-                        rd["yds"]  += stat_yds
+                        rd["Team"] = team
+                        rd["rec"] += 1
+                        rd["yds"] += stat_yds
                         if is_td:
                             rd["td"] += 1
                 if is_int:
                     d["int"] += 1
                 continue
 
-            # ── Rush plays ────────────────────────────────────────────────
-            if ptype in _RUSH_PTYPES or "rush" in ptype or "scramble" in ptype:
+            # ── Rush plays ─────────────────────────────────────────────────────
+            if ptype in _RUSH_PTYPES:
                 rm = _RUSH_RE.search(text)
                 if rm:
                     rusher = rm.group(1).strip()
                     d = rushing[period][rusher]
-                    d["Team"]  = team
-                    d["car"]  += 1
-                    d["yds"]  += stat_yds
+                    d["Team"] = team
+                    d["car"] += 1
+                    d["yds"] += stat_yds
                     if is_td:
                         d["td"] += 1
+                continue
 
-            # ── Sack plays ────────────────────────────────────────────────────
+            # ── Sack plays ─────────────────────────────────────────────────────
             if "sacked" in text.lower():
                 sm = _SACK_RE.search(text)
                 if sm:
