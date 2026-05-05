@@ -1716,29 +1716,34 @@ elif st.session_state.view == "boxscore":
         _SCORELESS_RE2 = _re_t.compile(r'any quarter.*scoreless|scoreless.*quarter', _re_t.I)
         _TEAM_Q_RE2    = _re_t.compile(r'^([A-Z]{2,4}[\w\s]*)\s+to\s+score\s+in\s+all\s+four\s+quarters', _re_t.I)
 
-        def _linescore_q2(q_label):
-            ls = data.get("linescore", pd.DataFrame())
-            if ls is None or ls.empty or q_label not in ls.columns: return 0
-            return int(pd.to_numeric(ls[q_label], errors="coerce").fillna(0).sum())
+        def _any_score_in_q(q_label):
+            """Return True if any scoring play occurred in this quarter."""
+            sdf = data.get("scoring", pd.DataFrame())
+            if sdf is None or sdf.empty or "Quarter" not in sdf.columns:
+                return False
+            return (sdf["Quarter"] == q_label).any()
 
-        def _team_q_score2(team_abbr, q_label):
-            ls = data.get("linescore", pd.DataFrame())
-            if ls is None or ls.empty or "Team" not in ls.columns or q_label not in ls.columns: return 0
-            row = ls[ls["Team"].str.upper() == team_abbr.upper()]
-            return int(pd.to_numeric(row.iloc[0][q_label], errors="coerce") or 0) if not row.empty else 0
+        def _team_scored_in_q(team_abbr, q_label):
+            """Return True if specific team had a scoring play in this quarter."""
+            sdf = data.get("scoring", pd.DataFrame())
+            if sdf is None or sdf.empty or "Quarter" not in sdf.columns:
+                return False
+            rows = sdf[sdf["Quarter"] == q_label]
+            if "Team" not in rows.columns: return rows.shape[0] > 0
+            return rows["Team"].str.upper().eq(team_abbr.upper()).any()
 
         for i, line in enumerate(clean_lines):
             if _SCORELESS_RE2.search(line):
-                q_scores = {q: _linescore_q2(q) for q in ["Q1","Q2","Q3","Q4"]}
-                won = any(v == 0 for v in q_scores.values())
+                q_had_score = {q: _any_score_in_q(q) for q in ["Q1","Q2","Q3","Q4"]}
+                won = any(not v for v in q_had_score.values())  # any quarter scoreless
                 team_graded.append({"Prop": line, "Scope": "Each Qrt",
                     "Result": "✅ Won" if won else "❌ Lost"})
                 continue
             _tq_m = _TEAM_Q_RE2.match(line)
             if _tq_m:
                 team_abbr = _tq_m.group(1).strip().split()[0].upper()
-                q_scores = {q: _team_q_score2(team_abbr, q) for q in ["Q1","Q2","Q3","Q4"]}
-                won = all(v > 0 for v in q_scores.values())
+                q_had_score = {q: _team_scored_in_q(team_abbr, q) for q in ["Q1","Q2","Q3","Q4"]}
+                won = all(q_had_score.values())  # team scored in all 4 quarters
                 team_graded.append({"Prop": line, "Scope": "Each Qrt",
                     "Result": "✅ Won" if won else "❌ Lost"})
                 continue
