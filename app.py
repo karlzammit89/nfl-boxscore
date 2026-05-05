@@ -1171,7 +1171,7 @@ elif st.session_state.view == "boxscore":
                                 _df = data.get(_cat, pd.DataFrame())
                                 if _df.empty or 'Player' not in _df.columns:
                                     _found = False; _vals[_p] = 0; continue
-                                _abbr = _abbr_from_name(_p)
+                                _abbr = f"{_p.strip().split()[0][0]}.{_p.strip().split()[-1]}" if len(_p.strip().split()) >= 2 else _p
                                 _m = _df[_df['Player'] == _abbr]
                                 if _m.empty:
                                     _nl = _p.lower(); _pts = _p.split()
