@@ -1112,6 +1112,14 @@ elif st.session_state.view == "boxscore":
                     continue
                 if _re_skip.search(r'to\s+score\s+in\s+all\s+four\s+quarters', line, _re_skip.I):
                     continue
+                if _re_skip.search(r'special teams?\s+to\s+score', line, _re_skip.I):
+                    continue
+                if _re_skip.search(r'to\s+beat\s+.+?\s+in\s+overtime', line, _re_skip.I):
+                    continue
+                if _re_skip.match(r'^no\s+touchdown\s+in\s+the\s+game', line, _re_skip.I):
+                    continue
+                if _re_skip.match(r'^successful\s+2\s*pt\s+conversion', line, _re_skip.I):
+                    continue
                 stat = None
                 for pat, label in STAT_MAP_RE:
                     if pat.search(line):
@@ -1761,6 +1769,23 @@ elif st.session_state.view == "boxscore":
             return True
 
         _SCORELESS_RE2 = _re_t.compile(r'any quarter.*scoreless|scoreless.*quarter', _re_t.I)
+        _ST_FIRST_RE   = _re_t.compile(r'^([\w\s]+?)\s+special teams?\s+to\s+score\s+the\s+first\s+td', _re_t.I)
+        _ST_TD_RE      = _re_t.compile(r'^([\w\s]+?)\s+special teams?\s+to\s+score\s+(?:a|the first)?\s*td', _re_t.I)
+        _OT_WIN_RE     = _re_t.compile(r'^([\w\s]+?)\s+to\s+beat\s+(?:the\s+)?([\w\s]+?)\s+in\s+overtime', _re_t.I)
+        _NO_TD_RE      = _re_t.compile(r'^no\s+touchdown\s+in\s+the\s+game', _re_t.I)
+        _FIRST_TD_RE   = _re_t.compile(r'^([\w\s]+?)\s+(?:or\s+([\w\s]+?)\s+)?to\s+score\s+the\s+first\s+td', _re_t.I)
+        _TWO_PT_RE     = _re_t.compile(r'^successful\s+2\s*pt\s+conversion', _re_t.I)
+
+        # Special teams TD types from ESPN scoring summary
+        # Excludes interception return (defensive) and fumble return (defensive)
+        _ST_TYPES = {"punt return touchdown", "kickoff return touchdown",
+                     "blocked punt touchdown", "blocked field goal touchdown",
+                     "blocked kick touchdown"}
+        _ALL_TD_TYPES = {"rushing touchdown", "passing touchdown", "receiving touchdown",
+                         "punt return touchdown", "kickoff return touchdown",
+                         "fumble return touchdown", "blocked punt touchdown",
+                         "blocked field goal touchdown", "interception return touchdown",
+                         "touchdown"}
         _TEAM_Q_RE2    = _re_t.compile(r'^([\w\s]+?)\s+to\s+score\s+in\s+all\s+four\s+quarters', _re_t.I)
 
         # Team name → ESPN abbreviation lookup
@@ -1839,6 +1864,120 @@ elif st.session_state.view == "boxscore":
             return rows["Team"].str.upper().eq(team_abbr.upper()).any()
 
         for i, line in enumerate(clean_lines):
+            # ── No Touchdown in Game ──────────────────────────────────────────
+            if _NO_TD_RE.match(line):
+                _sdf_n = data.get("scoring", pd.DataFrame())
+                _td_types = _ALL_TD_TYPES
+                if _sdf_n is not None and not _sdf_n.empty and "Type" in _sdf_n.columns:
+                    _has_td = _sdf_n["Type"].str.lower().isin(_td_types).any()
+                else:
+                    _has_td = False
+                won = not _has_td
+                team_graded.append({"Prop": line, "Data": f"TDs: {int(_has_td)}",
+                    "Result": "✅ Won" if won else "❌ Lost"})
+                continue
+
+            # ── Successful 2pt Conversion ──────────────────────────────────────
+            if _TWO_PT_RE.match(line):
+                _sdf_2 = data.get("scoring", pd.DataFrame())
+                if _sdf_2 is not None and not _sdf_2.empty and "Type" in _sdf_2.columns:
+                    _has_2pt = _sdf_2["Type"].str.lower().str.contains("two.point|2.point", na=False).any()
+                    _desc_2pt = _sdf_2["Description"].str.lower().str.contains("two.point|2pt|2-pt", na=False).any() if "Description" in _sdf_2.columns else False
+                    _has_2pt = _has_2pt or _desc_2pt
+                else:
+                    _has_2pt = False
+                team_graded.append({"Prop": line, "Data": "Found" if _has_2pt else "Not found",
+                    "Result": "✅ Won" if _has_2pt else "❌ Lost"})
+                continue
+
+            # ── Overtime Win ───────────────────────────────────────────────────
+            _ot_m = _OT_WIN_RE.match(line)
+            if _ot_m:
+                _winner_raw = _ot_m.group(1).strip()
+                _winner_abbr = _resolve_team(_winner_raw)
+                _sdf_ot = data.get("scoring", pd.DataFrame())
+                # Check if any scoring play in OT period
+                _has_ot = False
+                _ot_winner = None
+                if _sdf_ot is not None and not _sdf_ot.empty and "Quarter" in _sdf_ot.columns:
+                    _ot_plays = _sdf_ot[_sdf_ot["Quarter"].str.startswith("OT", na=False)]
+                    _has_ot = not _ot_plays.empty
+                    if _has_ot:
+                        # Winner is team with higher score in last OT play
+                        _last = _ot_plays.iloc[-1]
+                        _aw = int(pd.to_numeric(_last.get("Away Score", 0), errors="coerce") or 0)
+                        _hw = int(pd.to_numeric(_last.get("Home Score", 0), errors="coerce") or 0)
+                        # Determine home/away from linescore
+                        _ls_ot = data.get("linescore", pd.DataFrame())
+                        if not _ls_ot.empty and "Team" in _ls_ot.columns:
+                            _away_t = _ls_ot.iloc[0]["Team"] if len(_ls_ot) > 0 else ""
+                            _home_t = _ls_ot.iloc[1]["Team"] if len(_ls_ot) > 1 else ""
+                            _ot_winner = _away_t if _aw > _hw else _home_t
+                won = _has_ot and (_ot_winner and _ot_winner.upper() == _winner_abbr)
+                _data_ot = f"OT: {'Yes' if _has_ot else 'No'} | Winner: {_ot_winner or '—'}"
+                team_graded.append({"Prop": line, "Data": _data_ot,
+                    "Result": "✅ Won" if won else "❌ Lost"})
+                continue
+
+            # ── Special Teams First TD ─────────────────────────────────────────
+            _stf_m = _ST_FIRST_RE.match(line)
+            if _stf_m:
+                _st_team = _resolve_team(_stf_m.group(1).strip())
+                _sdf_stf = data.get("scoring", pd.DataFrame())
+                won = False
+                _first_desc = "No TDs"
+                if _sdf_stf is not None and not _sdf_stf.empty and "Type" in _sdf_stf.columns:
+                    _td_rows = _sdf_stf[_sdf_stf["Type"].str.lower().isin(_ALL_TD_TYPES)]
+                    if not _td_rows.empty:
+                        _first_td = _td_rows.iloc[0]
+                        _first_desc = f"{_first_td.get('Team','')} {_first_td.get('Type','')}"
+                        _is_st = _first_td["Type"].lower() in _ST_TYPES
+                        _right_team = _first_td.get("Team","").upper() == _st_team
+                        won = _is_st and _right_team
+                team_graded.append({"Prop": line, "Data": f"First TD: {_first_desc}",
+                    "Result": "✅ Won" if won else "❌ Lost"})
+                continue
+
+            # ── Special Teams any TD ───────────────────────────────────────────
+            _st_m = _ST_TD_RE.match(line)
+            if _st_m:
+                _st_team2 = _resolve_team(_st_m.group(1).strip())
+                _sdf_st = data.get("scoring", pd.DataFrame())
+                won = False
+                _st_detail = "No ST TD"
+                if _sdf_st is not None and not _sdf_st.empty and "Type" in _sdf_st.columns:
+                    _st_plays = _sdf_st[
+                        (_sdf_st["Type"].str.lower().isin(_ST_TYPES)) &
+                        (_sdf_st["Team"].str.upper() == _st_team2)
+                    ] if "Team" in _sdf_st.columns else pd.DataFrame()
+                    won = not _st_plays.empty
+                    _st_detail = " | ".join(_st_plays["Type"].tolist()) if won else "No ST TD"
+                team_graded.append({"Prop": line, "Data": _st_detail,
+                    "Result": "✅ Won" if won else "❌ Lost"})
+                continue
+
+            # ── First TD scorer (player) ───────────────────────────────────────
+            _ftd_m = _FIRST_TD_RE.match(line)
+            if _ftd_m and "special teams" not in line.lower():
+                _p1 = _ftd_m.group(1).strip()
+                _p2 = _ftd_m.group(2).strip() if _ftd_m.group(2) else None
+                _players_ftd = [p for p in [_p1, _p2] if p]
+                _sdf_ftd = data.get("scoring", pd.DataFrame())
+                won = False
+                _ftd_detail = "No TDs"
+                if _sdf_ftd is not None and not _sdf_ftd.empty and "Type" in _sdf_ftd.columns:
+                    _td_rows2 = _sdf_ftd[_sdf_ftd["Type"].str.lower().isin(_ALL_TD_TYPES)]
+                    if not _td_rows2.empty:
+                        _first_desc2 = _td_rows2.iloc[0].get("Description", "")
+                        _ftd_detail = _first_desc2[:60]
+                        won = any(
+                            p.split()[-1].lower() in _first_desc2.lower()
+                            for p in _players_ftd
+                        )
+                team_graded.append({"Prop": line, "Data": f"First TD: {_ftd_detail}",
+                    "Result": "✅ Won" if won else "❌ Lost"})
+                continue
+
             if _SCORELESS_RE2.search(line):
                 _sdf_s = data.get("scoring", pd.DataFrame())
                 def _q_totals(sdf):
