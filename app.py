@@ -1277,20 +1277,22 @@ elif st.session_state.view == "boxscore":
 
                     pbp_def = by_period.get(period_key, {}).get('defense', pd.DataFrame())
                     if pbp_def is not None and not pbp_def.empty and 'Player' in pbp_def.columns:
+                        # PBP df has data for this period — player in it means they sacked
                         m = pbp_def[pbp_def['Player'] == abbr]
-                        if not m.empty:
-                            return float(m.iloc[0].get('SACKS', 0))
+                        return float(m.iloc[0].get('SACKS', 0)) if not m.empty else 0.0
 
-                    # For full-game scope or if PBP has no data: use ESPN defense df
-                    # Defense df stores full displayName ("Byron Murphy II")
+                    # PBP df empty for this period — only fall back to ESPN full-game
+                    # if period_key is Full Game, otherwise treat as 0 sacks this period
+                    if period_key != 'Full Game':
+                        return 0.0
+
+                    # Full Game scope: use ESPN cumulative defense df
                     df2 = data.get('defense', pd.DataFrame())
                     if df2 is not None and not df2.empty and 'Player' in df2.columns and 'SACKS' in df2.columns:
                         pl = df2['Player'].str.lower()
                         m2 = df2[pl.eq(name_lower) | pl.eq(norm_lower)]
                         if not m2.empty:
                             return float(pd.to_numeric(m2.iloc[0].get('SACKS', 0), errors='coerce') or 0)
-
-                    # Player found in game (via _full_name_team) but 0 sacks → Lost
                     return 0.0
                 match = _find_player(player, category, period_key)
                 return float(match.iloc[0].get(col, 0)) if not match.empty else 0.0
