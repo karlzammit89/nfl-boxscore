@@ -1230,27 +1230,29 @@ elif st.session_state.view == "boxscore":
             """
             # Defense (sacks): check by_period and ESPN defense df
             if category == 'defense':
-                parts = player.strip().split()
-                abbr  = f"{parts[0][0]}.{parts[-1]}" if len(parts) >= 2 else player
+                parts      = player.strip().split()
+                abbr       = f"{parts[0][0]}.{parts[-1]}" if len(parts) >= 2 else player
                 name_lower = player.strip().lower()
+                import re as _ren
+                norm_lower = _ren.sub(r'\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$', '', name_lower, flags=_ren.I).strip()
 
-                # 1. Check by_period Full Game defense (abbreviated names from PBP)
-                pbp_def = by_period.get('Full Game', {}).get('defense', pd.DataFrame())
-                if pbp_def is not None and not pbp_def.empty and 'Player' in pbp_def.columns:
-                    if (pbp_def['Player'] == abbr).any():
-                        return True
+                # 1. Check _full_name_team first — fastest, covers all players in boxscore
+                for _n in [name_lower, norm_lower]:
+                    if _n in _full_name_team:
+                        t = _full_name_team[_n].upper()
+                        if not _game_teams or t in _game_teams:
+                            return True
 
-                # 2. Check ESPN cumulative defense (full displayNames)
+                # 2. Check ESPN cumulative defense df (full displayNames)
                 df2 = data.get('defense', pd.DataFrame())
                 if df2 is not None and not df2.empty and 'Player' in df2.columns:
                     if df2['Player'].str.lower().eq(name_lower).any():
                         return True
+                    if df2['Player'].str.lower().eq(norm_lower).any():
+                        return True
                     if df2['Player'].str.contains(parts[-1], case=False, na=False).any():
                         return True
 
-                # 3. Fallback: _full_name_team (players in boxscore)
-                if name_lower in _full_name_team:
-                    return not _game_teams or _full_name_team[name_lower].upper() in _game_teams
                 return False
 
             name_lower = player.strip().lower()
@@ -1540,7 +1542,7 @@ elif st.session_state.view == "boxscore":
             who  = "Each Team" if is_each else "Any Team"
             prop = f"{who}: {' & '.join(req_strs)}"
             scope = {"each quarter":"Each Qrt","each half":"Each HF"}.get(cond,"Game")
-            team_graded.append({"Players": who, "Prop": prop, "Scope": scope,
+            team_graded.append({"Prop": clean_lines[i], "Scope": scope,
                                  "Result": "✅ Won" if won else "❌ Lost"})
 
         # Fallback if nothing graded
@@ -1551,12 +1553,12 @@ elif st.session_state.view == "boxscore":
         if team_graded:
             tdf = pd.DataFrame(team_graded)
             tdf["_w"] = tdf["Result"].apply(lambda x: 0 if "Won" in str(x) else (1 if "Error" in str(x) else 2))
-            tdf = tdf.sort_values(["_w","Players"]).drop(columns=["_w"]).reset_index(drop=True)
+            tdf = tdf.sort_values(["_w","Prop"]).drop(columns=["_w"]).reset_index(drop=True)
             ntw = sum(1 for v in tdf["Result"] if "Won" in str(v))
             nte = sum(1 for v in tdf["Result"] if "Error" in str(v))
             ntl = len(tdf) - ntw - nte
             st.markdown(f"**🏟 Team / Game Props** — {len(tdf)} props · ✅ {ntw} Won · ❗ {nte} Error · ❌ {ntl} Loss")
-            ts = [c for c in tdf.columns if c not in ("Players","Prop","Scope")]
+            ts = [c for c in tdf.columns if c not in ("Prop","Scope")]
             def _color_t(val):
                 if isinstance(val, str):
                     if val.startswith("✅"): return "color:#22c55e;font-weight:700"
