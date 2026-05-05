@@ -1619,9 +1619,15 @@ elif st.session_state.view == "boxscore":
                 "game total":   "Game",
             }.get(condition.lower(), condition)
             raw_line = results[0].get("raw_line", f"{threshold:.0f}+ {stat_short}")
+            pr = results[0].get("period_results", {})
+            if pr:
+                detail = " | ".join(f"{k}:{v.split()[-1]}" for k,v in pr.items())
+                scope_display = f"{scope_short} ({detail})"
+            else:
+                scope_display = scope_short
             return {
                 "Prop":   raw_line,
-                "Scope":  scope_short,
+                "Data":   scope_display,
                 "Result": "✅ Won" if overall_won is True else ("❗ Error" if overall_won is None else "❌ Lost"),
             }
 
@@ -1633,14 +1639,14 @@ elif st.session_state.view == "boxscore":
                 return {
                     "Players": p.get("player", "?"),
                     "Prop":    f"{p.get('threshold','')}+ {p.get('stat','')} [EXC: {str(_ge)[:60]}]",
-                    "Scope":   p.get("condition",""),
+                    "Data":   p.get("condition",""),
                     "Result":  "❗ Error",
                 }
         graded = [safe_grade(group) for group in by_line.values()]
         for er in error_rows:
             graded.append({
                 "Prop":   er.get("raw_line",""),
-                "Scope":  "—",
+                "Data":   "—",
                 "Result": "❗ Error",
             })
 
@@ -1666,7 +1672,7 @@ elif st.session_state.view == "boxscore":
             nl_  = sum(1 for v in gdf['Result'] if 'Lost'  in str(v))
             ne_  = sum(1 for v in gdf['Result'] if 'Error' in str(v))
             st.markdown(f'**👤 Player Props** — {np_} props · ✅ {nw_} Won · ❗ {ne_} Error · ❌ {nl_} Lost')
-            ps = [c for c in gdf.columns if c not in ('Prop','Scope')]
+            ps = [c for c in gdf.columns if c not in ('Prop','Data')]
             st.dataframe(gdf.style.map(_color, subset=ps), use_container_width=True, hide_index=True)
 
         # ── Grade team props ──────────────────────────────────────────────
@@ -1750,7 +1756,7 @@ elif st.session_state.view == "boxscore":
             if _SCORELESS_RE2.search(line):
                 q_had_score = {q: _any_score_in_q(q) for q in ["Q1","Q2","Q3","Q4"]}
                 won = any(not v for v in q_had_score.values())  # any quarter scoreless
-                team_graded.append({"Prop": line, "Scope": "Each Qrt",
+                team_graded.append({"Prop": line, "Data":   "Each Qrt",
                     "Result": "✅ Won" if won else "❌ Lost"})
                 continue
             _tq_m = _TEAM_Q_RE2.match(line)
@@ -1758,7 +1764,7 @@ elif st.session_state.view == "boxscore":
                 team_abbr = _tq_m.group(1).strip().split()[0].upper()
                 q_had_score = {q: _team_scored_in_q(team_abbr, q) for q in ["Q1","Q2","Q3","Q4"]}
                 won = all(q_had_score.values())  # team scored in all 4 quarters
-                team_graded.append({"Prop": line, "Scope": "Each Qrt",
+                team_graded.append({"Prop": line, "Data":   "Each Qrt",
                     "Result": "✅ Won" if won else "❌ Lost"})
                 continue
             if not TEAM_LINE_RE.match(line):
@@ -1785,7 +1791,7 @@ elif st.session_state.view == "boxscore":
             who  = "Each Team" if is_each else "Any Team"
             prop = f"{who}: {' & '.join(req_strs)}"
             scope = {"each quarter":"Each Quarter","each half":"Each Half"}.get(cond,"Game")
-            team_graded.append({"Prop": clean_lines[i], "Scope": scope,
+            team_graded.append({"Prop": clean_lines[i], "Data": scope,
                                  "Result": "✅ Won" if won else "❌ Lost"})
 
         # Fallback if nothing graded
@@ -1801,7 +1807,7 @@ elif st.session_state.view == "boxscore":
             nte = sum(1 for v in tdf["Result"] if "Error" in str(v))
             ntl = len(tdf) - ntw - nte
             st.markdown(f"**🏟 Team / Game Props** — {len(tdf)} props · ✅ {ntw} Won · ❗ {nte} Error · ❌ {ntl} Lost")
-            ts = [c for c in tdf.columns if c not in ("Prop","Scope")]
+            ts = [c for c in tdf.columns if c not in ("Prop","Data")]
             def _color_t(val):
                 if isinstance(val, str):
                     if val.startswith("✅"): return "color:#22c55e;font-weight:700"
