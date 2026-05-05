@@ -417,7 +417,7 @@ _INT_RE = _re.compile(r'intercepted', _re.I)
 
 _PASS_PTYPES = {"pass reception", "pass incompletion", "passing touchdown",
                 "receiving touchdown",
-                "interception", "interception return", "pass"}
+                "interception", "interception return", "pass", "sack"}
 _RUSH_PTYPES = {"rush", "rushing touchdown", "scramble"}
 _SKIP_PTYPES = {"kickoff", "punt", "field goal", "extra point", "penalty",
                 "timeout", "end period", "end of half", "two-point conversion",
@@ -507,6 +507,15 @@ def get_player_stats_by_period(game_id: str) -> dict:
                                              "receiving touchdown", "touchdown")
             is_int = "interception" in ptype
 
+            # ── Sack plays — ptype-gated first, text fallback second ──────────
+            if ptype == "sack" or "sacked" in text.lower():
+                sm = _SACK_RE.search(text)
+                if sm:
+                    sacker = (sm.group(1) or sm.group(2) or "").strip()
+                    if sacker:
+                        sacking[period][sacker]["sacks"] += 1
+                # Fall through to pass block to count QB pass attempt
+
             # ── Pass plays ─────────────────────────────────────────────────────
             if ptype in _PASS_PTYPES:
                 pm = _PASSER_RE.search(text)
@@ -547,14 +556,6 @@ def get_player_stats_by_period(game_id: str) -> dict:
                     if is_td:
                         d["td"] += 1
                 continue
-
-            # ── Sack plays ─────────────────────────────────────────────────────
-            if "sacked" in text.lower():
-                sm = _SACK_RE.search(text)
-                if sm:
-                    sacker = (sm.group(1) or sm.group(2) or "").strip()
-                    if sacker:
-                        sacking[period][sacker]["sacks"] += 1
 
     # ── DataFrame builders ────────────────────────────────────────────────
 
