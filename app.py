@@ -625,10 +625,15 @@ elif st.session_state.view == "boxscore":
     _PERIOD_KEY = {"1st Half":"1H","2nd Half":"2H"}
 
     def show_period_df(category: str, sort="YDS"):
-        """Show per-period offensive stat from by_period dict."""
-        stats_key   = _PERIOD_KEY.get(period_filter, period_filter)
-        period_data = by_period.get(stats_key, {})
-        df = period_data.get(category)
+        """Show per-period offensive stat.
+        Full Game uses ESPN boxscore (accurate); periods use play-by-play."""
+        stats_key = _PERIOD_KEY.get(period_filter, period_filter)
+        if stats_key == "Full Game":
+            # Use ESPN official boxscore data for accuracy
+            df = data.get(category)
+        else:
+            period_data = by_period.get(stats_key, {})
+            df = period_data.get(category)
         if df is None or (hasattr(df, "empty") and df.empty):
             st.info(f"No {category} data available for {period_filter}.")
             return
@@ -1206,21 +1211,27 @@ elif st.session_state.view == "boxscore":
 
         def _find_player(player: str, category: str, period_key: str):
             """Return matching row or empty DataFrame.
-            Uses pre-validated game player list so only real participants match.
-            """
+            Full Game uses ESPN boxscore (accurate); periods use play-by-play."""
+            abbr = _abbr_from_name(player)
+
+            if period_key == "Full Game":
+                # Use ESPN official boxscore for accuracy
+                pdf = data.get(category, pd.DataFrame())
+                if pdf is None or pdf.empty or "Player" not in pdf.columns:
+                    return pd.DataFrame()
+                # ESPN boxscore uses abbreviated names too
+                m = pdf[pdf["Player"] == abbr]
+                if not m.empty and _game_teams and "Team" in m.columns:
+                    m = m[m["Team"].str.upper().isin(_game_teams)]
+                return m
+
             pdf = by_period.get(period_key, {}).get(category, pd.DataFrame())
             if pdf is None or pdf.empty or "Player" not in pdf.columns:
                 return pd.DataFrame()
 
-            abbr = _abbr_from_name(player)
-
-            # Exact abbreviated name match
             m = pdf[pdf["Player"] == abbr]
-
-            # Filter to teams in this game
             if not m.empty and _game_teams and "Team" in m.columns:
                 m = m[m["Team"].str.upper().isin(_game_teams)]
-
             return m
 
         def player_found_in_game(player: str, category: str) -> bool:
