@@ -1341,6 +1341,15 @@ elif st.session_state.view == "boxscore":
                     "period_results": {}, "won": None,
                 }
 
+            # Debug defense lookup
+            if category == 'defense':
+                import re as _rdbg
+                _nl = player.strip().lower()
+                _nm = _rdbg.sub(r'\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$','',_nl,flags=_rdbg.I).strip()
+                _in_fnt = _nl in _full_name_team or _nm in _full_name_team
+                _fnt_val = _full_name_team.get(_nl) or _full_name_team.get(_nm)
+                st.caption(f"DEF DEBUG: player='{player}' nl='{_nl}' nm='{_nm}' in_fnt={_in_fnt} team={_fnt_val} game_teams={_game_teams}")
+
             # If player doesn't appear in this game's data at all → N/A
             if not player_found_in_game(player, category):
                 return {
@@ -1557,7 +1566,7 @@ elif st.session_state.view == "boxscore":
                 req_strs.append(f"{rn}+ {lbl}")
             who  = "Each Team" if is_each else "Any Team"
             prop = f"{who}: {' & '.join(req_strs)}"
-            scope = {"each quarter":"Each Qrt","each half":"Each HF"}.get(cond,"Game")
+            scope = {"each quarter":"Each Quarter","each half":"Each Half"}.get(cond,"Game")
             team_graded.append({"Prop": clean_lines[i], "Scope": scope,
                                  "Result": "✅ Won" if won else "❌ Lost"})
 
@@ -1569,7 +1578,7 @@ elif st.session_state.view == "boxscore":
         if team_graded:
             tdf = pd.DataFrame(team_graded)
             tdf["_w"] = tdf["Result"].apply(lambda x: 0 if "Won" in str(x) else (1 if "Error" in str(x) else 2))
-            tdf = tdf.sort_values(["_w","Prop"]).drop(columns=["_w"]).reset_index(drop=True)
+            tdf = tdf.sort_values(["_w","Prop"]).drop(columns=["_w"], errors="ignore").reset_index(drop=True)
             ntw = sum(1 for v in tdf["Result"] if "Won" in str(v))
             nte = sum(1 for v in tdf["Result"] if "Error" in str(v))
             ntl = len(tdf) - ntw - nte
