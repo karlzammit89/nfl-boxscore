@@ -1164,38 +1164,11 @@ elif st.session_state.view == "boxscore":
                         _c3_m   = _CMB3_RE.match(line)
                         _c2_m   = _CMB2_RE.match(line)
                         if _or_m:
-                            _pls = [_or_m.group(1).strip(), _or_m.group(2).strip()]
-                            _vals = {}
-                            _found = True
-                            for _p in _pls:
-                                _df = data.get(_cat, pd.DataFrame())
-                                if _df.empty or 'Player' not in _df.columns:
-                                    _found = False; _vals[_p] = 0; continue
-                                _abbr = f"{_p.strip().split()[0][0]}.{_p.strip().split()[-1]}" if len(_p.strip().split()) >= 2 else _p
-                                _m = _df[_df['Player'] == _abbr]
-                                if _m.empty:
-                                    _nl = _p.lower(); _pts = _p.split()
-                                    _m = _df[_df['Player'].str.lower().eq(_nl)]
-                                if _m.empty:
-                                    _pts = _p.split()
-                                    _m = _df[_df['Player'].str.contains(_pts[-1], case=False, na=False)]
-                                    # team filter applied later via full name match
-                                if _m.empty:
-                                    _found = False; _vals[_p] = 0
-                                else:
-                                    _r = _m.iloc[0]
-                                    if _col == 'COMP' and 'C/ATT' in _r.index:
-                                        try: _vals[_p] = float(str(_r['C/ATT']).split('/')[0])
-                                        except: _vals[_p] = 0.0
-                                    else:
-                                        _vals[_p] = float(pd.to_numeric(_r.get(_col, 0), errors='coerce') or 0)
-                            _won = any(v >= _thr for v in _vals.values()) if _found else None
-                            _det = ' | '.join(f"{p.split()[-1]}:{v:.0f}" for p,v in _vals.items())
-                            _res = '✅ Won' if _won is True else ('❗ Error' if _won is None else '❌ Lost')
-                            _dbg_or = f"OR DEBUG: found={_found} vals={_vals} thr={_thr} cat={_cat} col={_col} game_teams={_game_teams}"
-                            st.session_state['or_debug'] = _dbg_or
-                            graded.append({'Players': ' or '.join(_pls), 'Prop': line,
-                                'Scope': f'Any ({_det})', 'Result': _res})
+                            props.append({'line_index': i, 'player': _or_m.group(1).strip(),
+                                'player2': _or_m.group(2).strip(),
+                                'players_list': [_or_m.group(1).strip(), _or_m.group(2).strip()],
+                                'stat': _stat_raw, 'threshold': _thr, 'condition': condition,
+                                'operator': 'or', 'category': _cat, 'col': _col, 'raw_line': line})
                             continue
                         elif _each_m:
                             props.append({'line_index': i, 'player': _each_m.group(1).strip(),
@@ -1468,6 +1441,7 @@ elif st.session_state.view == "boxscore":
                 elif operator=="or":
                     won2=any(v2>=thr2 for v2 in vals2.values()) if all_found2 else None
                     scope2=detail2
+                    st.session_state['or_debug'] = f"OR: players={players_list} cat={cat2} col={col2} vals={vals2} thr={thr2} found={all_found2} won={won2}"
                 else:
                     won2=all(v2>=thr2 for v2 in vals2.values()) if all_found2 else None
                     scope2=detail2
