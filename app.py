@@ -361,6 +361,7 @@ if st.session_state.view == "calendar":
                         st.session_state.selected_date       = ds
                         st.session_state.selected_date_games = day_games
                         st.session_state.view = "day"
+                        st.rerun()
             
                 else:
                     today_cls = " today" if is_today else ""
@@ -443,6 +444,7 @@ elif st.session_state.view == "day":
     with b1:
         if st.button("← Calendar", use_container_width=True):
             st.session_state.view = "calendar"
+            st.rerun()
 
     st.markdown(
         f"<div class='sec-div' style='margin-top:12px'>"
@@ -509,7 +511,7 @@ elif st.session_state.view == "day":
                 st.session_state.selected_game_id = g["id"]
                 st.session_state.selected_game    = g
                 st.session_state.view = "boxscore"
-                st.markdown("</div>", unsafe_allow_html=True)
+                st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -535,12 +537,15 @@ elif st.session_state.view == "boxscore":
     with b1:
         if st.button("← Calendar", use_container_width=True):
             st.session_state.view = "calendar"
+            st.rerun()
     with b2:
         if st.button(f"← {date_label}", use_container_width=True):
             st.session_state.view = "day"
+            st.rerun()
     with b3:
         if st.button("🔄 Refresh", use_container_width=True):
             st.cache_data.clear()
+            st.rerun()
 
     away  = game["away"]; home = game["home"]
     state = game["status_state"]
