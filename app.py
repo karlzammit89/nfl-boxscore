@@ -1231,27 +1231,32 @@ elif st.session_state.view == "boxscore":
             # Defense (sacks): check by_period and ESPN defense df
             if category == 'defense':
                 parts      = player.strip().split()
-                abbr       = f"{parts[0][0]}.{parts[-1]}" if len(parts) >= 2 else player
                 name_lower = player.strip().lower()
                 import re as _ren
                 norm_lower = _ren.sub(r'\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$', '', name_lower, flags=_ren.I).strip()
 
-                # 1. Check _full_name_team first — fastest, covers all players in boxscore
+                # Primary: ESPN defense df has ALL defenders (tackles, sacks, PD etc)
+                # Player column = full displayName e.g. "Christian Barmore"
+                df2 = data.get('defense', pd.DataFrame())
+                if df2 is not None and not df2.empty and 'Player' in df2.columns:
+                    players_lower = df2['Player'].str.lower()
+                    if players_lower.eq(name_lower).any() or players_lower.eq(norm_lower).any():
+                        return True
+                    # Last name match within game teams
+                    last = parts[-1]
+                    last_match = df2[df2['Player'].str.contains(last, case=False, na=False)]
+                    if not last_match.empty:
+                        if not _game_teams or "Team" not in df2.columns:
+                            return True
+                        if last_match["Team"].str.upper().isin(_game_teams).any():
+                            return True
+
+                # Fallback: boxscore full name dict
                 for _n in [name_lower, norm_lower]:
                     if _n in _full_name_team:
                         t = _full_name_team[_n].upper()
                         if not _game_teams or t in _game_teams:
                             return True
-
-                # 2. Check ESPN cumulative defense df (full displayNames)
-                df2 = data.get('defense', pd.DataFrame())
-                if df2 is not None and not df2.empty and 'Player' in df2.columns:
-                    if df2['Player'].str.lower().eq(name_lower).any():
-                        return True
-                    if df2['Player'].str.lower().eq(norm_lower).any():
-                        return True
-                    if df2['Player'].str.contains(parts[-1], case=False, na=False).any():
-                        return True
 
                 return False
 
@@ -1268,24 +1273,20 @@ elif st.session_state.view == "boxscore":
         def get_player_val(player: str, category: str, col: str, period_key: str) -> float:
             try:
                 if category == 'defense':
-                    parts = player.strip().split()
-                    abbr  = f"{parts[0][0]}.{parts[-1]}" if len(parts) >= 2 else player
+                    parts      = player.strip().split()
+                    abbr       = f"{parts[0][0]}.{parts[-1]}" if len(parts) >= 2 else player
+                    name_lower = player.strip().lower()
+                    import re as _ren2
+                    norm_lower = _ren2.sub(r'\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$', '', name_lower, flags=_ren2.I).strip()
 
-                    # 1. by_period defense (per-period sacks from PBP, abbreviated names)
+                    # 1. by_period defense — per-period/half sacks from PBP (abbreviated names)
                     pbp_def = by_period.get(period_key, {}).get('defense', pd.DataFrame())
                     if pbp_def is not None and not pbp_def.empty and 'Player' in pbp_def.columns:
                         m = pbp_def[pbp_def['Player'] == abbr]
                         if not m.empty:
                             return float(m.iloc[0].get('SACKS', 0))
-                    # 2. ESPN cumulative defense (full displayName) — fallback
-                    pdf = data.get('defense', pd.DataFrame())
-                    if pdf is None or pdf.empty or 'Player' not in pdf.columns:
-                        return 0.0
-                    name_lower = player.strip().lower()
-                    m = pdf[pdf['Player'].str.lower() == name_lower]
-                    if m.empty:
-                        m = pdf[pdf['Player'].str.contains(parts[-1], case=False, na=False)]
-                    return float(m.iloc[0].get('SACKS', 0)) if not m.empty else 0.0
+                    # Player found in game but 0 sacks in this period → return 0 (Lost, not Error)
+                    return 0.0
                 match = _find_player(player, category, period_key)
                 return float(match.iloc[0].get(col, 0)) if not match.empty else 0.0
             except Exception:
