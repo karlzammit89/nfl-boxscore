@@ -1120,8 +1120,32 @@ elif st.session_state.view == "boxscore":
                     continue
                 if _re_skip.match(r'^successful\s+2\s*pt\s+conversion', line, _re_skip.I):
                     continue
-                # "to score the first TD" is handled in team loop → outputs to graded (player props)
-                # Do NOT skip here — let it fall through to team loop
+                # "to score the first TD" — grade immediately if it matches
+                if _re.search(r'to\s+score\s+the\s+first\s+td', line, _re.I) and "special teams" not in line.lower():
+                    _ftd_pls = []
+                    _or_ftd = _re.match(r'^(.+?)\s+or\s+(.+?)\s+to\s+score\s+the\s+first\s+td', line, _re.I)
+                    _single_ftd = _re.match(r'^(.+?)\s+to\s+score\s+the\s+first\s+td', line, _re.I)
+                    if _or_ftd:
+                        _ftd_pls = [_or_ftd.group(1).strip(), _or_ftd.group(2).strip()]
+                    elif _single_ftd:
+                        _ftd_pls = [_single_ftd.group(1).strip()]
+                    if _ftd_pls:
+                        _sdf_ftd2 = data.get("scoring", pd.DataFrame())
+                        _won_ftd = None
+                        _ftd_detail2 = "No TDs"
+                        _ALL_TD_T = {"rushing touchdown","passing touchdown","receiving touchdown",
+                                     "punt return touchdown","kickoff return touchdown",
+                                     "blocked punt touchdown","blocked field goal touchdown",
+                                     "interception return touchdown","fumble return touchdown","touchdown"}
+                        if _sdf_ftd2 is not None and not _sdf_ftd2.empty and "Type" in _sdf_ftd2.columns:
+                            _td_r = _sdf_ftd2[_sdf_ftd2["Type"].str.lower().isin(_ALL_TD_T)]
+                            if not _td_r.empty:
+                                _fdesc = _td_r.iloc[0].get("Description", "")
+                                _ftd_detail2 = _fdesc[:60]
+                                _won_ftd = any(p.split()[-1].lower() in _fdesc.lower() for p in _ftd_pls)
+                        _ftd_res = "✅ Won" if _won_ftd is True else ("❗ Error" if _won_ftd is None else "❌ Lost")
+                        graded.append({"Prop": line, "Data": f"First TD: {_ftd_detail2}", "Result": _ftd_res})
+                        continue
                 stat = None
                 for pat, label in STAT_MAP_RE:
                     if pat.search(line):
@@ -1899,7 +1923,7 @@ elif st.session_state.view == "boxscore":
                     ] if "Description" in _sdf_2.columns else pd.DataFrame()
                     _2pt_data = _2pt_rows.iloc[0]["Description"][:60] if not _2pt_rows.empty else "Successful"
                 else:
-                    _2pt_data = "Not found"
+                    _2pt_data = "No 2pt Conversion"
                 team_graded.append({"Prop": line, "Data": _2pt_data,
                     "Result": "✅ Won" if _has_2pt else "❌ Lost"})
                 continue
@@ -1975,7 +1999,7 @@ elif st.session_state.view == "boxscore":
                         (_sdf_st["Team"].str.upper() == _st_team2)
                     ] if "Team" in _sdf_st.columns else pd.DataFrame()
                     won = not _st_plays.empty
-                    _st_detail = " | ".join(_st_plays["Type"].tolist()) if won else f"No {_st_team2} Special Team TD"
+                    _st_detail = " | ".join(_st_plays["Type"].tolist()) if won else f"No {_st_team2} Special Teams TD"
                 team_graded.append({"Prop": line, "Data": _st_detail,
                     "Result": "✅ Won" if won else "❌ Lost"})
                 continue
