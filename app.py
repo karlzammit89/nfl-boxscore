@@ -1120,9 +1120,8 @@ elif st.session_state.view == "boxscore":
                     continue
                 if _re_skip.match(r'^successful\s+2\s*pt\s+conversion', line, _re_skip.I):
                     continue
-                if _re_skip.search(r'to\s+score\s+the\s+first\s+td', line, _re_skip.I) and "special teams" not in line.lower():
-                    # Handled in team loop but output to graded — skip normal player parse
-                    continue
+                # "to score the first TD" is handled in team loop → outputs to graded (player props)
+                # Do NOT skip here — let it fall through to team loop
                 stat = None
                 for pat, label in STAT_MAP_RE:
                     if pat.search(line):
@@ -1885,14 +1884,20 @@ elif st.session_state.view == "boxscore":
             if _TWO_PT_RE.match(line):
                 _sdf_2 = data.get("scoring", pd.DataFrame())
                 if _sdf_2 is not None and not _sdf_2.empty and "Type" in _sdf_2.columns:
-                    _has_2pt = _sdf_2["Type"].str.lower().str.contains("two.point|2.point", na=False).any()
-                    _desc_2pt = _sdf_2["Description"].str.lower().str.contains("two.point|2pt|2-pt", na=False).any() if "Description" in _sdf_2.columns else False
-                    _has_2pt = _has_2pt or _desc_2pt
+                    # Only successful 2pt conversions appear in ESPN's scoringPlays
+                    # Check Type field — exclude rows where Description says "Failed"
+                    _2pt_mask = _sdf_2["Type"].str.lower().str.contains("two.point|2.point", na=False)
+                    if "Description" in _sdf_2.columns:
+                        _2pt_mask = _2pt_mask & ~_sdf_2["Description"].str.lower().str.contains("failed", na=False)
+                    _has_2pt = _2pt_mask.any()
                 else:
                     _has_2pt = False
                 if _has_2pt and _sdf_2 is not None and not _sdf_2.empty:
-                    _2pt_rows = _sdf_2[_sdf_2["Description"].str.lower().str.contains("two.point|2pt|2-pt", na=False)] if "Description" in _sdf_2.columns else pd.DataFrame()
-                    _2pt_data = _2pt_rows.iloc[0]["Description"][:60] if not _2pt_rows.empty else "Found"
+                    _2pt_rows = _sdf_2[
+                        _sdf_2["Type"].str.lower().str.contains("two.point|2.point", na=False) &
+                        ~_sdf_2["Description"].str.lower().str.contains("failed", na=False)
+                    ] if "Description" in _sdf_2.columns else pd.DataFrame()
+                    _2pt_data = _2pt_rows.iloc[0]["Description"][:60] if not _2pt_rows.empty else "Successful"
                 else:
                     _2pt_data = "Not found"
                 team_graded.append({"Prop": line, "Data": _2pt_data,
@@ -1970,7 +1975,7 @@ elif st.session_state.view == "boxscore":
                         (_sdf_st["Team"].str.upper() == _st_team2)
                     ] if "Team" in _sdf_st.columns else pd.DataFrame()
                     won = not _st_plays.empty
-                    _st_detail = " | ".join(_st_plays["Type"].tolist()) if won else f"No {_st_team2} ST TD"
+                    _st_detail = " | ".join(_st_plays["Type"].tolist()) if won else f"No {_st_team2} Special Team TD"
                 team_graded.append({"Prop": line, "Data": _st_detail,
                     "Result": "✅ Won" if won else "❌ Lost"})
                 continue
