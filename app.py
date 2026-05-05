@@ -1179,8 +1179,7 @@ elif st.session_state.view == "boxscore":
                                 if _m.empty:
                                     _pts = _p.split()
                                     _m = _df[_df['Player'].str.contains(_pts[-1], case=False, na=False)]
-                                    if not _m.empty and _game_teams and 'Team' in _df.columns:
-                                        _m = _m[_m['Team'].str.upper().isin(_game_teams)]
+                                    # team filter applied later via full name match
                                 if _m.empty:
                                     _found = False; _vals[_p] = 0
                                 else:
