@@ -1049,15 +1049,11 @@ elif st.session_state.view == "boxscore":
             (_re.compile(r'each half',    _re.I),  "each half"),
         ]
         _INLINE_PERIOD = _re.compile(r'\\b([1-4])([QH])\\b', _re.I)
-        THRESHOLD_RE = _re.compile(r'(\d+\.?\d*)\+?(?!(?:st|nd|rd|th))\s*(?:or more)?')
+        THRESHOLD_RE = _re.compile(r'(\d+\.?\d*)\+?\s*(?:or more)?')
         PLAYERS_RE   = _re.compile(
             r'^(.+?)(?:\s+(?:&|and)\s+(.+?))\s+to\s+each\s+(?:record|have)', _re.I)
         SINGLE_RE    = _re.compile(r'^(.+?)\s+to\s+(?:record|have|score)', _re.I)
-        # Abbreviated format: 'H. Henry 1Q Under 4.5 Rec Yards'
-        ALT_PLAYER_RE = _re.compile(
-            r'^([A-Z][a-z]?\.?\s*[A-Z][A-Za-z\'\-]+(?:\s+[A-Z][A-Za-z\'\-]+)?)'
-            r'\s+(?:[1-4][QH]\s+|\d+(?:st|nd|rd|th)?\s+)?(?:over|under|\d)', _re.I
-        )
+
         RUSH_TD_RE2  = _re.compile(r'(\d+)\+?\s*rushing tds?', _re.I)
         PASS_TD_RE2  = _re.compile(r'(\d+)\+?\s*passing tds?', _re.I)
         ANY_TD_RE    = _re.compile(r'(\d+)\+?\s*tds?(?!.*fg)', _re.I)
@@ -1106,7 +1102,7 @@ elif st.session_state.view == "boxscore":
                         break
                 dual   = PLAYERS_RE.match(line)
                 single = SINGLE_RE.match(line) if not dual else None
-                alt    = ALT_PLAYER_RE.match(line) if not dual and not single else None
+                alt    = None
                 pm = _INLINE_PERIOD.search(line)
                 if pm and condition == "game total":
                     n2, t2 = pm.group(1), pm.group(2).upper()
