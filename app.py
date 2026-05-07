@@ -651,29 +651,41 @@ elif st.session_state.view == "boxscore":
 
         # Render as styled HTML table matching screenshot
         def _ls_html(df):
-            q_cols  = [c for c in ["Q1","Q2","Q3","Q4"] if c in df.columns]
-            h_cols  = [c for c in ["1H","2H"] if c in df.columns]
-            t_cols  = [c for c in ["T"] if c in df.columns]
-            sep  = "<th style='border-left:1px solid rgba(255,255,255,0.12);width:8px'></th>"
-            def th(c, border=False):
-                b = "border-left:1px solid rgba(255,255,255,0.12);" if border else ""
-                return f"<th style='opacity:0.5;font-size:11px;{b}'>{c}</th>"
-            def td(val, bold=False, border=False):
-                b = "border-left:1px solid rgba(255,255,255,0.12);" if border else ""
-                fw = "font-weight:700;" if bold else ""
-                return f"<td style='{fw}{b}'>{int(val)}</td>"
+            q_cols = [c for c in ["Q1","Q2","Q3","Q4"] if c in df.columns]
+            h_cols = [c for c in ["1H","2H"] if c in df.columns]
+            t_cols = [c for c in ["T"] if c in df.columns]
+            # Build logo lookup from game dict
+            _logos = {}
+            try:
+                _logos[game["away"]["abbr"].upper()] = game["away"].get("logo","")
+                _logos[game["home"]["abbr"].upper()] = game["home"].get("logo","")
+            except: pass
+            sep_style = "border-left:2px solid rgba(255,255,255,0.15);"
+            def th(c, sep=False):
+                s = sep_style if sep else ""
+                return f"<th style='opacity:0.45;font-size:11px;font-weight:500;padding:0 10px;{s}'>{c}</th>"
+            def td(val, bold=False, sep=False):
+                s = sep_style if sep else ""
+                fw = "font-weight:700;" if bold else "opacity:0.85;"
+                return f"<td style='{fw}padding:0 10px;{s}'>{int(val)}</td>"
             header = "".join([th(c) for c in q_cols]
                            + ([th("1H",True),th("2H")] if h_cols else [])
                            + ([th("T",True)] if t_cols else []))
             rows_html = ""
             for _, r in df.iterrows():
+                team_abbr = str(r["Team"]).upper()
+                logo_url = _logos.get(team_abbr,"")
+                logo_img = f'<img src="{logo_url}" style="width:24px;height:24px;object-fit:contain;margin-right:8px;vertical-align:middle">' if logo_url else ""
+                team_cell = f"<td style='font-weight:700;text-align:left;padding-right:20px;white-space:nowrap'>{logo_img}{team_abbr}</td>"
                 cells = "".join([td(r.get(c,0)) for c in q_cols]
-                              + ([td(r.get("1H",0),border=True),td(r.get("2H",0))] if h_cols else [])
-                              + ([td(r.get("T",0),bold=True,border=True)] if t_cols else []))
-                rows_html += f"<tr><td style='font-weight:700;text-align:left;padding-right:16px'>{r['Team']}</td>{cells}</tr>"
-            return f"""<table style="width:auto;border-collapse:collapse;font-size:13px;text-align:center;margin:6px 0">
-              <thead><tr><th></th>{header}</tr></thead>
-              <tbody style="line-height:2">{rows_html}</tbody></table>"""
+                              + ([td(r.get("1H",0),sep=True),td(r.get("2H",0))] if h_cols else [])
+                              + ([td(r.get("T",0),bold=True,sep=True)] if t_cols else []))
+                rows_html += f"<tr style='line-height:2.2'>{team_cell}{cells}</tr>"
+            return f"""<div style="display:flex;justify-content:center;margin:8px 0">
+            <table style="border-collapse:collapse;font-size:13px;text-align:center">
+              <thead><tr><th style="text-align:left;padding-right:20px"></th>{header}</tr></thead>
+              <tbody>{rows_html}</tbody>
+            </table></div>"""
 
         st.markdown(_ls_html(_ls_show), unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
@@ -1865,6 +1877,7 @@ elif st.session_state.view == "boxscore":
             return df.sort_values(['_w', col]).drop(columns=['_w']).reset_index(drop=True)
 
         # ── Player props table ─────────────────────────────────────────
+        st.warning("⚠️ Please report any issues with resulting such as incorrect result given and also report any ❗ Error results returned for further investigation/improvements.")
         gdf = pd.DataFrame(graded) if graded else pd.DataFrame()
         if not gdf.empty:
             gdf = _sort(gdf, 'Prop')
@@ -2395,7 +2408,27 @@ elif st.session_state.view == "boxscore":
         if not graded and not team_graded:
             st.info('No props could be parsed. Check your input format.')
 
-        st.warning("⚠️ Please report any issues with resulting such as incorrect result given and also report any ❗ Error results returned for further investigation/improvements.")
+
+        # ── Team / game props table ────────────────────────────────────────────
+        if team_graded:
+            tdf = pd.DataFrame(team_graded)
+            tdf["_w"] = tdf["Result"].apply(lambda x: 0 if "Won" in str(x) else (1 if "Error" in str(x) else 2))
+            tdf = tdf.sort_values(["_w","Prop"]).drop(columns=["_w"], errors="ignore").reset_index(drop=True)
+            ntw = sum(1 for v in tdf["Result"] if "Won" in str(v))
+            nte = sum(1 for v in tdf["Result"] if "Error" in str(v))
+            ntl = len(tdf) - ntw - nte
+            st.markdown(f"**🏟 Team / Game Props** — {len(tdf)} props · ✅ {ntw} Won · ❗ {nte} Error · ❌ {ntl} Lost")
+            ts = [c for c in tdf.columns if c not in ("Prop","Data")]
+            def _color_t(val):
+                if isinstance(val, str):
+                    if val.startswith("✅"): return "color:#22c55e;font-weight:700"
+                    if val.startswith("❌"): return "color:#ef4444;font-weight:700"
+                    if val.startswith("❗"): return "color:#f59e0b;font-weight:700"
+                return ""
+            st.dataframe(tdf.style.map(_color_t, subset=ts), use_container_width=True, hide_index=True)
+
+
+
 
     with st.expander("📋 Supported Markets", expanded=False):
         st.markdown("""
@@ -2429,21 +2462,3 @@ elif st.session_state.view == "boxscore":
 - `N+ TDs to be Scored in Each Quarter`
 - `Opening Kickoff to be Returned for a Touchdown`
         """)
-
-        # ── Team / game props table ────────────────────────────────────────────
-        if team_graded:
-            tdf = pd.DataFrame(team_graded)
-            tdf["_w"] = tdf["Result"].apply(lambda x: 0 if "Won" in str(x) else (1 if "Error" in str(x) else 2))
-            tdf = tdf.sort_values(["_w","Prop"]).drop(columns=["_w"], errors="ignore").reset_index(drop=True)
-            ntw = sum(1 for v in tdf["Result"] if "Won" in str(v))
-            nte = sum(1 for v in tdf["Result"] if "Error" in str(v))
-            ntl = len(tdf) - ntw - nte
-            st.markdown(f"**🏟 Team / Game Props** — {len(tdf)} props · ✅ {ntw} Won · ❗ {nte} Error · ❌ {ntl} Lost")
-            ts = [c for c in tdf.columns if c not in ("Prop","Data")]
-            def _color_t(val):
-                if isinstance(val, str):
-                    if val.startswith("✅"): return "color:#22c55e;font-weight:700"
-                    if val.startswith("❌"): return "color:#ef4444;font-weight:700"
-                    if val.startswith("❗"): return "color:#f59e0b;font-weight:700"
-                return ""
-            st.dataframe(tdf.style.map(_color_t, subset=ts), use_container_width=True, hide_index=True)
