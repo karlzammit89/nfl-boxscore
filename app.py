@@ -1635,10 +1635,14 @@ elif st.session_state.view == "boxscore":
                 else:
                     won2=all(v2>=thr2 for v2 in vals2.values()) if all_found2 else None
                     scope2=detail2
+                if not all_found2:
+                    not_found = [p2 for p2 in players_list if vals2.get(p2,0)==0 and _fg2(p2,cat2,col2) is None]
+                    scope2 = f"{', '.join(not_found) if not_found else 'Player'} not in this game"
+                    won2 = None
                 return {
                     "player": players_str2, "stat": prop.get("stat",""),
                     "threshold": thr2, "condition": scope2,
-                    "period_results": {}, "won": won2 is True,
+                    "period_results": {}, "won": won2 is True if won2 is not None else None,
                     "raw_line": prop.get("raw_line",""),
                     "_pre_graded": True,
                 }
@@ -1736,7 +1740,8 @@ elif st.session_state.view == "boxscore":
                 return {
                     "player": player, "stat": prop.get("stat",""),
                     "threshold": threshold, "condition": prop.get("condition",""),
-                    "period_results": {}, "won": None, "raw_line": prop.get("raw_line",""),
+                    "period_results": {"Error": f"{player} not in this game"},
+                    "won": None, "raw_line": prop.get("raw_line",""),
                 }
 
             def hit(v: float) -> bool:
@@ -1821,21 +1826,23 @@ elif st.session_state.view == "boxscore":
             raw_line = results[0].get("raw_line", f"{threshold:.0f}+ {stat_short}")
             pr = results[0].get("period_results", {})
             if pr:
-                parts_pr = []
-                for k, v in pr.items():
-                    # v is like "✅ 247" or "❌ 14" — extract number and icon
-                    v_parts = v.strip().split()
-                    icon = v_parts[0] if v_parts else ""
-                    num  = v_parts[-1] if len(v_parts) > 1 else v_parts[0]
-                    if k == "Game":
-                        parts_pr.append(f"{num}")
-                    else:
-                        parts_pr.append(f"{k}: {num}")
-                detail = " | ".join(parts_pr)
-                if list(pr.keys()) == ["Game"]:
-                    scope_display = f"Game: {parts_pr[0]}"
+                # Check for error messages in period_results
+                if "Error" in pr:
+                    scope_display = pr["Error"]
                 else:
-                    scope_display = f"{scope_short} | {detail}"
+                    parts_pr = []
+                    for k, v in pr.items():
+                        v_parts = v.strip().split()
+                        num  = v_parts[-1] if len(v_parts) > 1 else v_parts[0]
+                        if k == "Game":
+                            parts_pr.append(f"{num}")
+                        else:
+                            parts_pr.append(f"{k}: {num}")
+                    detail = " | ".join(parts_pr)
+                    if list(pr.keys()) == ["Game"]:
+                        scope_display = f"Game: {parts_pr[0]}"
+                    else:
+                        scope_display = f"{scope_short} | {detail}"
             else:
                 scope_display = scope_short
             return {
@@ -1851,14 +1858,14 @@ elif st.session_state.view == "boxscore":
                 p = group[0] if group else {}
                 return {
                     "Prop":   p.get("raw_line","") or p.get("player","?"),
-                    "Data":   "—",
+                    "Data":   f"Unexpected error: {str(_ge)[:60]}",
                     "Result": "❗ Error",
                 }
         graded += [safe_grade(group) for group in by_line.values()]
         for er in error_rows:
             graded.append({
                 "Prop":   er.get("raw_line",""),
-                "Data":   "—",
+                "Data":   "Market format not supported",
                 "Result": "❗ Error",
             })
 
