@@ -590,12 +590,12 @@ elif st.session_state.view == "boxscore":
     st.markdown(f"{status_md}  ·  <span style='opacity:0.4;font-size:0.8rem'>{game.get('venue','')}</span>",
                 unsafe_allow_html=True)
 
-    pbp       = data["pbp"]
-    by_period = data.get("by_period", {})
 
     # Linescore box score
     with st.spinner("Loading box score…"):
         data = load_all_stats(game_id)
+    pbp       = data["pbp"]
+    by_period = data.get("by_period", {})
 
     # Build linescore from scoring_df (cumulative score diffs per team per quarter)
     _scoring_disp = data.get("scoring", pd.DataFrame())
