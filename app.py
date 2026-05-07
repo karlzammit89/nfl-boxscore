@@ -646,27 +646,34 @@ elif st.session_state.view == "boxscore":
     _ls_built = _build_ls_from_scoring(_scoring_disp, _ls_raw)
 
     if _ls_built is not None and not _ls_built.empty:
-        _ls_cols = [c for c in ["Team","Q1","Q2","1H","Q3","Q4","2H","T"] if c in _ls_built.columns]
+        _ls_cols = [c for c in ["Team","Q1","Q2","Q3","Q4","1H","2H","T"] if c in _ls_built.columns]
         _ls_show = _ls_built[_ls_cols]
 
         # Render as styled HTML table matching screenshot
         def _ls_html(df):
-            qs = [c for c in df.columns if c != "Team"]
-            header_cells = "".join(f"<th>{q}</th>" for q in qs)
+            q_cols  = [c for c in ["Q1","Q2","Q3","Q4"] if c in df.columns]
+            h_cols  = [c for c in ["1H","2H"] if c in df.columns]
+            t_cols  = [c for c in ["T"] if c in df.columns]
+            sep  = "<th style='border-left:1px solid rgba(255,255,255,0.12);width:8px'></th>"
+            def th(c, border=False):
+                b = "border-left:1px solid rgba(255,255,255,0.12);" if border else ""
+                return f"<th style='opacity:0.5;font-size:11px;{b}'>{c}</th>"
+            def td(val, bold=False, border=False):
+                b = "border-left:1px solid rgba(255,255,255,0.12);" if border else ""
+                fw = "font-weight:700;" if bold else ""
+                return f"<td style='{fw}{b}'>{int(val)}</td>"
+            header = "".join([th(c) for c in q_cols]
+                           + ([th("1H",True),th("2H")] if h_cols else [])
+                           + ([th("T",True)] if t_cols else []))
             rows_html = ""
             for _, r in df.iterrows():
-                cells = ""
-                for q in qs:
-                    bold = ' style="font-weight:700"' if q == "T" else ""
-                    cells += f"<td{bold}>{int(r[q])}</td>"
-                rows_html += f"<tr><td style='font-weight:700;text-align:left'>{r['Team']}</td>{cells}</tr>"
-            return f"""
-            <table style="width:100%;border-collapse:collapse;font-size:13px;text-align:center">
-              <thead><tr style="opacity:0.45;font-size:11px">
-                <th style="text-align:left;width:60px"></th>{header_cells}
-              </tr></thead>
-              <tbody>{rows_html}</tbody>
-            </table>"""
+                cells = "".join([td(r.get(c,0)) for c in q_cols]
+                              + ([td(r.get("1H",0),border=True),td(r.get("2H",0))] if h_cols else [])
+                              + ([td(r.get("T",0),bold=True,border=True)] if t_cols else []))
+                rows_html += f"<tr><td style='font-weight:700;text-align:left;padding-right:16px'>{r['Team']}</td>{cells}</tr>"
+            return f"""<table style="width:auto;border-collapse:collapse;font-size:13px;text-align:center;margin:6px 0">
+              <thead><tr><th></th>{header}</tr></thead>
+              <tbody style="line-height:2">{rows_html}</tbody></table>"""
 
         st.markdown(_ls_html(_ls_show), unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
@@ -1135,6 +1142,8 @@ elif st.session_state.view == "boxscore":
     run_grader = st.button("⚡ Grade Props", key="grade_btn")
 
 
+    graded = []
+    team_graded = []
     if run_grader and prop_text.strip():
         def strip_odds(line: str) -> str:
             """Remove trailing +240 / -115 odds from a prop line."""
