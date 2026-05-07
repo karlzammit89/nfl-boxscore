@@ -1065,6 +1065,8 @@ elif st.session_state.view == "boxscore":
             (_re.compile(r'receptions?', _re.I),                   "Receptions"),
             (_re.compile(r'interceptions?', _re.I),                "Interceptions"),
             (_re.compile(r'sacks?|record a sack', _re.I),          "Sacks"),
+            (_re.compile(r'completions?|completed passes?', _re.I),          "Completions"),
+            (_re.compile(r'receiving tds?|receiving touchdowns?|rec tds?', _re.I), "Receiving TDs"),
         ]
         COND_MAP_RE = [
             (_re.compile(r'each quarter', _re.I),  "each quarter"),
@@ -1512,6 +1514,13 @@ elif st.session_state.view == "boxscore":
                 "receptions":      ("receiving", "REC"),
                 "receiving yards": ("receiving", "YDS"),
                 "receiving yds":   ("receiving", "YDS"),
+                "completions":      ("passing",    "COMP"),
+                "completion":       ("passing",    "COMP"),
+                "completed passes": ("passing",    "COMP"),
+                "receiving tds":    ("receiving",  "TD"),
+                "receiving td":     ("receiving",  "TD"),
+                "rec tds":          ("receiving",  "TD"),
+                "rec td":           ("receiving",  "TD"),
                 "receiving td":    ("receiving", "TD"),
                 "receiving tds":   ("receiving", "TD"),
                     "sack":            ("defense",   "SACKS"),
@@ -1682,7 +1691,7 @@ elif st.session_state.view == "boxscore":
                         parts_pr.append(f"{k}: {num}")
                 detail = " | ".join(parts_pr)
                 if list(pr.keys()) == ["Game"]:
-                    scope_display = f"Game:{parts_pr[0]}"
+                    scope_display = f"Game: {parts_pr[0]}"
                 else:
                     scope_display = f"{scope_short} | {detail}"
             else:
