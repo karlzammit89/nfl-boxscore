@@ -2182,7 +2182,7 @@ elif st.session_state.view == "boxscore":
                 won = all(_check_reqs(reqs, p, is_each) for p in periods)
 
             # Build Data column from scoring_df directly
-            plbl = {"Q1":"Q1","Q2":"Q2","Q3":"Q3","Q4":"Q4","1H":"1st Half","2H":"2nd Half"}
+            plbl = {"Q1":"Q1","Q2":"Q2","Q3":"Q3","Q4":"Q4","1H":"1H","2H":"2H"}
             sorted_teams = sorted(_game_teams)
             req_lbls = {"rushing_td":"Rush TD","passing_td":"Pass TD","any_td":"TD","fg":"FG","score":"Pts"}
 
@@ -2237,13 +2237,13 @@ elif st.session_state.view == "boxscore":
                     if _ls_t is not None and not _ls_t.empty and "Team" in _ls_t.columns:
                         _tr = _ls_t[_ls_t["Team"].str.upper() == team.upper()]
                         if not _tr.empty:
-                            q_parts = " | ".join(
+                            q_parts = ", ".join(
                                 f"{p}: {int(pd.to_numeric(_tr.iloc[0].get(p, 0), errors='coerce') or 0)}"
                                 for p in periods)
                             team_data_parts.append(f"{team} {q_parts}")
                             continue
                     # Fallback: use scoring_df cumulative diffs
-                    q_parts = " | ".join(
+                    q_parts = ", ".join(
                         f"{p}: {_pts_from_types(_sdf_types(team=team, period=p))}"
                         for p in periods)
                     team_data_parts.append(f"{team} {q_parts}")
@@ -2267,7 +2267,7 @@ elif st.session_state.view == "boxscore":
                         types_t = _sdf_types(team=team, period=p)
                         req_strs_t = [f"{req_lbls.get(rt,rt)}: {_count_from_types(types_t, rt)}" for rt, rn in reqs]
                         period_parts.append(f"{plbl.get(p,p)} {' & '.join(req_strs_t)}")
-                    team_data_parts.append(f"{team} {' | '.join(period_parts)}")
+                    team_data_parts.append(f"{team} {', '.join(period_parts)}")
                 data_str = " | ".join(team_data_parts)
 
             elif periods == ["game total"] and is_each:
@@ -2293,12 +2293,11 @@ elif st.session_state.view == "boxscore":
                 for p in periods:
                     types_p = _sdf_types(period=p)
                     if reqs[0][0] == "score":
-                        # Just show the number, no label
                         req_strs_p = [str(_pts_from_types(types_p))]
                     else:
                         req_strs_p = [f"{req_lbls.get(rt,rt)}: {_count_from_types(types_p, rt)}" for rt, rn in reqs]
                     period_parts.append(f"{plbl.get(p,p)}: {' & '.join(req_strs_p)}")
-                data_str = " | ".join(period_parts)
+                data_str = ", ".join(period_parts)
 
             team_graded.append({"Prop": clean_lines[i], "Data": data_str,
                                  "Result": "✅ Won" if won else "❌ Lost"})
