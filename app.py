@@ -2577,12 +2577,12 @@ elif st.session_state.view == "boxscore":
 - `Both [Player] and [Player] to Each Record N+ [stat] in Each Half`
 
 *Two or more players — combined total*
-- `[Player] and [Player] to Combine for N+ [stat]`
-- `[Player], [Player], and [Player] to Combine for N+ [stat]` (up to 5 players)
+- `[Player], [Player] and [Player] to Combine for N+ [stat]`
+- `[Player], [Player] and [Player] to Combine for N+ [stat]` (up to 5 players)
 
 *First TD scorer*
 - `[Player] to Score the First TD`
-- `[Player] or [Player] to Score the First TD`
+- `[Player] or [Player] to Score the First TD` (up to 2 players)
 
 ---
 
