@@ -854,17 +854,12 @@ elif st.session_state.view == "boxscore":
     if qtr_active:
         st.markdown("<div class='sec-div' style='margin-top:8px'>Prop Checker by Quarter — Results</div>",
                     unsafe_allow_html=True)
-        _q_default = 1 if _q_rush_on else (2 if _q_recv_on else 0)
-        qtabs = st.tabs(["Passing","Rushing","Receiving"])
-        with qtabs[0]: show_prop_or_stats("passing",   "YDS")
-        with qtabs[1]: show_prop_or_stats("rushing",   "YDS")
-        with qtabs[2]: show_prop_or_stats("receiving", "YDS")
-        # JS to auto-click the right tab
-        if _q_default > 0:
-            st.markdown(f"""<script>
-            (function(){{var tabs=window.parent.document.querySelectorAll('[data-testid="stTab"]');
-            if(tabs[{_q_default}])tabs[{_q_default}].click();}})();
-            </script>""", unsafe_allow_html=True)
+        if _q_pass_on:
+            show_prop_or_stats("passing", "YDS")
+        elif _q_rush_on:
+            show_prop_or_stats("rushing", "YDS")
+        elif _q_recv_on:
+            show_prop_or_stats("receiving", "YDS")
 
     with st.expander("📊 Prop Checker by Half", expanded=False):
         st.caption(
@@ -1031,16 +1026,12 @@ elif st.session_state.view == "boxscore":
     if half_active:
         st.markdown("<div class='sec-div' style='margin-top:8px'>Prop Checker by Half — Results</div>",
                     unsafe_allow_html=True)
-        _h_default = 1 if _h_rush_on else (2 if _h_recv_on else 0)
-        htabs = st.tabs(["Passing","Rushing","Receiving"])
-        with htabs[0]: show_half_prop_or_stats("passing",   "YDS")
-        with htabs[1]: show_half_prop_or_stats("rushing",   "YDS")
-        with htabs[2]: show_half_prop_or_stats("receiving", "YDS")
-        if _h_default > 0:
-            st.markdown(f"""<script>
-            (function(){{var tabs=window.parent.document.querySelectorAll('[data-testid="stTab"]');
-            if(tabs[{_h_default}])tabs[{_h_default}].click();}})();
-            </script>""", unsafe_allow_html=True)
+        if _h_pass_on:
+            show_half_prop_or_stats("passing", "YDS")
+        elif _h_rush_on:
+            show_half_prop_or_stats("rushing", "YDS")
+        elif _h_recv_on:
+            show_half_prop_or_stats("receiving", "YDS")
 
     st.divider()
 
@@ -1832,8 +1823,9 @@ elif st.session_state.view == "boxscore":
                 return 0
 
         def _check_reqs(reqs, period_label, each_team):
-            plays = _plays_in(period_label)
-            pts   = _pts_in(period_label)
+            plays = _plays_in(period_label) if period_label else (
+                scoring_df["Type"].str.lower().tolist() if scoring_df is not None and not scoring_df.empty and "Type" in scoring_df.columns else [])
+            pts   = _pts_in(period_label) if period_label else 0
             for req_type, req_n in reqs:
                 if req_type == "rushing_td":
                     ok = sum(1 for p in plays if "rush" in p and "touchdown" in p) >= req_n
@@ -2164,76 +2156,89 @@ elif st.session_state.view == "boxscore":
             if atd: reqs.append(("any_td", int(atd.group(1))))
             if fg:  reqs.append(("fg", int(fg.group(1))))
             if not reqs: reqs.append(("score", 1))
-            periods = ["Q1","Q2","Q3","Q4"] if cond == "each quarter" else ["1H","2H"]
-            won = all(_check_reqs(reqs, p, is_each) for p in periods)
+            if cond == "each quarter":
+                periods = ["Q1","Q2","Q3","Q4"]
+            elif cond == "each half":
+                periods = ["1H","2H"]
+            else:
+                periods = ["game total"]  # whole game, no period split
+            if periods == ["game total"]:
+                won = _check_reqs(reqs, None, is_each)
+            else:
+                won = all(_check_reqs(reqs, p, is_each) for p in periods)
 
-            # Build descriptive Data column — per-team breakdown for each_team props
-            def _team_plays(team_abbr, period_label):
-                """Scoring play types for a specific team in a period."""
+            # Build Data column from scoring_df directly
+            plbl = {"Q1":"Q1","Q2":"Q2","Q3":"Q3","Q4":"Q4","1H":"1st Half","2H":"2nd Half"}
+            sorted_teams = sorted(_game_teams)
+            req_lbls = {"rushing_td":"Rush TD","passing_td":"Pass TD","any_td":"TD","fg":"FG","score":"Pts"}
+
+            def _sdf_types(team=None, period=None):
+                """Get Type list from scoring_df filtered by team and/or period."""
                 if scoring_df is None or scoring_df.empty: return []
-                mask = (scoring_df["Quarter"] == period_label) if "Quarter" in scoring_df.columns else pd.Series([False]*len(scoring_df))
-                if "Team" in scoring_df.columns:
-                    mask = mask & (scoring_df["Team"].str.upper() == team_abbr.upper())
-                rows = scoring_df[mask]
-                return rows["Type"].str.lower().tolist() if "Type" in rows.columns else []
+                df = scoring_df.copy()
+                if period and "Quarter" in df.columns:
+                    df = df[df["Quarter"] == period]
+                if team and "Team" in df.columns:
+                    df = df[df["Team"].str.upper() == team.upper()]
+                return df["Type"].str.lower().tolist() if "Type" in df.columns else []
 
-            def _count_req(plays, req_type):
-                if req_type == "rushing_td":  return sum(1 for p in plays if "rush" in p and "touchdown" in p)
-                if req_type == "passing_td":  return sum(1 for p in plays if "pass" in p and "touchdown" in p)
-                if req_type == "any_td":      return sum(1 for p in plays if "touchdown" in p)
-                if req_type == "fg":          return sum(1 for p in plays if "field goal" in p)
+            def _count_from_types(types_list, req_type):
+                if req_type == "rushing_td": return sum(1 for t in types_list if "rush" in t and "touchdown" in t)
+                if req_type == "passing_td": return sum(1 for t in types_list if ("pass" in t or "receiving" in t) and "touchdown" in t)
+                if req_type == "any_td":     return sum(1 for t in types_list if "touchdown" in t)
+                if req_type == "fg":         return sum(1 for t in types_list if "field goal" in t and "good" in t)
                 return 0
 
-            def _team_q_pts_from_sdf2(team_abbr, period_label):
-                """Points scored by team in period from scoring_df."""
-                if scoring_df is None or scoring_df.empty: return 0
-                mask = scoring_df["Quarter"] == period_label if "Quarter" in scoring_df.columns else pd.Series([False]*len(scoring_df))
-                if "Team" in scoring_df.columns:
-                    mask = mask & (scoring_df["Team"].str.upper() == team_abbr.upper())
-                rows = scoring_df[mask]
-                if rows.empty: return 0
-                # Each scoring play adds to Away or Home score — sum the deltas
+            def _pts_from_types(types_list):
+                """Estimate points from scoring play types."""
                 total = 0
-                for _, row in rows.iterrows():
-                    _type = str(row.get("Type","")).lower()
-                    if "touchdown" in _type: total += 6
-                    elif "field goal" in _type: total += 3
-                    elif "extra point" in _type or "pat" in _type: total += 1
-                    elif "two-point" in _type or "2-point" in _type: total += 2
-                    else: total += 0
+                for t in types_list:
+                    if "touchdown" in t: total += 6
+                    elif "field goal" in t and "good" in t: total += 3
+                    elif "extra point" in t: total += 1
+                    elif "two-point" in t or "two point" in t: total += 2
                 return total
 
-            plbl = {"Q1":"Q1","Q2":"Q2","Q3":"Q3","Q4":"Q4","1H":"1st Half","2H":"2nd Half"}
-            sorted_teams = sorted(_game_teams)  # consistent order
-
             if is_each and reqs[0][0] == "score":
-                # "Each Team to Score in All Four Quarters" — show per-team per-quarter points
+                # Each Team to Score in All Four Quarters
                 team_data_parts = []
                 for team in sorted_teams:
-                    q_parts = " | ".join(f"{plbl.get(p,p)}: {_team_q_pts_from_sdf2(team, p)}" for p in periods)
+                    q_parts = " | ".join(
+                        f"{plbl.get(p,p)}: {_pts_from_types(_sdf_types(team=team, period=p))}"
+                        for p in periods)
                     team_data_parts.append(f"{team} {q_parts}")
                 data_str = " | ".join(team_data_parts)
 
             elif is_each:
-                # "Each Team to Score 1+ Rush TD & 1+ Pass TD [in Each Half]" — per-team per-period req counts
-                req_lbls = {"rushing_td":"Rush TD","passing_td":"Pass TD","any_td":"TD","fg":"FG"}
+                # Each Team to Score 1+ Rush TD & 1+ Pass TD [in Each Half/Quarter]
                 team_data_parts = []
                 for team in sorted_teams:
                     period_parts = []
                     for p in periods:
-                        plays_t = _team_plays(team, p)
-                        req_strs_t = [f"{req_lbls.get(rt,rt)}: {_count_req(plays_t, rt)}" for rt, rn in reqs]
+                        types_t = _sdf_types(team=team, period=p)
+                        req_strs_t = [f"{req_lbls.get(rt,rt)}: {_count_from_types(types_t, rt)}" for rt, rn in reqs]
                         period_parts.append(f"{plbl.get(p,p)} {' & '.join(req_strs_t)}")
                     team_data_parts.append(f"{team} {' | '.join(period_parts)}")
                 data_str = " | ".join(team_data_parts)
 
+            elif len(periods) == 1 and periods[0] == "game total":
+                # Game-level each-team prop (no period) — show per-team totals
+                team_data_parts = []
+                for team in sorted_teams:
+                    types_t = _sdf_types(team=team)
+                    req_strs_t = [f"{req_lbls.get(rt,rt)}: {_count_from_types(types_t, rt)}" for rt, rn in reqs]
+                    team_data_parts.append(f"{team} {' & '.join(req_strs_t)}")
+                data_str = " | ".join(team_data_parts)
+
             else:
                 # Non-each-team props — combined totals per period
-                req_lbls = {"rushing_td":"Rush TD","passing_td":"Pass TD","any_td":"TD","fg":"FG","score":"Pts"}
                 period_parts = []
                 for p in periods:
-                    all_plays = _plays_in(p)
-                    req_strs_p = [f"{req_lbls.get(rt,rt)}: {_count_req(all_plays, rt)}" for rt, rn in reqs]
+                    types_p = _sdf_types(period=p)
+                    if reqs[0][0] == "score":
+                        req_strs_p = [f"Pts: {_pts_from_types(types_p)}"]
+                    else:
+                        req_strs_p = [f"{req_lbls.get(rt,rt)}: {_count_from_types(types_p, rt)}" for rt, rn in reqs]
                     period_parts.append(f"{plbl.get(p,p)}: {' & '.join(req_strs_p)}")
                 data_str = " | ".join(period_parts)
 
