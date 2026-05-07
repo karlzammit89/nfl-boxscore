@@ -1836,27 +1836,45 @@ elif st.session_state.view == "boxscore":
                 "game total":   "Game",
             }.get(condition.lower(), condition)
             raw_line = results[0].get("raw_line", f"{threshold:.0f}+ {stat_short}")
-            pr = results[0].get("period_results", {})
-            if pr:
-                # Check for error messages in period_results
-                if "Error" in pr:
-                    scope_display = pr["Error"]
-                else:
-                    parts_pr = []
-                    for k, v in pr.items():
-                        v_parts = v.strip().split()
-                        num  = v_parts[-1] if len(v_parts) > 1 else v_parts[0]
-                        if k == "Game":
-                            parts_pr.append(f"{num}")
-                        else:
-                            parts_pr.append(f"{k}: {num}")
-                    detail = " | ".join(parts_pr)
-                    if list(pr.keys()) == ["Game"]:
-                        scope_display = f"Game: {parts_pr[0]}"
+
+            # Build Data column — merge all players period_results
+            def _fmt_pr(pr):
+                """Format period_results dict into display string."""
+                if not pr: return ""
+                if "Error" in pr: return pr["Error"]
+                parts = []
+                for k, v in pr.items():
+                    num = v.strip().split()[-1] if v.strip() else v
+                    parts.append(f"{num}" if k == "Game" else f"{k}: {num}")
+                return " ".join(parts)
+
+            if len(results) > 1:
+                # Multiple players (e.g. "X & Y to Each Record ...") — show per-player
+                player_parts = []
+                for r in results:
+                    pname = r.get("player","?").split()[-1]  # last name
+                    pr_str = _fmt_pr(r.get("period_results",{}))
+                    if pr_str:
+                        player_parts.append(f"{pname} {pr_str}")
                     else:
-                        scope_display = f"{scope_short} | {detail}"
+                        player_parts.append(pname)
+                scope_display = " | ".join(player_parts)
             else:
-                scope_display = scope_short
+                pr = results[0].get("period_results", {})
+                if pr:
+                    if "Error" in pr:
+                        scope_display = pr["Error"]
+                    else:
+                        parts_pr = []
+                        for k, v in pr.items():
+                            num = v.strip().split()[-1] if v.strip() else v
+                            parts_pr.append(f"{num}" if k == "Game" else f"{k}: {num}")
+                        if list(pr.keys()) == ["Game"]:
+                            scope_display = f"Game: {parts_pr[0]}"
+                        else:
+                            scope_display = f"{scope_short} | {" ".join(parts_pr)}"
+                else:
+                    scope_display = scope_short
             return {
                 "Prop":   raw_line,
                 "Data":   scope_display,
