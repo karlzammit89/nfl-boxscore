@@ -1042,6 +1042,10 @@ elif st.session_state.view == "boxscore":
     )
 
     run_grader = st.button("⚡ Grade Props", key="grade_btn")
+    if st.session_state.get("_grade_errors"):
+        with st.expander("⚠️ Grade errors (debug)", expanded=True):
+            for _e in st.session_state["_grade_errors"]:
+                st.code(_e)
 
     if run_grader and prop_text.strip():
         def strip_odds(line: str) -> str:
@@ -1715,12 +1719,16 @@ elif st.session_state.view == "boxscore":
                 return grade_prop_group(group)
             except Exception as _ge:
                 p = group[0] if group else {}
+                import traceback as _tb
+                _errs = st.session_state.get("_grade_errors", [])
+                _errs.append(f"{p.get('raw_line','?')}: {str(_ge)} | {_tb.format_exc()[-200:]}")
+                st.session_state["_grade_errors"] = _errs
                 return {
-                    "Players": p.get("player", "?"),
-                    "Prop":    f"{p.get('threshold','')}+ {p.get('stat','')} [EXC: {str(_ge)[:60]}]",
-                    "Data":   p.get("condition",""),
-                    "Result":  "❗ Error",
+                    "Prop":   p.get("raw_line","") or p.get("player","?"),
+                    "Data":   "—",
+                    "Result": "❗ Error",
                 }
+        st.session_state['_grade_errors'] = []
         graded += [safe_grade(group) for group in by_line.values()]
         for er in error_rows:
             graded.append({
