@@ -1178,6 +1178,8 @@ elif st.session_state.view == "boxscore":
                     r'(\d+\.?\d*)\+?\s*(passing tds?|pass tds?|rushing tds?|rush tds?|receiving tds?|rec tds?|tds?|touchdowns?|passing yards?|rushing yards?|receiving yards?|rec yards?|rec yds?|rush yards?|rush yds?|completions?|passes?|receptions?)', _re.I)
                 _OR_RE      = _re.compile(r'^(.+?)\s+or\s+(.+?)\s+to\s+(?:record|have|score)', _re.I)
                 _EACH_RE    = _re.compile(r'^(?:both\s+)?(.+?)\s+and\s+(.+?)\s+to\s+each\s+(?:complete|record|have|score)', _re.I)
+                _CMB5_RE    = _re.compile(r'^(.+?),\s+(.+?),\s+(.+?),\s+(.+?),?\s+and\s+(.+?)\s+to\s+combine', _re.I)
+                _CMB4_RE    = _re.compile(r'^(.+?),\s+(.+?),\s+(.+?),?\s+and\s+(.+?)\s+to\s+combine', _re.I)
                 _CMB3_RE    = _re.compile(r'^(.+?),\s+(.+?),?\s+and\s+(.+?)\s+to\s+combine', _re.I)
                 _CMB2_RE    = _re.compile(r'^(.+?)\s+and\s+(.+?)\s+to\s+combine', _re.I)
 
@@ -1202,6 +1204,8 @@ elif st.session_state.view == "boxscore":
                         _cat, _col = _cat_col.split("/")
                         _or_m   = _OR_RE.match(line)
                         _each_m = _EACH_RE.match(line)
+                        _c5_m   = _CMB5_RE.match(line)
+                        _c4_m   = _CMB4_RE.match(line)
                         _c3_m   = _CMB3_RE.match(line)
                         _c2_m   = _CMB2_RE.match(line)
                         if _or_m:
@@ -1217,6 +1221,22 @@ elif st.session_state.view == "boxscore":
                                 'threshold': _thr, 'condition': condition, 'operator': 'each',
                                 'players_list': [_each_m.group(1).strip(), _each_m.group(2).strip()],
                                 'category': _cat, 'col': _col, 'raw_line': line})
+                            continue
+                        elif _c5_m:
+                            props.append({"line_index": i,
+                                "players_list": [_c5_m.group(1).strip(), _c5_m.group(2).strip(), _c5_m.group(3).strip(),
+                                                 _c5_m.group(4).strip(), _c5_m.group(5).strip()],
+                                "player": _c5_m.group(1).strip(), "stat": _stat_raw, "threshold": _thr,
+                                "condition": condition, "operator": "combine",
+                                "category": _cat, "col": _col, "raw_line": line})
+                            continue
+                        elif _c4_m:
+                            props.append({"line_index": i,
+                                "players_list": [_c4_m.group(1).strip(), _c4_m.group(2).strip(),
+                                                 _c4_m.group(3).strip(), _c4_m.group(4).strip()],
+                                "player": _c4_m.group(1).strip(), "stat": _stat_raw, "threshold": _thr,
+                                "condition": condition, "operator": "combine",
+                                "category": _cat, "col": _col, "raw_line": line})
                             continue
                         elif _c3_m:
                             props.append({"line_index": i,
@@ -1716,16 +1736,11 @@ elif st.session_state.view == "boxscore":
                 return grade_prop_group(group)
             except Exception as _ge:
                 p = group[0] if group else {}
-                import traceback as _tb
-                _errs = st.session_state.get("_grade_errors", [])
-                _errs.append(f"{p.get('raw_line','?')}: {str(_ge)} | {_tb.format_exc()[-200:]}")
-                st.session_state["_grade_errors"] = _errs
                 return {
                     "Prop":   p.get("raw_line","") or p.get("player","?"),
                     "Data":   "—",
                     "Result": "❗ Error",
                 }
-        st.session_state['_grade_errors'] = []
         graded += [safe_grade(group) for group in by_line.values()]
         for er in error_rows:
             graded.append({
@@ -2156,15 +2171,3 @@ elif st.session_state.view == "boxscore":
                     if val.startswith("❗"): return "color:#f59e0b;font-weight:700"
                 return ""
             st.dataframe(tdf.style.map(_color_t, subset=ts), use_container_width=True, hide_index=True)
-
-
-
-
-    # ── Grade error debug ─────────────────────────────────────────────────
-    with st.expander("⚠️ Grade errors", expanded=True):
-        _errs = st.session_state.get("_grade_errors", [])
-        if _errs:
-            for _e in _errs:
-                st.code(_e)
-        else:
-            st.caption("No errors — grade props to see any issues here.")
