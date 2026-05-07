@@ -1133,17 +1133,15 @@ elif st.session_state.view == "boxscore":
     st.caption(
         "Enter one prop per line in plain English. "
         "Examples:\n"
-        "• Bijan Robinson to record 10+ Rushing Yards in Each Quarter\n"
-        "• Tua Tagovailoa Over 250 Passing Yards Game Total\n"
-        "• Tyreek Hill 3+ Receptions Each Half"
+        "Bijan Robinson to record 10+ Rushing Yards in Each Quarter\n"
+        "• Tyreek Hill 3+ Receptions in Each Half"
     )
 
     prop_text = st.text_area(
         "Props",
         placeholder=(
-            "Bijan Robinson to record 10+ Rushing Yards in Each Quarter+240\n"
-            "Bijan Robinson & Kyren Williams to Each Record 5+ Rushing Yards in Each Quarter+330\n"
-            "Kirk Cousins to record 100+ Passing Yards in Each Half+120"
+            "Bijan Robinson to record 10+ Rushing Yards in Each Quarter\n"
+            "Tyreek Hill 3+ Receptions in Each Half\n"
         ),
         height=200,
         key="prop_text_input",
@@ -2556,7 +2554,7 @@ elif st.session_state.view == "boxscore":
 
     with st.expander("📋 Supported Markets", expanded=False):
         st.markdown("""
-**👤 Player Props** — One prop per line
+**👤 Player Props**
 
 *Single player — game total*
 - `[Player] to record N+ Passing Yards`
@@ -2591,7 +2589,7 @@ elif st.session_state.view == "boxscore":
 
 ---
 
-**🏟 Team / Game Props** — One prop per line
+**🏟 Team / Game Props**
 
 *Team scoring — quarters*
 - `[Team] to Score in All Four Quarters`
@@ -2599,7 +2597,7 @@ elif st.session_state.view == "boxscore":
 - `Any Quarter to End Scoreless`
 - `Points Scored in Each Quarter`
 - `N+ TDs to be Scored in Each Quarter`
-- `N+ Made Field Goal in Each Quarter`
+- `N+ Made Field Goals in Each Quarter`
 
 *Team scoring — structured (exact format required, N+ is flexible)*
 - `Each Team to Score N+ TD in Each Quarter`
@@ -2607,19 +2605,15 @@ elif st.session_state.view == "boxscore":
 - `Each Team to Score N+ Rushing TDs & N+ Passing TDs`
 - `Each Team to Score N+ Rushing TDs & N+ Passing TDs in Each Half`
 
-*Special teams*
+*Touchdowns*
 - `[Team] Special Teams to Score a TD`
 - `[Team] Special Teams to Score the First TD`
 - `Opening Kickoff to be Returned for a Touchdown`
-
-*Game outcome*
-- `[Team] to Beat the [Team] in Overtime`
 - `No Touchdown in the Game`
-- `Successful 2pt Conversion` / `Successful 2 point Conversion` / `Successful two point Conversion`
 
-*First TD scorer*
-- `[Player] or [Player] to Score the First TD`
-- `[Player] to Score the First TD`
+*Others*
+- `[Team] to Beat the [Team] in Overtime`
+- `Successful 2pt Conversion` / `Successful 2 point Conversion` / `Successful two point Conversion`
 
 ---
 
