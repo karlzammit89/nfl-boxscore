@@ -594,13 +594,10 @@ elif st.session_state.view == "boxscore":
     by_period = data.get("by_period", {})
 
     # Linescore box score
-    # Build linescore from scoring_df (cumulative score diffs per team per quarter)
-    _scoring_disp = data.get("scoring", pd.DataFrame()) if 'data' in dir() else pd.DataFrame()
-
-    # data not yet loaded here — fetch it
     with st.spinner("Loading box score…"):
         data = load_all_stats(game_id)
 
+    # Build linescore from scoring_df (cumulative score diffs per team per quarter)
     _scoring_disp = data.get("scoring", pd.DataFrame())
     _ls_raw = data.get("linescore", pd.DataFrame())
 
