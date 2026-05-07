@@ -2215,16 +2215,56 @@ elif st.session_state.view == "boxscore":
 
             if is_each and reqs[0][0] == "score":
                 # Each Team to Score in All Four Quarters
+                # Derive per-team per-quarter points from cumulative Away/Home Score diffs
+                def _team_q_score_from_cumulative(team_abbr, period):
+                    """Get points scored by team in period using cumulative score diffs."""
+                    if scoring_df is None or scoring_df.empty: return 0
+                    # Determine if team is Away or Home
+                    _all_rows = scoring_df[scoring_df["Team"].str.upper() == team_abbr.upper()] if "Team" in scoring_df.columns else pd.DataFrame()
+                    if _all_rows.empty: return 0
+                    _fr = _all_rows.iloc[0]
+                    # Find prior row's score to determine delta direction
+                    _fi = _all_rows.index[0]
+                    _prev = scoring_df.loc[:_fi-1].iloc[-1] if _fi > 0 else None
+                    _prev_a = int(pd.to_numeric(_prev["Away Score"], errors="coerce") or 0) if _prev is not None else 0
+                    _prev_h = int(pd.to_numeric(_prev["Home Score"], errors="coerce") or 0) if _prev is not None else 0
+                    _da = int(pd.to_numeric(_fr["Away Score"], errors="coerce") or 0) - _prev_a
+                    _dh = int(pd.to_numeric(_fr["Home Score"], errors="coerce") or 0) - _prev_h
+                    score_col = "Away Score" if _da > 0 else "Home Score"
+                    # Now sum for this team in this period
+                    _period_rows = _sdf_types.__wrapped__(team=team_abbr, period=period) if hasattr(_sdf_types,'__wrapped__') else None
+                    # Use scoring_df directly
+                    _df_p = scoring_df.copy()
+                    if period == "1H": _df_p = _df_p[_df_p["Quarter"].isin(["Q1","Q2"])]
+                    elif period == "2H": _df_p = _df_p[_df_p["Quarter"].isin(["Q3","Q4"])]
+                    elif period in ("Q1","Q2","Q3","Q4"): _df_p = _df_p[_df_p["Quarter"] == period]
+                    if "Team" in _df_p.columns: _df_p = _df_p[_df_p["Team"].str.upper() == team_abbr.upper()]
+                    if _df_p.empty: return 0
+                    # Sum the deltas in the score column for this team in this period
+                    _vals = pd.to_numeric(_df_p[score_col], errors="coerce").fillna(0).tolist()
+                    _prev_val = pd.to_numeric(scoring_df.loc[:_df_p.index[0]-1][score_col].iloc[-1], errors="coerce") if _df_p.index[0] > 0 and len(scoring_df.loc[:_df_p.index[0]-1]) > 0 else 0
+                    _total = int(_vals[-1]) - int(_prev_val) if _vals else 0
+                    return max(0, _total)
+
                 team_data_parts = []
                 for team in sorted_teams:
                     q_parts = " | ".join(
-                        f"{plbl.get(p,p)}: {_pts_from_types(_sdf_types(team=team, period=p))}"
+                        f"{plbl.get(p,p)}: {_team_q_score_from_cumulative(team, p)}"
                         for p in periods)
                     team_data_parts.append(f"{team} {q_parts}")
                 data_str = " | ".join(team_data_parts)
 
+            elif is_each and periods == ["game total"]:
+                # Game-level each-team: "Each Team to Score 1+ Rush TD & 1+ Pass TD"
+                team_data_parts = []
+                for team in sorted_teams:
+                    types_t = _sdf_types(team=team)
+                    req_strs_t = [f"{req_lbls.get(rt,rt)}: {_count_from_types(types_t, rt)}" for rt, rn in reqs]
+                    team_data_parts.append(f"{team} {' & '.join(req_strs_t)}")
+                data_str = " | ".join(team_data_parts)
+
             elif is_each:
-                # Each Team to Score 1+ Rush TD & 1+ Pass TD [in Each Half/Quarter]
+                # Period-split each-team: "Each Team to Score 1+ TD & 1+ FG in Each Half"
                 team_data_parts = []
                 for team in sorted_teams:
                     period_parts = []
@@ -2258,7 +2298,8 @@ elif st.session_state.view == "boxscore":
                 for p in periods:
                     types_p = _sdf_types(period=p)
                     if reqs[0][0] == "score":
-                        req_strs_p = [f"Pts: {_pts_from_types(types_p)}"]
+                        # Just show the number, no label
+                        req_strs_p = [str(_pts_from_types(types_p))]
                     else:
                         req_strs_p = [f"{req_lbls.get(rt,rt)}: {_count_from_types(types_p, rt)}" for rt, rn in reqs]
                     period_parts.append(f"{plbl.get(p,p)}: {' & '.join(req_strs_p)}")
