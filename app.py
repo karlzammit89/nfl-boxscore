@@ -1132,9 +1132,7 @@ elif st.session_state.view == "boxscore":
                 unsafe_allow_html=True)
     st.caption(
         "Enter one prop per line. "
-        "Examples:\n"
-        "Bijan Robinson to record 10+ Rushing Yards in Each Quarter\n"
-        "• Tyreek Hill 3+ Receptions in Each Half"
+        "Examples show in the box below:\n"
     )
 
     prop_text = st.text_area(
