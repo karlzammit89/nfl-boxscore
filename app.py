@@ -2321,7 +2321,7 @@ elif st.session_state.view == "boxscore":
                 team_graded.append({"Prop": line, "Data": "Market format not supported",
                     "Result": "❗ Error"})
                 continue
-            cond    = next((lbl for pat,lbl in COND_T if pat.search(line)), "each quarter")
+            cond    = next((lbl for pat,lbl in COND_T if pat.search(line)), "game total")
             rtd = RUSH_TD_T.search(line)
             ptd = PASS_TD_T.search(line)
             atd_m = _re_t.search(r'(\d+)\+?\s*tds?', line, _re_t.I)
