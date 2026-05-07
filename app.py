@@ -589,14 +589,18 @@ elif st.session_state.view == "boxscore":
     # Status + venue as native Streamlit elements (auto-themed)
     st.markdown(f"{status_md}  ·  <span style='opacity:0.4;font-size:0.8rem'>{game.get('venue','')}</span>",
                 unsafe_allow_html=True)
-    st.divider()
 
     with st.spinner("Loading box score…"):
         data = load_all_stats(game_id)
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
-    # Linescore removed from UI
+    # Linescore box score
+    _ls_display = data.get("linescore", pd.DataFrame())
+    if _ls_display is not None and not _ls_display.empty:
+        _ls_cols = [c for c in ["Team","Q1","Q2","Q3","Q4","1H","2H","Total"] if c in _ls_display.columns]
+        st.dataframe(_ls_display[_ls_cols], use_container_width=True, hide_index=True)
+    st.divider()
 
     # Period filter
     st.markdown("<div class='sec-div' style='margin-top:18px'>Player Stats</div>",
@@ -2307,6 +2311,8 @@ elif st.session_state.view == "boxscore":
         # Fallback if nothing graded
         if not graded and not team_graded:
             st.info('No props could be parsed. Check your input format.')
+
+        st.warning("⚠️ Please report any issues with resulting such as incorrect result given and also report any ❗ Error results returned for further investigation/improvements.")
 
         # ── Team / game props table ────────────────────────────────────────────
         if team_graded:
