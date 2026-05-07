@@ -2347,7 +2347,20 @@ elif st.session_state.view == "boxscore":
             # Build Data column from scoring_df directly
             plbl = {"Q1":"Q1","Q2":"Q2","Q3":"Q3","Q4":"Q4","1H":"H1","2H":"H2"}
             sorted_teams = sorted(_game_teams)
-            req_lbls = {"rushing_td":"Rush","passing_td":"Pass","any_td":"","fg":"FG","score":""}
+            def _fmt_req_strs(reqs, types_list):
+                """Format requirement counts. If single any_td, omit label."""
+                _only_td = len(reqs) == 1 and reqs[0][0] == "any_td"
+                parts = []
+                for rt, rn in reqs:
+                    lbl = req_lbls.get(rt, rt)
+                    val = _count_from_types(types_list, rt)
+                    if _only_td or not lbl:
+                        parts.append(str(val))
+                    else:
+                        parts.append(f"{lbl}: {val}")
+                return " & ".join(parts)
+
+            req_lbls = {"rushing_td":"Rush","passing_td":"Pass","any_td":"TD","fg":"FG","score":""}
 
             def _sdf_types(team=None, period=None):
                 """Get Type list from scoring_df filtered by team and/or period."""
@@ -2417,12 +2430,7 @@ elif st.session_state.view == "boxscore":
                 team_data_parts = []
                 for team in sorted_teams:
                     types_t = _sdf_types(team=team)
-                    req_strs_t = []
-                    for rt, rn in reqs:
-                        lbl = req_lbls.get(rt, rt)
-                        val = _count_from_types(types_t, rt)
-                        req_strs_t.append(f"{val}" if not lbl else f"{lbl}: {val}")
-                    team_data_parts.append(f"{team} {' & '.join(req_strs_t)}")
+                    team_data_parts.append(f"{team} {_fmt_req_strs(reqs, types_t)}")
                 data_str = " | ".join(team_data_parts)
 
             elif is_each:
@@ -2430,14 +2438,14 @@ elif st.session_state.view == "boxscore":
                 team_data_parts = []
                 for team in sorted_teams:
                     period_parts = []
+                    _only_td_req = len(reqs) == 1 and reqs[0][0] == "any_td"
                     for p in periods:
                         types_t = _sdf_types(team=team, period=p)
-                        req_strs_t = []
-                        for rt, rn in reqs:
-                            lbl = req_lbls.get(rt, rt)
-                            val = _count_from_types(types_t, rt)
-                            req_strs_t.append(f"{val}" if not lbl else f"{lbl}: {val}")
-                        period_parts.append(f"{plbl.get(p,p)} {' & '.join(req_strs_t)}")
+                        _fmt = _fmt_req_strs(reqs, types_t)
+                        if _only_td_req:
+                            period_parts.append(f"{plbl.get(p,p)}: {_fmt}")
+                        else:
+                            period_parts.append(f"{plbl.get(p,p)} {_fmt}")
                     team_data_parts.append(f"{team} {', '.join(period_parts)}")
                 data_str = " | ".join(team_data_parts)
 
