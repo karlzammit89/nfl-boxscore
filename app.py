@@ -1857,6 +1857,7 @@ elif st.session_state.view == "boxscore":
         _NO_TD_RE      = _re_t.compile(r'^no\s+touchdown\s+in\s+the\s+game', _re_t.I)
         _FIRST_TD_RE   = _re_t.compile(r'^([\w\s]+?)\s+(?:or\s+([\w\s]+?)\s+)?to\s+score\s+the\s+first\s+td', _re_t.I)
         _TWO_PT_RE     = _re_t.compile(r'^successful\s+2\s*pt\s+conversion', _re_t.I)
+        _KICK_TD_RE    = _re_t.compile(r'^opening kick(?:off)?.*(?:return|returned).*td|opening kickoff.*touchdown', _re_t.I)
 
         # Special teams TD types from ESPN scoring summary
         # Excludes interception return (defensive) and fumble return (defensive)
@@ -2141,6 +2142,19 @@ elif st.session_state.view == "boxscore":
                 team_graded.append({'Prop': line, 'Data': _tq_detail,
                     'Result': '✅ Won' if won else '❌ Lost'})
                 continue
+            # ── Opening Kickoff Return for TD ──────────────────────────────────
+            if _KICK_TD_RE.search(line):
+                _sdf_kr = data.get('scoring', pd.DataFrame())
+                won = False
+                _kr_detail = 'No kickoff return TD on opening play'
+                if _sdf_kr is not None and not _sdf_kr.empty and 'Type' in _sdf_kr.columns:
+                    _first_type = str(_sdf_kr.iloc[0].get('Type','')).lower()
+                    _first_desc = str(_sdf_kr.iloc[0].get('Description',''))
+                    won = 'kickoff return' in _first_type and 'touchdown' in _first_type
+                    _kr_detail = f'First score: {_first_desc[:60]}'
+                team_graded.append({'Prop': line, 'Data': _kr_detail,
+                    'Result': '✅ Won' if won else '❌ Lost'})
+                continue
             if not TEAM_LINE_RE.match(line):
                 continue
             is_each = "each team" in line.lower() or "both teams" in line.lower()
@@ -2215,41 +2229,22 @@ elif st.session_state.view == "boxscore":
 
             if is_each and reqs[0][0] == "score":
                 # Each Team to Score in All Four Quarters
-                # Derive per-team per-quarter points from cumulative Away/Home Score diffs
-                def _team_q_score_from_cumulative(team_abbr, period):
-                    """Get points scored by team in period using cumulative score diffs."""
-                    if scoring_df is None or scoring_df.empty: return 0
-                    # Determine if team is Away or Home
-                    _all_rows = scoring_df[scoring_df["Team"].str.upper() == team_abbr.upper()] if "Team" in scoring_df.columns else pd.DataFrame()
-                    if _all_rows.empty: return 0
-                    _fr = _all_rows.iloc[0]
-                    # Find prior row's score to determine delta direction
-                    _fi = _all_rows.index[0]
-                    _prev = scoring_df.loc[:_fi-1].iloc[-1] if _fi > 0 else None
-                    _prev_a = int(pd.to_numeric(_prev["Away Score"], errors="coerce") or 0) if _prev is not None else 0
-                    _prev_h = int(pd.to_numeric(_prev["Home Score"], errors="coerce") or 0) if _prev is not None else 0
-                    _da = int(pd.to_numeric(_fr["Away Score"], errors="coerce") or 0) - _prev_a
-                    _dh = int(pd.to_numeric(_fr["Home Score"], errors="coerce") or 0) - _prev_h
-                    score_col = "Away Score" if _da > 0 else "Home Score"
-                    # Now sum for this team in this period
-                    _period_rows = _sdf_types.__wrapped__(team=team_abbr, period=period) if hasattr(_sdf_types,'__wrapped__') else None
-                    # Use scoring_df directly
-                    _df_p = scoring_df.copy()
-                    if period == "1H": _df_p = _df_p[_df_p["Quarter"].isin(["Q1","Q2"])]
-                    elif period == "2H": _df_p = _df_p[_df_p["Quarter"].isin(["Q3","Q4"])]
-                    elif period in ("Q1","Q2","Q3","Q4"): _df_p = _df_p[_df_p["Quarter"] == period]
-                    if "Team" in _df_p.columns: _df_p = _df_p[_df_p["Team"].str.upper() == team_abbr.upper()]
-                    if _df_p.empty: return 0
-                    # Sum the deltas in the score column for this team in this period
-                    _vals = pd.to_numeric(_df_p[score_col], errors="coerce").fillna(0).tolist()
-                    _prev_val = pd.to_numeric(scoring_df.loc[:_df_p.index[0]-1][score_col].iloc[-1], errors="coerce") if _df_p.index[0] > 0 and len(scoring_df.loc[:_df_p.index[0]-1]) > 0 else 0
-                    _total = int(_vals[-1]) - int(_prev_val) if _vals else 0
-                    return max(0, _total)
-
+                # Use linescore which has per-team per-quarter scores directly
+                from nfl.stats import build_linescore_df as _bls_t
+                _ls_t = _bls_t(game_id)
                 team_data_parts = []
                 for team in sorted_teams:
+                    if _ls_t is not None and not _ls_t.empty and "Team" in _ls_t.columns:
+                        _tr = _ls_t[_ls_t["Team"].str.upper() == team.upper()]
+                        if not _tr.empty:
+                            q_parts = " | ".join(
+                                f"{p}: {int(pd.to_numeric(_tr.iloc[0].get(p, 0), errors='coerce') or 0)}"
+                                for p in periods)
+                            team_data_parts.append(f"{team} {q_parts}")
+                            continue
+                    # Fallback: use scoring_df cumulative diffs
                     q_parts = " | ".join(
-                        f"{plbl.get(p,p)}: {_team_q_score_from_cumulative(team, p)}"
+                        f"{p}: {_pts_from_types(_sdf_types(team=team, period=p))}"
                         for p in periods)
                     team_data_parts.append(f"{team} {q_parts}")
                 data_str = " | ".join(team_data_parts)
