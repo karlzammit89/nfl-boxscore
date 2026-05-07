@@ -1131,17 +1131,19 @@ elif st.session_state.view == "boxscore":
     st.markdown("<div class='sec-div'>🎯 Prop Grader — Enter Props as Text</div>",
                 unsafe_allow_html=True)
     st.caption(
-        "Enter one prop per line. "
+        "Enter one prop per line in plain English. "
         "Examples:\n"
         "• Bijan Robinson to record 10+ Rushing Yards in Each Quarter\n"
+        "• Tua Tagovailoa Over 250 Passing Yards Game Total\n"
         "• Tyreek Hill 3+ Receptions Each Half"
     )
 
     prop_text = st.text_area(
         "Props",
         placeholder=(
-            "Bijan Robinson to record 10+ Rushing Yards in Each Quarter\n"
-            "Bijan Robinson & Kyren Williams to Each Record 5+ Rushing Yards in Each Quarter\n"
+            "Bijan Robinson to record 10+ Rushing Yards in Each Quarter+240\n"
+            "Bijan Robinson & Kyren Williams to Each Record 5+ Rushing Yards in Each Quarter+330\n"
+            "Kirk Cousins to record 100+ Passing Yards in Each Half+120"
         ),
         height=200,
         key="prop_text_input",
@@ -2554,33 +2556,75 @@ elif st.session_state.view == "boxscore":
 
     with st.expander("📋 Supported Markets", expanded=False):
         st.markdown("""
-**👤 Player Props**
-- `[Player] to record N+ Passing Yards / Rushing Yards / Receiving Yards`
-- `[Player] to record N+ Passing TDs / Rushing TDs / Receiving TDs`
-- `[Player] to record N+ Receptions / Completions / Interceptions`
+**👤 Player Props** — One prop per line
+
+*Single player — game total*
+- `[Player] to record N+ Passing Yards`
+- `[Player] to record N+ Rushing Yards`
+- `[Player] to record N+ Receiving Yards`
+- `[Player] to record N+ Passing TDs`
+- `[Player] to record N+ Rushing TDs`
+- `[Player] to record N+ Receiving TDs`
+- `[Player] to record N+ Receptions`
+- `[Player] to record N+ Completions`
 - `[Player] to Record a Sack` / `[Player] to Record N+ Sacks`
-- Any of the above `in Each Quarter` or `in Each Half`
-- `[Player] or [Player] to record N+ [stat]` — either player hits threshold
-- `Both [Player] and [Player] to Each Record N+ [stat]` — both must hit
-- `[Player] and [Player] to Combine for N+ [stat]` — sum of both
-- `[Player], [Player], [Player] to Combine for N+ [stat]` — up to 5 players
+
+*Single player — per period*
+- `[Player] to record N+ [stat] in Each Quarter`
+- `[Player] to record N+ [stat] in Each Half`
+
+*Two players — either hits threshold*
+- `[Player] or [Player] to record N+ [stat]`
+
+*Two players — both must hit threshold*
+- `Both [Player] and [Player] to Each Record N+ [stat]`
+- `Both [Player] and [Player] to Each Record N+ [stat] in Each Quarter`
+- `Both [Player] and [Player] to Each Record N+ [stat] in Each Half`
+
+*Two or more players — combined total*
+- `[Player] and [Player] to Combine for N+ [stat]`
+- `[Player], [Player], and [Player] to Combine for N+ [stat]` (up to 5 players)
+
+*First TD scorer*
+- `[Player] to Score the First TD`
+- `[Player] or [Player] to Score the First TD`
+
+---
+
+**🏟 Team / Game Props** — One prop per line
+
+*Team scoring — quarters*
+- `[Team] to Score in All Four Quarters`
+- `Each Team to Score in All Four Quarters`
+- `Any Quarter to End Scoreless`
+- `Points Scored in Each Quarter`
+- `N+ TDs to be Scored in Each Quarter`
+- `N+ Made Field Goal in Each Quarter`
+
+*Team scoring — structured (exact format required, N+ is flexible)*
+- `Each Team to Score N+ TD in Each Quarter`
+- `Each Team to Score N+ TD & N+ FG in Each Half`
+- `Each Team to Score N+ Rushing TDs & N+ Passing TDs`
+- `Each Team to Score N+ Rushing TDs & N+ Passing TDs in Each Half`
+
+*Special teams*
+- `[Team] Special Teams to Score a TD`
+- `[Team] Special Teams to Score the First TD`
+- `Opening Kickoff to be Returned for a Touchdown`
+
+*Game outcome*
+- `[Team] to Beat the [Team] in Overtime`
+- `No Touchdown in the Game`
+- `Successful 2pt Conversion` / `Successful 2 point Conversion` / `Successful two point Conversion`
+
+*First TD scorer*
 - `[Player] or [Player] to Score the First TD`
 - `[Player] to Score the First TD`
 
-**🏟 Team / Game Props**
-- `[Team] to Score in All Four Quarters`
-- `Any Quarter to End Scoreless`
-- `[Team] Special Teams to Score a TD`
-- `[Team] Special Teams to Score the First TD`
-- `[Team] to Beat the [Team] in Overtime`
-- `No Touchdown in the Game`
-- `Successful 2pt Conversion` / `Successful 2 point Conversion`
-- `Each Team to Score 1+ TD in Each Quarter`
-- `Each Team to Score 1+ TD & 1+ FG in Each Half`
-- `Each Team to Score 1+ Rushing TDs & 1+ Passing TDs`
-- `Each Team to Score 1+ Rushing TDs & 1+ Passing TDs in Each Half`
-- `Points Scored in Each Quarter`
-- `1+ Made Field Goal in Each Quarter`
-- `N+ TDs to be Scored in Each Quarter`
-- `Opening Kickoff to be Returned for a Touchdown`
+---
+
+⚠️ **Notes**
+- Player names must match players in the current game or result will be ❗ Error
+- Team names accept abbreviations (DAL), city (Dallas), nickname (Cowboys) or full name (Dallas Cowboys)
+- N+ means any number e.g. 1+, 2+, 25+
         """)
