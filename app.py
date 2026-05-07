@@ -2253,7 +2253,27 @@ elif st.session_state.view == "boxscore":
                 continue
             _tq_m = _TEAM_Q_RE2.match(line)
             if _tq_m:
-                team_abbr = _resolve_team(_tq_m.group(1).strip())
+                _tq_raw = _tq_m.group(1).strip().lower()
+                _is_each_team = _tq_raw in ("each team", "both teams")
+                if _is_each_team:
+                    # Grade for each team separately
+                    from nfl.stats import build_linescore_df as _bls_tq
+                    _ls_tq = _bls_tq(game_id)
+                    _team_data_parts = []
+                    _won_all = True
+                    for _t in sorted(_game_teams):
+                        if _ls_tq is not None and not _ls_tq.empty and "Team" in _ls_tq.columns:
+                            _tr = _ls_tq[_ls_tq["Team"].str.upper() == _t.upper()]
+                            if not _tr.empty:
+                                _q_pts = {q: int(pd.to_numeric(_tr.iloc[0].get(q,0), errors="coerce") or 0) for q in ["Q1","Q2","Q3","Q4"]}
+                                _won_t = all(v > 0 for v in _q_pts.values())
+                                if not _won_t: _won_all = False
+                                _team_data_parts.append(f"{_t} " + ", ".join(f"{q}: {v}" for q,v in _q_pts.items()))
+                    _tq_data = " | ".join(_team_data_parts) if _team_data_parts else "No data"
+                    team_graded.append({"Prop": line, "Data": _tq_data,
+                        "Result": "✅ Won" if _won_all else "❌ Lost"})
+                    continue
+                team_abbr = _resolve_team(_tq_raw)
                 if _game_teams and team_abbr not in _game_teams:
                     team_graded.append({"Prop": line, "Data": f"{team_abbr} not in this game",
                         "Result": "❗ Error"})
