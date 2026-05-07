@@ -596,10 +596,22 @@ elif st.session_state.view == "boxscore":
     by_period = data.get("by_period", {})
 
     # Linescore box score
-    _ls_display = data.get("linescore", pd.DataFrame())
+    # Fetch linescore fresh (not from cache which may have 0s)
+    _ls_display = build_linescore_df(game_id)
     if _ls_display is not None and not _ls_display.empty:
-        _ls_cols = [c for c in ["Team","Q1","Q2","Q3","Q4","1H","2H","Total"] if c in _ls_display.columns]
-        st.dataframe(_ls_display[_ls_cols], use_container_width=True, hide_index=True)
+        _ls_cols = [c for c in ["Team","Q1","Q2","1H","Q3","Q4","2H","Total"] if c in _ls_display.columns]
+        _ls_show = _ls_display[_ls_cols].copy()
+        # Style: make Team col bold, numbers right-aligned
+        st.markdown("""
+        <style>
+        [data-testid="stDataFrame"] td:first-child {font-weight:700}
+        </style>""", unsafe_allow_html=True)
+        st.dataframe(
+            _ls_show,
+            use_container_width=True,
+            hide_index=True,
+            column_config={c: st.column_config.NumberColumn(c, format="%d") for c in _ls_cols if c != "Team"}
+        )
     st.divider()
 
     # Period filter
@@ -1130,7 +1142,7 @@ elif st.session_state.view == "boxscore":
             for i, line in enumerate(clean_lines):
                 # Skip team/game market lines — handled separately below
                 import re as _re_skip
-                if _re_skip.match(r'^(each team|both teams|points scored|\d+[+]?\s*(?:tds?|touchdowns?|field goals?|fgs?|scored))', line, _re_skip.I):
+                if _re_skip.match(r'^(each team|both teams|points scored|\d+[+]?\s*(?:made\s+)?(?:tds?|touchdowns?|field goals?|fgs?|scored))', line, _re_skip.I):
                     continue
                 # Skip team/game lines handled by team props
                 if _re_skip.search(r'any quarter.*scoreless|scoreless.*quarter', line, _re_skip.I):
@@ -1799,7 +1811,7 @@ elif st.session_state.view == "boxscore":
 
         # ── Grade team props ──────────────────────────────────────────────
         import re as _re_t
-        TEAM_LINE_RE = _re_t.compile(r'^(each team|both teams|points scored|\d+[+]?\s*(?:tds?|touchdowns?|field goals?|fgs?|scored))', _re_t.I)
+        TEAM_LINE_RE = _re_t.compile(r'^(each team|both teams|points scored|\d+[+]?\s*(?:made\s+)?(?:tds?|touchdowns?|field goals?|fgs?|scored))', _re_t.I)
         RUSH_TD_T    = _re_t.compile(r'(\d+)\+?\s*rushing tds?', _re_t.I)
         PASS_TD_T    = _re_t.compile(r'(\d+)\+?\s*passing tds?', _re_t.I)
         ANY_TD_T     = _re_t.compile(r'(\d+)\+?\s*tds?', _re_t.I)
