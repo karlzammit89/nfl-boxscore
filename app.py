@@ -1329,11 +1329,23 @@ elif st.session_state.view == "boxscore":
                                 'operator': 'or', 'category': _cat, 'col': _col, 'raw_line': line})
                             continue
                         elif _each_m:
-                            props.append({'line_index': i, 'player': _each_m.group(1).strip(),
-                                'player2': _each_m.group(2).strip(), 'stat': _stat_raw,
-                                'threshold': _thr, 'condition': condition, 'operator': 'each',
-                                'players_list': [_each_m.group(1).strip(), _each_m.group(2).strip()],
-                                'category': _cat, 'col': _col, 'raw_line': line})
+                            _p1e = _each_m.group(1).strip()
+                            _p2e = _each_m.group(2).strip()
+                            if condition == "game total":
+                                # Game total EACH → use early-return combine block
+                                props.append({'line_index': i, 'player': _p1e,
+                                    'player2': _p2e, 'stat': _stat_raw,
+                                    'threshold': _thr, 'condition': condition, 'operator': 'each',
+                                    'players_list': [_p1e, _p2e],
+                                    'category': _cat, 'col': _col, 'raw_line': line})
+                            else:
+                                # Period-based EACH (each quarter/half) → two separate props
+                                # so grade_prop handles per-period grading with all() logic
+                                for _pe in [_p1e, _p2e]:
+                                    props.append({'line_index': i, 'player': _pe,
+                                        'stat': _stat_raw, 'threshold': _thr,
+                                        'condition': condition, 'operator': 'over',
+                                        'category': _cat, 'col': _col, 'raw_line': line})
                             continue
                         elif _c5_m:
                             props.append({"line_index": i,
