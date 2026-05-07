@@ -557,6 +557,14 @@ elif st.session_state.view == "boxscore":
     else:
         status_md = f"🕐 **Scheduled** · {et_time_str(game['date'])}"
 
+    # Logo map for use throughout this view
+    _logo_map = {}
+    try:
+        _logo_map[game["away"]["abbr"].upper()] = game["away"].get("logo","")
+        _logo_map[game["home"]["abbr"].upper()] = game["home"].get("logo","")
+    except Exception:
+        pass
+
     al = (f'<img src="{away["logo"]}" style="width:54px;height:54px;object-fit:contain">'
           if away.get("logo") else "")
     hl = (f'<img src="{home["logo"]}" style="width:54px;height:54px;object-fit:contain">'
@@ -902,6 +910,36 @@ elif st.session_state.view == "boxscore":
         df = df.sort_values(["_sort", "Player"]).drop(columns=["_sort"]).reset_index(drop=True)
         return df
 
+    def _render_prop_df_html(df):
+        """Render prop checker df as HTML with logos in Team column."""
+        cols = list(df.columns)
+        # Header row
+        ths = "".join(
+            f"<th style='text-align:left;padding:6px 10px;font-size:12px;opacity:0.5;font-weight:500'>{c if c != 'Team' else ''}</th>"
+            for c in cols
+        )
+        rows_html = ""
+        for _, r in df.iterrows():
+            cells = ""
+            for c in cols:
+                val = str(r[c])
+                if c == "Team":
+                    logo = _logo_map.get(val.upper(), "")
+                    cell = f"<td style='padding:5px 10px;text-align:center'><img src='{logo}' style='width:22px;height:22px;object-fit:contain' title='{val}'></td>" if logo else f"<td style='padding:5px 10px'>{val}</td>"
+                elif val.startswith("✅"):
+                    cell = f"<td style='padding:5px 10px;color:#22c55e;font-weight:700;font-size:12px'>{val}</td>"
+                elif val.startswith("❌"):
+                    cell = f"<td style='padding:5px 10px;color:#ef4444;font-weight:700;font-size:12px'>{val}</td>"
+                else:
+                    cell = f"<td style='padding:5px 10px;font-size:12px'>{val}</td>"
+                cells += cell
+            rows_html += f"<tr style='border-bottom:0.5px solid rgba(128,128,128,0.15)'>{cells}</tr>"
+        return f"""<div style='overflow-x:auto;width:100%'>
+        <table style='border-collapse:collapse;width:100%;font-size:12px'>
+          <thead><tr style='border-bottom:1px solid rgba(128,128,128,0.2)'>{ths}</tr></thead>
+          <tbody>{rows_html}</tbody>
+        </table></div>"""
+
     def show_prop_or_stats(category: str, sort="YDS"):
         """Show prop table if thresholds set, else show normal stat table."""
         prop_df = build_prop_table(category)
@@ -910,16 +948,7 @@ elif st.session_state.view == "boxscore":
             if prop_df.empty:
                 st.info(f"No {category} data available.")
                 return
-            def color_cells(val):
-                if isinstance(val, str):
-                    if val.startswith("✅"): return "color: #22c55e; font-weight: 700"
-                    if val.startswith("❌"): return "color: #ef4444; font-weight: 700"
-                return ""
-            cols_to_style = [c for c in prop_df.columns if c not in ("Player","Team")]
-            st.dataframe(
-                prop_df.style.map(color_cells, subset=cols_to_style),
-                use_container_width=True, hide_index=True
-            )
+            st.markdown(_render_prop_df_html(prop_df), unsafe_allow_html=True)
         else:
             # Normal mode — show selected period stats
             stats_key   = _PERIOD_KEY.get(period_filter, period_filter)
@@ -1083,16 +1112,7 @@ elif st.session_state.view == "boxscore":
             if prop_df.empty:
                 st.info(f"No {category} data available.")
                 return
-            def color_cells(val):
-                if isinstance(val, str):
-                    if val.startswith("✅"): return "color: #22c55e; font-weight: 700"
-                    if val.startswith("❌"): return "color: #ef4444; font-weight: 700"
-                return ""
-            cols_to_style = [c for c in prop_df.columns if c not in ("Player","Team")]
-            st.dataframe(
-                prop_df.style.map(color_cells, subset=cols_to_style),
-                use_container_width=True, hide_index=True
-            )
+            st.markdown(_render_prop_df_html(prop_df), unsafe_allow_html=True)
         else:
             stats_key   = _PERIOD_KEY.get(period_filter, period_filter)
             period_data = by_period.get(stats_key, {})
