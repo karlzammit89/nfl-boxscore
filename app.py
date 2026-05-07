@@ -590,28 +590,89 @@ elif st.session_state.view == "boxscore":
     st.markdown(f"{status_md}  ·  <span style='opacity:0.4;font-size:0.8rem'>{game.get('venue','')}</span>",
                 unsafe_allow_html=True)
 
-    with st.spinner("Loading box score…"):
-        data = load_all_stats(game_id)
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
     # Linescore box score
-    # Fetch linescore fresh (not from cache which may have 0s)
-    _ls_display = build_linescore_df(game_id)
-    if _ls_display is not None and not _ls_display.empty:
-        _ls_cols = [c for c in ["Team","Q1","Q2","1H","Q3","Q4","2H","Total"] if c in _ls_display.columns]
-        _ls_show = _ls_display[_ls_cols].copy()
-        # Style: make Team col bold, numbers right-aligned
-        st.markdown("""
-        <style>
-        [data-testid="stDataFrame"] td:first-child {font-weight:700}
-        </style>""", unsafe_allow_html=True)
-        st.dataframe(
-            _ls_show,
-            use_container_width=True,
-            hide_index=True,
-            column_config={c: st.column_config.NumberColumn(c, format="%d") for c in _ls_cols if c != "Team"}
-        )
+    # Build linescore from scoring_df (cumulative score diffs per team per quarter)
+    _scoring_disp = data.get("scoring", pd.DataFrame()) if 'data' in dir() else pd.DataFrame()
+
+    # data not yet loaded here — fetch it
+    with st.spinner("Loading box score…"):
+        data = load_all_stats(game_id)
+
+    _scoring_disp = data.get("scoring", pd.DataFrame())
+    _ls_raw = data.get("linescore", pd.DataFrame())
+
+    def _build_ls_from_scoring(sdf, ls_raw):
+        """Build linescore table from scoring summary cumulative scores."""
+        if sdf is None or sdf.empty or "Away Score" not in sdf.columns:
+            return ls_raw  # fallback to raw linescore
+        teams_away = sdf.groupby("Quarter").last().reset_index() if "Quarter" in sdf.columns else pd.DataFrame()
+        if teams_away.empty: return ls_raw
+        # Get final cumulative scores per quarter
+        last_per_q = sdf.groupby("Quarter", sort=False).last().reset_index()
+        quarters = ["Q1","Q2","Q3","Q4"]
+        # Identify away/home teams from linescore if available
+        if ls_raw is not None and not ls_raw.empty and "Team" in ls_raw.columns:
+            away_t = ls_raw.iloc[0]["Team"] if len(ls_raw) > 0 else "Away"
+            home_t = ls_raw.iloc[1]["Team"] if len(ls_raw) > 1 else "Home"
+        else:
+            # Derive from scoring_df first play
+            away_t = sdf.iloc[0].get("Team","Away") if not sdf.empty else "Away"
+            home_t = sdf[sdf["Team"] != away_t].iloc[0].get("Team","Home") if len(sdf[sdf["Team"]!=away_t])>0 else "Home"
+        rows = []
+        for team, col in [(away_t, "Away Score"), (home_t, "Home Score")]:
+            row = {"Team": team}
+            prev = 0
+            total = 0
+            h1 = 0
+            h2 = 0
+            for q in quarters:
+                qr = last_per_q[last_per_q["Quarter"] == q]
+                if not qr.empty:
+                    val = int(pd.to_numeric(qr.iloc[0][col], errors="coerce") or 0)
+                    pts = val - prev
+                    prev = val
+                else:
+                    pts = 0
+                row[q] = pts
+                total += pts
+                if q in ("Q1","Q2"): h1 += pts
+                else: h2 += pts
+            row["1H"] = h1
+            row["2H"] = h2
+            row["T"] = total
+            rows.append(row)
+        return pd.DataFrame(rows)
+
+    _ls_built = _build_ls_from_scoring(_scoring_disp, _ls_raw)
+
+    if _ls_built is not None and not _ls_built.empty:
+        _ls_cols = [c for c in ["Team","Q1","Q2","1H","Q3","Q4","2H","T"] if c in _ls_built.columns]
+        _ls_show = _ls_built[_ls_cols]
+
+        # Render as styled HTML table matching screenshot
+        def _ls_html(df):
+            qs = [c for c in df.columns if c != "Team"]
+            header_cells = "".join(f"<th>{q}</th>" for q in qs)
+            rows_html = ""
+            for _, r in df.iterrows():
+                cells = ""
+                for q in qs:
+                    bold = ' style="font-weight:700"' if q == "T" else ""
+                    cells += f"<td{bold}>{int(r[q])}</td>"
+                rows_html += f"<tr><td style='font-weight:700;text-align:left'>{r['Team']}</td>{cells}</tr>"
+            return f"""
+            <table style="width:100%;border-collapse:collapse;font-size:13px;text-align:center">
+              <thead><tr style="opacity:0.45;font-size:11px">
+                <th style="text-align:left;width:60px"></th>{header_cells}
+              </tr></thead>
+              <tbody>{rows_html}</tbody>
+            </table>"""
+
+        st.markdown(_ls_html(_ls_show), unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
     st.divider()
 
     # Period filter
@@ -2202,7 +2263,7 @@ elif st.session_state.view == "boxscore":
             # Build Data column from scoring_df directly
             plbl = {"Q1":"Q1","Q2":"Q2","Q3":"Q3","Q4":"Q4","1H":"1H","2H":"2H"}
             sorted_teams = sorted(_game_teams)
-            req_lbls = {"rushing_td":"Rush TD","passing_td":"Pass TD","any_td":"TD","fg":"FG","score":"Pts"}
+            req_lbls = {"rushing_td":"Rush TD","passing_td":"Pass TD","any_td":"TD","fg":"","score":""}
 
             def _sdf_types(team=None, period=None):
                 """Get Type list from scoring_df filtered by team and/or period."""
@@ -2313,7 +2374,11 @@ elif st.session_state.view == "boxscore":
                     if reqs[0][0] == "score":
                         req_strs_p = [str(_pts_from_types(types_p))]
                     else:
-                        req_strs_p = [f"{req_lbls.get(rt,rt)}: {_count_from_types(types_p, rt)}" for rt, rn in reqs]
+                        req_strs_p = []
+                        for rt, rn in reqs:
+                            lbl = req_lbls.get(rt, rt)
+                            val = _count_from_types(types_p, rt)
+                            req_strs_p.append(f"{val}" if not lbl else f"{lbl}: {val}")
                     period_parts.append(f"{plbl.get(p,p)}: {' & '.join(req_strs_p)}")
                 data_str = ", ".join(period_parts)
 
@@ -2325,6 +2390,39 @@ elif st.session_state.view == "boxscore":
             st.info('No props could be parsed. Check your input format.')
 
         st.warning("⚠️ Please report any issues with resulting such as incorrect result given and also report any ❗ Error results returned for further investigation/improvements.")
+
+    with st.expander("📋 Supported Markets", expanded=False):
+        st.markdown("""
+**👤 Player Props**
+- `[Player] to record N+ Passing Yards / Rushing Yards / Receiving Yards`
+- `[Player] to record N+ Passing TDs / Rushing TDs / Receiving TDs`
+- `[Player] to record N+ Receptions / Completions / Interceptions`
+- `[Player] to Record a Sack` / `[Player] to Record N+ Sacks`
+- Any of the above `in Each Quarter` or `in Each Half`
+- `[Player] or [Player] to record N+ [stat]` — either player hits threshold
+- `Both [Player] and [Player] to Each Record N+ [stat]` — both must hit
+- `[Player] and [Player] to Combine for N+ [stat]` — sum of both
+- `[Player], [Player], [Player] to Combine for N+ [stat]` — up to 5 players
+- `[Player] or [Player] to Score the First TD`
+- `[Player] to Score the First TD`
+
+**🏟 Team / Game Props**
+- `[Team] to Score in All Four Quarters`
+- `Any Quarter to End Scoreless`
+- `[Team] Special Teams to Score a TD`
+- `[Team] Special Teams to Score the First TD`
+- `[Team] to Beat the [Team] in Overtime`
+- `No Touchdown in the Game`
+- `Successful 2pt Conversion` / `Successful 2 point Conversion`
+- `Each Team to Score 1+ TD in Each Quarter`
+- `Each Team to Score 1+ TD & 1+ FG in Each Half`
+- `Each Team to Score 1+ Rushing TDs & 1+ Passing TDs`
+- `Each Team to Score 1+ Rushing TDs & 1+ Passing TDs in Each Half`
+- `Points Scored in Each Quarter`
+- `1+ Made Field Goal in Each Quarter`
+- `N+ TDs to be Scored in Each Quarter`
+- `Opening Kickoff to be Returned for a Touchdown`
+        """)
 
         # ── Team / game props table ────────────────────────────────────────────
         if team_graded:
