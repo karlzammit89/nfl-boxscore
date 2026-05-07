@@ -724,10 +724,37 @@ elif st.session_state.view == "boxscore":
                 df = tmp.sort_values(sort, ascending=False)
             except Exception:
                 pass
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.markdown(_render_stats_df_html(df), unsafe_allow_html=True)
 
     # Key map: display label → internal key used in by_period
     _PERIOD_KEY = {"1st Half":"H1","2nd Half":"H2"}
+
+    def _render_stats_df_html(df):
+        """Render stats df as HTML with logos in Team column."""
+        cols = list(df.columns)
+        ths = "".join(
+            f"<th style='text-align:{'left' if c in ('Player','Team') else 'center'};padding:6px 10px;font-size:12px;opacity:0.5;font-weight:500'>{c}</th>"
+            for c in cols
+        )
+        rows_html = ""
+        for _, r in df.iterrows():
+            cells = ""
+            for c in cols:
+                val = str(r[c]) if pd.notna(r[c]) else ""
+                if c == "Team":
+                    logo = _logo_map.get(val.upper(), "")
+                    cell = f"<td style='padding:5px 10px;text-align:center'><img src='{logo}' style='width:22px;height:22px;object-fit:contain' title='{val}'></td>" if logo else f"<td style='padding:5px 10px;text-align:center;font-size:12px'>{val}</td>"
+                elif c == "Player":
+                    cell = f"<td style='padding:5px 10px;font-size:12px;font-weight:500'>{val}</td>"
+                else:
+                    cell = f"<td style='padding:5px 10px;text-align:center;font-size:12px'>{val}</td>"
+                cells += cell
+            rows_html += f"<tr style='border-bottom:0.5px solid rgba(128,128,128,0.15)'>{cells}</tr>"
+        return f"""<div style='overflow-x:auto;width:100%'>
+        <table style='border-collapse:collapse;width:100%;font-size:12px'>
+          <thead><tr style='border-bottom:1px solid rgba(128,128,128,0.2)'>{ths}</tr></thead>
+          <tbody>{rows_html}</tbody>
+        </table></div>"""
 
     def show_period_df(category: str, sort="YDS"):
         """Show per-period offensive stat.
@@ -751,7 +778,7 @@ elif st.session_state.view == "boxscore":
         # Remove Pos column if present
         if isinstance(df, pd.DataFrame) and "Pos" in df.columns:
             df = df.drop(columns=["Pos"])
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.markdown(_render_stats_df_html(df), unsafe_allow_html=True)
 
     tabs = st.tabs(["Passing","Rushing","Receiving","Defense","Kicking"])
     with tabs[0]: show_period_df("passing",   "YDS")
@@ -915,7 +942,7 @@ elif st.session_state.view == "boxscore":
         cols = list(df.columns)
         # Header row
         ths = "".join(
-            f"<th style='text-align:left;padding:6px 10px;font-size:12px;opacity:0.5;font-weight:500'>{c if c != 'Team' else ''}</th>"
+            f"<th style='text-align:left;padding:6px 10px;font-size:12px;opacity:0.5;font-weight:500'>{c}</th>"
             for c in cols
         )
         rows_html = ""
