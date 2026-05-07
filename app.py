@@ -1131,8 +1131,7 @@ elif st.session_state.view == "boxscore":
     st.markdown("<div class='sec-div'>🎯 Prop Grader — Enter Props as Text</div>",
                 unsafe_allow_html=True)
     st.caption(
-        "Enter one prop per line. "
-        "Examples show in the box below:\n"
+        "Enter one prop per line, examples show in the box below:\n"
     )
 
     prop_text = st.text_area(
