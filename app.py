@@ -1434,11 +1434,19 @@ elif st.session_state.view == "boxscore":
                             return float(pd.to_numeric(m2.iloc[0].get('SACKS', 0), errors='coerce') or 0)
                     return 0.0
                 match = _find_player(player, category, period_key)
-                return float(match.iloc[0].get(col, 0)) if not match.empty else 0.0
+                _row_r = match.iloc[0]
+                if col == 'COMP' and 'C/ATT' in _row_r.index:
+                    try: return float(str(_row_r['C/ATT']).split('/')[0])
+                    except: return 0.0
+                return float(pd.to_numeric(_row_r.get(col, 0), errors='coerce') or 0) if not match.empty else 0.0
             except Exception:
                 return 0.0
             match = _find_player(player, category, period_key)
-            return float(match.iloc[0].get(col, 0)) if not match.empty else 0.0
+            _row_r = match.iloc[0]
+            if col == 'COMP' and 'C/ATT' in _row_r.index:
+                try: return float(str(_row_r['C/ATT']).split('/')[0])
+                except: return 0.0
+            return float(pd.to_numeric(_row_r.get(col, 0), errors='coerce') or 0) if not match.empty else 0.0
 
         def grade_prop(prop: dict) -> dict:
             player    = prop.get("player","")
