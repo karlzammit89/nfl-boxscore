@@ -674,27 +674,34 @@ elif st.session_state.view == "boxscore":
             "Set a minimum threshold. Each player shows their stat per quarter "
             "with ✅ (hit) or ❌ (missed). The final column shows if they hit it in ALL quarters."
         )
+        # Determine active group: passing=1, rushing=2, receiving=3, none=0
+        _q_pass_on = bool(st.session_state.get("thr_pass_yds",0) or st.session_state.get("thr_pass_td",0))
+        _q_rush_on = bool(st.session_state.get("thr_rush_yds",0) or st.session_state.get("thr_rush_td",0))
+        _q_recv_on = bool(st.session_state.get("thr_recv_rec",0) or st.session_state.get("thr_recv_yds",0) or st.session_state.get("thr_recv_td",0))
+        _q_dis_pass = _q_rush_on or _q_recv_on
+        _q_dis_rush = _q_pass_on or _q_recv_on
+        _q_dis_recv = _q_pass_on or _q_rush_on
         pc1, pc2, pc3, pc4, pc5, pc6, pc7 = st.columns(7)
         with pc1:
-            thr_pass_yds = st.number_input("Pass YDS ≥",   min_value=0, value=0, step=1, key="thr_pass_yds")
+            thr_pass_yds = st.number_input("Pass YDS ≥",   min_value=0, value=0, step=1, key="thr_pass_yds", disabled=_q_dis_pass)
             if thr_pass_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_pass_yds}</div>", unsafe_allow_html=True)
         with pc2:
-            thr_pass_td  = st.number_input("Pass TD ≥",    min_value=0, value=0, step=1, key="thr_pass_td")
+            thr_pass_td  = st.number_input("Pass TD ≥",    min_value=0, value=0, step=1, key="thr_pass_td",  disabled=_q_dis_pass)
             if thr_pass_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_pass_td}</div>", unsafe_allow_html=True)
         with pc3:
-            thr_rush_yds = st.number_input("Rush YDS ≥",   min_value=0, value=0, step=1, key="thr_rush_yds")
+            thr_rush_yds = st.number_input("Rush YDS ≥",   min_value=0, value=0, step=1, key="thr_rush_yds", disabled=_q_dis_rush)
             if thr_rush_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_rush_yds}</div>", unsafe_allow_html=True)
         with pc4:
-            thr_rush_td  = st.number_input("Rush TD ≥",    min_value=0, value=0, step=1, key="thr_rush_td")
+            thr_rush_td  = st.number_input("Rush TD ≥",    min_value=0, value=0, step=1, key="thr_rush_td",  disabled=_q_dis_rush)
             if thr_rush_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_rush_td}</div>", unsafe_allow_html=True)
         with pc5:
-            thr_recv_rec = st.number_input("Receptions ≥", min_value=0, value=0, step=1, key="thr_recv_rec")
+            thr_recv_rec = st.number_input("Receptions ≥", min_value=0, value=0, step=1, key="thr_recv_rec", disabled=_q_dis_recv)
             if thr_recv_rec > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_recv_rec}</div>", unsafe_allow_html=True)
         with pc6:
-            thr_recv_yds = st.number_input("Rec YDS ≥",    min_value=0, value=0, step=1, key="thr_recv_yds")
+            thr_recv_yds = st.number_input("Rec YDS ≥",    min_value=0, value=0, step=1, key="thr_recv_yds", disabled=_q_dis_recv)
             if thr_recv_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_recv_yds}</div>", unsafe_allow_html=True)
         with pc7:
-            thr_recv_td  = st.number_input("Rec TD ≥",     min_value=0, value=0, step=1, key="thr_recv_td")
+            thr_recv_td  = st.number_input("Rec TD ≥",     min_value=0, value=0, step=1, key="thr_recv_td",  disabled=_q_dis_recv)
             if thr_recv_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_recv_td}</div>", unsafe_allow_html=True)
 
     def build_prop_table(category: str) -> pd.DataFrame | None:
@@ -847,37 +854,50 @@ elif st.session_state.view == "boxscore":
     if qtr_active:
         st.markdown("<div class='sec-div' style='margin-top:8px'>Prop Checker by Quarter — Results</div>",
                     unsafe_allow_html=True)
+        _q_default = 1 if _q_rush_on else (2 if _q_recv_on else 0)
         qtabs = st.tabs(["Passing","Rushing","Receiving"])
         with qtabs[0]: show_prop_or_stats("passing",   "YDS")
         with qtabs[1]: show_prop_or_stats("rushing",   "YDS")
         with qtabs[2]: show_prop_or_stats("receiving", "YDS")
+        # JS to auto-click the right tab
+        if _q_default > 0:
+            st.markdown(f"""<script>
+            (function(){{var tabs=window.parent.document.querySelectorAll('[data-testid="stTab"]');
+            if(tabs[{_q_default}])tabs[{_q_default}].click();}})();
+            </script>""", unsafe_allow_html=True)
 
     with st.expander("📊 Prop Checker by Half", expanded=False):
         st.caption(
             "Set a minimum threshold. Each player shows their stat per half "
             "with ✅ (hit) or ❌ (missed). The final column shows if they hit it in BOTH halves."
         )
+        _h_pass_on = bool(st.session_state.get("thr_h_pass_yds",0) or st.session_state.get("thr_h_pass_td",0))
+        _h_rush_on = bool(st.session_state.get("thr_h_rush_yds",0) or st.session_state.get("thr_h_rush_td",0))
+        _h_recv_on = bool(st.session_state.get("thr_h_recv_rec",0) or st.session_state.get("thr_h_recv_yds",0) or st.session_state.get("thr_h_recv_td",0))
+        _h_dis_pass = _h_rush_on or _h_recv_on
+        _h_dis_rush = _h_pass_on or _h_recv_on
+        _h_dis_recv = _h_pass_on or _h_rush_on
         ph1, ph2, ph3, ph4, ph5, ph6, ph7 = st.columns(7)
         with ph1:
-            thr_h_pass_yds = st.number_input("Pass YDS ≥",   min_value=0, value=0, step=1, key="thr_h_pass_yds")
+            thr_h_pass_yds = st.number_input("Pass YDS ≥",   min_value=0, value=0, step=1, key="thr_h_pass_yds", disabled=_h_dis_pass)
             if thr_h_pass_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_pass_yds}</div>", unsafe_allow_html=True)
         with ph2:
-            thr_h_pass_td  = st.number_input("Pass TD ≥",    min_value=0, value=0, step=1, key="thr_h_pass_td")
+            thr_h_pass_td  = st.number_input("Pass TD ≥",    min_value=0, value=0, step=1, key="thr_h_pass_td",  disabled=_h_dis_pass)
             if thr_h_pass_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_pass_td}</div>", unsafe_allow_html=True)
         with ph3:
-            thr_h_rush_yds = st.number_input("Rush YDS ≥",   min_value=0, value=0, step=1, key="thr_h_rush_yds")
+            thr_h_rush_yds = st.number_input("Rush YDS ≥",   min_value=0, value=0, step=1, key="thr_h_rush_yds", disabled=_h_dis_rush)
             if thr_h_rush_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_rush_yds}</div>", unsafe_allow_html=True)
         with ph4:
-            thr_h_rush_td  = st.number_input("Rush TD ≥",    min_value=0, value=0, step=1, key="thr_h_rush_td")
+            thr_h_rush_td  = st.number_input("Rush TD ≥",    min_value=0, value=0, step=1, key="thr_h_rush_td",  disabled=_h_dis_rush)
             if thr_h_rush_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_rush_td}</div>", unsafe_allow_html=True)
         with ph5:
-            thr_h_recv_rec = st.number_input("Receptions ≥", min_value=0, value=0, step=1, key="thr_h_recv_rec")
+            thr_h_recv_rec = st.number_input("Receptions ≥", min_value=0, value=0, step=1, key="thr_h_recv_rec", disabled=_h_dis_recv)
             if thr_h_recv_rec > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_recv_rec}</div>", unsafe_allow_html=True)
         with ph6:
-            thr_h_recv_yds = st.number_input("Rec YDS ≥",    min_value=0, value=0, step=1, key="thr_h_recv_yds")
+            thr_h_recv_yds = st.number_input("Rec YDS ≥",    min_value=0, value=0, step=1, key="thr_h_recv_yds", disabled=_h_dis_recv)
             if thr_h_recv_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_recv_yds}</div>", unsafe_allow_html=True)
         with ph7:
-            thr_h_recv_td  = st.number_input("Rec TD ≥",     min_value=0, value=0, step=1, key="thr_h_recv_td")
+            thr_h_recv_td  = st.number_input("Rec TD ≥",     min_value=0, value=0, step=1, key="thr_h_recv_td",  disabled=_h_dis_recv)
             if thr_h_recv_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_recv_td}</div>", unsafe_allow_html=True)
 
     def build_half_prop_table(category: str) -> pd.DataFrame | None:
@@ -1011,10 +1031,16 @@ elif st.session_state.view == "boxscore":
     if half_active:
         st.markdown("<div class='sec-div' style='margin-top:8px'>Prop Checker by Half — Results</div>",
                     unsafe_allow_html=True)
+        _h_default = 1 if _h_rush_on else (2 if _h_recv_on else 0)
         htabs = st.tabs(["Passing","Rushing","Receiving"])
         with htabs[0]: show_half_prop_or_stats("passing",   "YDS")
         with htabs[1]: show_half_prop_or_stats("rushing",   "YDS")
         with htabs[2]: show_half_prop_or_stats("receiving", "YDS")
+        if _h_default > 0:
+            st.markdown(f"""<script>
+            (function(){{var tabs=window.parent.document.querySelectorAll('[data-testid="stTab"]');
+            if(tabs[{_h_default}])tabs[{_h_default}].click();}})();
+            </script>""", unsafe_allow_html=True)
 
     st.divider()
 
@@ -2141,50 +2167,75 @@ elif st.session_state.view == "boxscore":
             periods = ["Q1","Q2","Q3","Q4"] if cond == "each quarter" else ["1H","2H"]
             won = all(_check_reqs(reqs, p, is_each) for p in periods)
 
-            # Build descriptive Data column showing actual counts per period
-            def _period_counts(period_label):
-                """Return actual counts for each requirement in a period."""
-                plays = _plays_in(period_label)
-                parts = []
-                for req_type, req_n in reqs:
-                    if req_type == "rushing_td":
-                        n = sum(1 for p in plays if "rush" in p and "touchdown" in p)
-                        parts.append(f"Rush TD: {n}")
-                    elif req_type == "passing_td":
-                        n = sum(1 for p in plays if "pass" in p and "touchdown" in p)
-                        parts.append(f"Pass TD: {n}")
-                    elif req_type == "any_td":
-                        n = sum(1 for p in plays if "touchdown" in p)
-                        parts.append(f"TD: {n}")
-                    elif req_type == "fg":
-                        n = sum(1 for p in plays if "field goal" in p)
-                        parts.append(f"FG: {n}")
-                    else:
-                        # score/points — get total from scoring_df
-                        if scoring_df is not None and not scoring_df.empty and "Quarter" in scoring_df.columns:
-                            q_rows = scoring_df[scoring_df["Quarter"] == period_label]
-                            # Use cumulative score diff for the quarter
-                            if not q_rows.empty:
-                                _last = q_rows.iloc[-1]
-                                _aw = int(pd.to_numeric(_last.get("Away Score",0), errors="coerce") or 0)
-                                _hw = int(pd.to_numeric(_last.get("Home Score",0), errors="coerce") or 0)
-                                # Get score at end of previous period
-                                _prev_rows = scoring_df[scoring_df.index < q_rows.index[0]] if len(q_rows) > 0 else pd.DataFrame()
-                                if not _prev_rows.empty:
-                                    _pl = _prev_rows.iloc[-1]
-                                    _aw -= int(pd.to_numeric(_pl.get("Away Score",0), errors="coerce") or 0)
-                                    _hw -= int(pd.to_numeric(_pl.get("Home Score",0), errors="coerce") or 0)
-                                parts.append(f"Pts: {_aw+_hw}")
-                            else:
-                                parts.append("Pts: 0")
-                        else:
-                            parts.append("Pts: ?")
-                return " & ".join(parts)
+            # Build descriptive Data column — per-team breakdown for each_team props
+            def _team_plays(team_abbr, period_label):
+                """Scoring play types for a specific team in a period."""
+                if scoring_df is None or scoring_df.empty: return []
+                mask = (scoring_df["Quarter"] == period_label) if "Quarter" in scoring_df.columns else pd.Series([False]*len(scoring_df))
+                if "Team" in scoring_df.columns:
+                    mask = mask & (scoring_df["Team"].str.upper() == team_abbr.upper())
+                rows = scoring_df[mask]
+                return rows["Type"].str.lower().tolist() if "Type" in rows.columns else []
 
-            period_labels = {"Q1": "Q1", "Q2": "Q2", "Q3": "Q3", "Q4": "Q4",
-                             "1H": "1st Half", "2H": "2nd Half"}
-            data_parts = [f"{period_labels.get(p,p)}: {_period_counts(p)}" for p in periods]
-            data_str = " | ".join(data_parts)
+            def _count_req(plays, req_type):
+                if req_type == "rushing_td":  return sum(1 for p in plays if "rush" in p and "touchdown" in p)
+                if req_type == "passing_td":  return sum(1 for p in plays if "pass" in p and "touchdown" in p)
+                if req_type == "any_td":      return sum(1 for p in plays if "touchdown" in p)
+                if req_type == "fg":          return sum(1 for p in plays if "field goal" in p)
+                return 0
+
+            def _team_q_pts_from_sdf2(team_abbr, period_label):
+                """Points scored by team in period from scoring_df."""
+                if scoring_df is None or scoring_df.empty: return 0
+                mask = scoring_df["Quarter"] == period_label if "Quarter" in scoring_df.columns else pd.Series([False]*len(scoring_df))
+                if "Team" in scoring_df.columns:
+                    mask = mask & (scoring_df["Team"].str.upper() == team_abbr.upper())
+                rows = scoring_df[mask]
+                if rows.empty: return 0
+                # Each scoring play adds to Away or Home score — sum the deltas
+                total = 0
+                for _, row in rows.iterrows():
+                    _type = str(row.get("Type","")).lower()
+                    if "touchdown" in _type: total += 6
+                    elif "field goal" in _type: total += 3
+                    elif "extra point" in _type or "pat" in _type: total += 1
+                    elif "two-point" in _type or "2-point" in _type: total += 2
+                    else: total += 0
+                return total
+
+            plbl = {"Q1":"Q1","Q2":"Q2","Q3":"Q3","Q4":"Q4","1H":"1st Half","2H":"2nd Half"}
+            sorted_teams = sorted(_game_teams)  # consistent order
+
+            if is_each and reqs[0][0] == "score":
+                # "Each Team to Score in All Four Quarters" — show per-team per-quarter points
+                team_data_parts = []
+                for team in sorted_teams:
+                    q_parts = " | ".join(f"{plbl.get(p,p)}: {_team_q_pts_from_sdf2(team, p)}" for p in periods)
+                    team_data_parts.append(f"{team} {q_parts}")
+                data_str = " | ".join(team_data_parts)
+
+            elif is_each:
+                # "Each Team to Score 1+ Rush TD & 1+ Pass TD [in Each Half]" — per-team per-period req counts
+                req_lbls = {"rushing_td":"Rush TD","passing_td":"Pass TD","any_td":"TD","fg":"FG"}
+                team_data_parts = []
+                for team in sorted_teams:
+                    period_parts = []
+                    for p in periods:
+                        plays_t = _team_plays(team, p)
+                        req_strs_t = [f"{req_lbls.get(rt,rt)}: {_count_req(plays_t, rt)}" for rt, rn in reqs]
+                        period_parts.append(f"{plbl.get(p,p)} {' & '.join(req_strs_t)}")
+                    team_data_parts.append(f"{team} {' | '.join(period_parts)}")
+                data_str = " | ".join(team_data_parts)
+
+            else:
+                # Non-each-team props — combined totals per period
+                req_lbls = {"rushing_td":"Rush TD","passing_td":"Pass TD","any_td":"TD","fg":"FG","score":"Pts"}
+                period_parts = []
+                for p in periods:
+                    all_plays = _plays_in(p)
+                    req_strs_p = [f"{req_lbls.get(rt,rt)}: {_count_req(all_plays, rt)}" for rt, rn in reqs]
+                    period_parts.append(f"{plbl.get(p,p)}: {' & '.join(req_strs_p)}")
+                data_str = " | ".join(period_parts)
 
             team_graded.append({"Prop": clean_lines[i], "Data": data_str,
                                  "Result": "✅ Won" if won else "❌ Lost"})
