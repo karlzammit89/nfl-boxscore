@@ -2308,19 +2308,17 @@ elif st.session_state.view == "boxscore":
             if not TEAM_LINE_RE.match(line):
                 continue
 
-            # Exact-match validation for each-team markets
-            _EXACT_EACH_MARKETS = [
-                "each team to score 1+ td in each quarter",
-                "each team to score 1+ td & 1+ fg in each half",
-                "each team to score 1+ rushing tds & 1+ passing tds",
-                "each team to score 1+ rushing tds & 1+ passing tds in each half",
+            # Validate each-team markets against allowed patterns (N+ is flexible)
+            import re as _re_em
+            _EACH_PATTERNS = [
+                _re_em.compile(r'^each team to score \d+\+? tds? in each quarter$', _re_em.I),
+                _re_em.compile(r'^each team to score \d+\+? tds? & \d+\+? fgs? in each half$', _re_em.I),
+                _re_em.compile(r'^each team to score \d+\+? rushing tds? & \d+\+? passing tds?$', _re_em.I),
+                _re_em.compile(r'^each team to score \d+\+? rushing tds? & \d+\+? passing tds? in each half$', _re_em.I),
             ]
             is_each = "each team" in line.lower() or "both teams" in line.lower()
-            if is_each and line.lower().strip() not in _EXACT_EACH_MARKETS:
-                # Check if it looks like an each-team market but doesn't match exactly
-                _closest = next((m for m in _EXACT_EACH_MARKETS if m.split()[3] in line.lower()), None)
-                _hint = f"Did you mean: '{next((m for m in _EXACT_EACH_MARKETS if all(w in line.lower() for w in m.split()[:5])), _EXACT_EACH_MARKETS[0])}'" if _closest else "Use exact market format from supported markets list"
-                team_graded.append({"Prop": line, "Data": _hint,
+            if is_each and not any(p.match(line.strip()) for p in _EACH_PATTERNS):
+                team_graded.append({"Prop": line, "Data": "Market format not supported",
                     "Result": "❗ Error"})
                 continue
             cond    = next((lbl for pat,lbl in COND_T if pat.search(line)), "each quarter")
