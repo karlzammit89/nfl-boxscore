@@ -1042,10 +1042,7 @@ elif st.session_state.view == "boxscore":
     )
 
     run_grader = st.button("⚡ Grade Props", key="grade_btn")
-    if st.session_state.get("_grade_errors"):
-        with st.expander("⚠️ Grade errors (debug)", expanded=True):
-            for _e in st.session_state["_grade_errors"]:
-                st.code(_e)
+
 
     if run_grader and prop_text.strip():
         def strip_odds(line: str) -> str:
@@ -2159,3 +2156,15 @@ elif st.session_state.view == "boxscore":
                     if val.startswith("❗"): return "color:#f59e0b;font-weight:700"
                 return ""
             st.dataframe(tdf.style.map(_color_t, subset=ts), use_container_width=True, hide_index=True)
+
+
+
+
+    # ── Grade error debug ─────────────────────────────────────────────────
+    with st.expander("⚠️ Grade errors", expanded=True):
+        _errs = st.session_state.get("_grade_errors", [])
+        if _errs:
+            for _e in _errs:
+                st.code(_e)
+        else:
+            st.caption("No errors — grade props to see any issues here.")
