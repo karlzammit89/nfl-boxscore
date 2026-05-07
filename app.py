@@ -2307,7 +2307,22 @@ elif st.session_state.view == "boxscore":
                 continue
             if not TEAM_LINE_RE.match(line):
                 continue
+
+            # Exact-match validation for each-team markets
+            _EXACT_EACH_MARKETS = [
+                "each team to score 1+ td in each quarter",
+                "each team to score 1+ td & 1+ fg in each half",
+                "each team to score 1+ rushing tds & 1+ passing tds",
+                "each team to score 1+ rushing tds & 1+ passing tds in each half",
+            ]
             is_each = "each team" in line.lower() or "both teams" in line.lower()
+            if is_each and line.lower().strip() not in _EXACT_EACH_MARKETS:
+                # Check if it looks like an each-team market but doesn't match exactly
+                _closest = next((m for m in _EXACT_EACH_MARKETS if m.split()[3] in line.lower()), None)
+                _hint = f"Did you mean: '{next((m for m in _EXACT_EACH_MARKETS if all(w in line.lower() for w in m.split()[:5])), _EXACT_EACH_MARKETS[0])}'" if _closest else "Use exact market format from supported markets list"
+                team_graded.append({"Prop": line, "Data": _hint,
+                    "Result": "❗ Error"})
+                continue
             cond    = next((lbl for pat,lbl in COND_T if pat.search(line)), "each quarter")
             rtd = RUSH_TD_T.search(line)
             ptd = PASS_TD_T.search(line)
