@@ -2140,14 +2140,53 @@ elif st.session_state.view == "boxscore":
             if not reqs: reqs.append(("score", 1))
             periods = ["Q1","Q2","Q3","Q4"] if cond == "each quarter" else ["1H","2H"]
             won = all(_check_reqs(reqs, p, is_each) for p in periods)
-            req_strs = []
-            for rt, rn in reqs:
-                lbl = {"rushing_td":"Rush TD","passing_td":"Pass TD","any_td":"TD","fg":"FG","score":"Points"}.get(rt,rt)
-                req_strs.append(f"{rn}+ {lbl}")
-            who  = "Each Team" if is_each else "Any Team"
-            prop = f"{who}: {' & '.join(req_strs)}"
-            scope = {"each quarter":"Each Quarter","each half":"Each Half"}.get(cond,"Game")
-            team_graded.append({"Prop": clean_lines[i], "Data": scope,
+
+            # Build descriptive Data column showing actual counts per period
+            def _period_counts(period_label):
+                """Return actual counts for each requirement in a period."""
+                plays = _plays_in(period_label)
+                parts = []
+                for req_type, req_n in reqs:
+                    if req_type == "rushing_td":
+                        n = sum(1 for p in plays if "rush" in p and "touchdown" in p)
+                        parts.append(f"Rush TD: {n}")
+                    elif req_type == "passing_td":
+                        n = sum(1 for p in plays if "pass" in p and "touchdown" in p)
+                        parts.append(f"Pass TD: {n}")
+                    elif req_type == "any_td":
+                        n = sum(1 for p in plays if "touchdown" in p)
+                        parts.append(f"TD: {n}")
+                    elif req_type == "fg":
+                        n = sum(1 for p in plays if "field goal" in p)
+                        parts.append(f"FG: {n}")
+                    else:
+                        # score/points — get total from scoring_df
+                        if scoring_df is not None and not scoring_df.empty and "Quarter" in scoring_df.columns:
+                            q_rows = scoring_df[scoring_df["Quarter"] == period_label]
+                            # Use cumulative score diff for the quarter
+                            if not q_rows.empty:
+                                _last = q_rows.iloc[-1]
+                                _aw = int(pd.to_numeric(_last.get("Away Score",0), errors="coerce") or 0)
+                                _hw = int(pd.to_numeric(_last.get("Home Score",0), errors="coerce") or 0)
+                                # Get score at end of previous period
+                                _prev_rows = scoring_df[scoring_df.index < q_rows.index[0]] if len(q_rows) > 0 else pd.DataFrame()
+                                if not _prev_rows.empty:
+                                    _pl = _prev_rows.iloc[-1]
+                                    _aw -= int(pd.to_numeric(_pl.get("Away Score",0), errors="coerce") or 0)
+                                    _hw -= int(pd.to_numeric(_pl.get("Home Score",0), errors="coerce") or 0)
+                                parts.append(f"Pts: {_aw+_hw}")
+                            else:
+                                parts.append("Pts: 0")
+                        else:
+                            parts.append("Pts: ?")
+                return " & ".join(parts)
+
+            period_labels = {"Q1": "Q1", "Q2": "Q2", "Q3": "Q3", "Q4": "Q4",
+                             "1H": "1st Half", "2H": "2nd Half"}
+            data_parts = [f"{period_labels.get(p,p)}: {_period_counts(p)}" for p in periods]
+            data_str = " | ".join(data_parts)
+
+            team_graded.append({"Prop": clean_lines[i], "Data": data_str,
                                  "Result": "✅ Won" if won else "❌ Lost"})
 
         # Fallback if nothing graded
