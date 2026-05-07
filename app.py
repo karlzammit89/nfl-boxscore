@@ -1141,6 +1141,8 @@ elif st.session_state.view == "boxscore":
                     continue
                 if _re_skip.match(r'^successful\s+2\s*pt\s+conversion', line, _re_skip.I):
                     continue
+                if _re_skip.match(r'^opening kick', line, _re_skip.I):
+                    continue
                 # "to score the first TD" — grade immediately if it matches
                 if _re.search(r'to\s+score\s+the\s+first\s+td', line, _re.I) and "special teams" not in line.lower():
                     _ftd_pls = []
