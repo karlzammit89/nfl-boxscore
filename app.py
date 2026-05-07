@@ -2256,19 +2256,42 @@ elif st.session_state.view == "boxscore":
                 _tq_raw = _tq_m.group(1).strip().lower()
                 _is_each_team = _tq_raw in ("each team", "both teams")
                 if _is_each_team:
-                    # Grade for each team separately
-                    from nfl.stats import build_linescore_df as _bls_tq
-                    _ls_tq = _bls_tq(game_id)
+                    # Grade for each team using scoring_df cumulative diffs (reliable)
+                    _sdf_etq = data.get("scoring", pd.DataFrame())
+                    def _team_q_from_sdf(team, period):
+                        """Points scored by team in quarter from scoring_df cumulative scores."""
+                        if _sdf_etq is None or _sdf_etq.empty: return 0
+                        _df = _sdf_etq.copy()
+                        if "Quarter" in _df.columns: _df = _df[_df["Quarter"] == period]
+                        if "Team" in _df.columns: _df = _df[_df["Team"].str.upper() == team.upper()]
+                        if _df.empty: return 0
+                        # Determine team's score column (Away or Home)
+                        _all = _sdf_etq[_sdf_etq["Team"].str.upper() == team.upper()] if "Team" in _sdf_etq.columns else pd.DataFrame()
+                        if _all.empty: return 0
+                        _fi = _all.index[0]
+                        _prev = _sdf_etq.loc[:_fi-1].iloc[-1] if _fi > 0 else None
+                        _pa = int(pd.to_numeric(_prev["Away Score"], errors="coerce") or 0) if _prev is not None else 0
+                        _ph = int(pd.to_numeric(_prev["Home Score"], errors="coerce") or 0) if _prev is not None else 0
+                        _fr = _all.iloc[0]
+                        _da = int(pd.to_numeric(_fr["Away Score"], errors="coerce") or 0) - _pa
+                        _col = "Away Score" if _da > 0 else "Home Score"
+                        # Get last row in this period for this team's score column
+                        _all_q = _sdf_etq.copy()
+                        if "Quarter" in _all_q.columns: _all_q = _all_q[_all_q["Quarter"] == period]
+                        _prev_q = _sdf_etq[~_sdf_etq.index.isin(_all_q.index)]
+                        _prev_q = _prev_q[_prev_q.index < _all_q.index[0]] if not _all_q.empty and len(_prev_q) > 0 else pd.DataFrame()
+                        if _all_q.empty: return 0
+                        _end_val = int(pd.to_numeric(_all_q.iloc[-1][_col], errors="coerce") or 0)
+                        _start_val = int(pd.to_numeric(_prev_q.iloc[-1][_col], errors="coerce") or 0) if not _prev_q.empty else 0
+                        return max(0, _end_val - _start_val)
+
                     _team_data_parts = []
                     _won_all = True
                     for _t in sorted(_game_teams):
-                        if _ls_tq is not None and not _ls_tq.empty and "Team" in _ls_tq.columns:
-                            _tr = _ls_tq[_ls_tq["Team"].str.upper() == _t.upper()]
-                            if not _tr.empty:
-                                _q_pts = {q: int(pd.to_numeric(_tr.iloc[0].get(q,0), errors="coerce") or 0) for q in ["Q1","Q2","Q3","Q4"]}
-                                _won_t = all(v > 0 for v in _q_pts.values())
-                                if not _won_t: _won_all = False
-                                _team_data_parts.append(f"{_t} " + ", ".join(f"{q}: {v}" for q,v in _q_pts.items()))
+                        _q_pts = {q: _team_q_from_sdf(_t, q) for q in ["Q1","Q2","Q3","Q4"]}
+                        _won_t = all(v > 0 for v in _q_pts.values())
+                        if not _won_t: _won_all = False
+                        _team_data_parts.append(f"{_t} " + ", ".join(f"{q}: {v}" for q,v in _q_pts.items()))
                     _tq_data = " | ".join(_team_data_parts) if _team_data_parts else "No data"
                     team_graded.append({"Prop": line, "Data": _tq_data,
                         "Result": "✅ Won" if _won_all else "❌ Lost"})
