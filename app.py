@@ -2176,8 +2176,22 @@ elif st.session_state.view == "boxscore":
                 """Get Type list from scoring_df filtered by team and/or period."""
                 if scoring_df is None or scoring_df.empty: return []
                 df = scoring_df.copy()
-                if period and "Quarter" in df.columns:
-                    df = df[df["Quarter"] == period]
+                if period:
+                    if period == "1H":
+                        # First half: Q1 + Q2
+                        if "Half" in df.columns:
+                            df = df[df["Half"] == "1st Half"]
+                        elif "Quarter" in df.columns:
+                            df = df[df["Quarter"].isin(["Q1","Q2"])]
+                    elif period == "2H":
+                        # Second half: Q3 + Q4
+                        if "Half" in df.columns:
+                            df = df[df["Half"] == "2nd Half"]
+                        elif "Quarter" in df.columns:
+                            df = df[df["Quarter"].isin(["Q3","Q4"])]
+                    elif period in ("Q1","Q2","Q3","Q4") and "Quarter" in df.columns:
+                        df = df[df["Quarter"] == period]
+                    # "game total" or None → no filter
                 if team and "Team" in df.columns:
                     df = df[df["Team"].str.upper() == team.upper()]
                 return df["Type"].str.lower().tolist() if "Type" in df.columns else []
@@ -2221,14 +2235,22 @@ elif st.session_state.view == "boxscore":
                     team_data_parts.append(f"{team} {' | '.join(period_parts)}")
                 data_str = " | ".join(team_data_parts)
 
-            elif len(periods) == 1 and periods[0] == "game total":
-                # Game-level each-team prop (no period) — show per-team totals
+            elif periods == ["game total"] and is_each:
+                # Game-level each-team prop (no quarter/half split) — per-team game totals
                 team_data_parts = []
                 for team in sorted_teams:
                     types_t = _sdf_types(team=team)
                     req_strs_t = [f"{req_lbls.get(rt,rt)}: {_count_from_types(types_t, rt)}" for rt, rn in reqs]
                     team_data_parts.append(f"{team} {' & '.join(req_strs_t)}")
                 data_str = " | ".join(team_data_parts)
+            elif periods == ["game total"]:
+                # Game-level non-each prop — combined totals
+                types_all = _sdf_types()
+                if reqs[0][0] == "score":
+                    data_str = f"Pts: {_pts_from_types(types_all)}"
+                else:
+                    req_strs = [f"{req_lbls.get(rt,rt)}: {_count_from_types(types_all, rt)}" for rt, rn in reqs]
+                    data_str = " & ".join(req_strs)
 
             else:
                 # Non-each-team props — combined totals per period
