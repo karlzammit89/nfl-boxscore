@@ -688,7 +688,6 @@ elif st.session_state.view == "boxscore":
             </table></div>"""
 
         st.markdown(_ls_html(_ls_show), unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
     st.divider()
 
     # Period filter
@@ -2088,6 +2087,10 @@ elif st.session_state.view == "boxscore":
             if _ot_m:
                 _winner_raw = _ot_m.group(1).strip()
                 _winner_abbr = _resolve_team(_winner_raw)
+                if _game_teams and _winner_abbr not in _game_teams:
+                    team_graded.append({"Prop": line, "Data": f"{_winner_abbr} not in this game",
+                        "Result": "❗ Error"})
+                    continue
                 _sdf_ot = data.get("scoring", pd.DataFrame())
                 # Check if any scoring play in OT period
                 _has_ot = False
@@ -2126,6 +2129,10 @@ elif st.session_state.view == "boxscore":
             _stf_m = _ST_FIRST_RE.match(line)
             if _stf_m:
                 _st_team = _resolve_team(_stf_m.group(1).strip())
+                if _game_teams and _st_team not in _game_teams:
+                    team_graded.append({"Prop": line, "Data": f"{_st_team} not in this game",
+                        "Result": "❗ Error"})
+                    continue
                 _sdf_stf = data.get("scoring", pd.DataFrame())
                 won = False
                 _first_desc = "No TDs"
@@ -2145,6 +2152,10 @@ elif st.session_state.view == "boxscore":
             _st_m = _ST_TD_RE.match(line)
             if _st_m:
                 _st_team2 = _resolve_team(_st_m.group(1).strip())
+                if _game_teams and _st_team2 not in _game_teams:
+                    team_graded.append({"Prop": line, "Data": f"{_st_team2} not in this game",
+                        "Result": "❗ Error"})
+                    continue
                 _sdf_st = data.get("scoring", pd.DataFrame())
                 won = False
                 _st_detail = "No ST TD"
@@ -2206,6 +2217,10 @@ elif st.session_state.view == "boxscore":
             _tq_m = _TEAM_Q_RE2.match(line)
             if _tq_m:
                 team_abbr = _resolve_team(_tq_m.group(1).strip())
+                if _game_teams and team_abbr not in _game_teams:
+                    team_graded.append({"Prop": line, "Data": f"{team_abbr} not in this game",
+                        "Result": "❗ Error"})
+                    continue
                 q_had_score = {q: _team_scored_in_q(team_abbr, q) for q in ['Q1','Q2','Q3','Q4']}
                 won = all(q_had_score.values())
                 _sdf_t = data.get("scoring", pd.DataFrame())
