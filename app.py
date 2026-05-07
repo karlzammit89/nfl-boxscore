@@ -288,7 +288,7 @@ if st.session_state.view == "calendar":
     with c2:
         selected_year = st.selectbox(
             "Year",
-            options=[year - 1, year],
+            options=[year - 1, year, year + 1],
             index=1,
             key="pick_year",
             label_visibility="collapsed",
@@ -1511,7 +1511,7 @@ elif st.session_state.view == "boxscore":
                     if v2 is None: all_found2=False; v2=0
                     vals2[p2]=v2
                 total2=sum(vals2.values())
-                detail2=" | ".join(f"{p2.split()[-1]}:{v2:.0f}" for p2,v2 in vals2.items())
+                detail2=" | ".join(f"{p2.split()[-1]}: {v2:.0f}" for p2,v2 in vals2.items())
                 players_str2=" & ".join(players_list)
                 if operator=="combine":
                     won2=total2>=thr2 if all_found2 else None
@@ -1594,7 +1594,7 @@ elif st.session_state.view == "boxscore":
                         if v2 is None: all_found2 = False; v2 = 0
                         vals2[p2] = v2
                     total2 = sum(vals2.values())
-                    detail2 = ' | '.join(f"{p2.split()[-1]}:{v2:.0f}" for p2,v2 in vals2.items())
+                    detail2 = ' | '.join(f"{p2.split()[-1]}: {v2:.0f}" for p2,v2 in vals2.items())
                     players_str2 = ' & '.join(players_list)
                     if operator2 == 'combine':
                         won2 = total2 >= thr2 if all_found2 else None
