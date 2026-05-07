@@ -1182,7 +1182,7 @@ elif st.session_state.view == "boxscore":
                 _CMB2_RE    = _re.compile(r'^(.+?)\s+and\s+(.+?)\s+to\s+combine', _re.I)
 
                 _cm = _COMBINE_STAT_RE.search(line)
-                if not dual and _cm:
+                if _cm:
                     _thr = float(_cm.group(1))
                     _stat_raw = _cm.group(2).strip().lower()
                     # Map to category/col
