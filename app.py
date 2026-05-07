@@ -667,7 +667,7 @@ elif st.session_state.view == "boxscore":
             def td(val, bold=False, sep=False):
                 s = sep_style if sep else ""
                 fw = "font-weight:700;" if bold else "opacity:0.85;"
-                return f"<td style='{fw}padding:0 10px;{s}'>{int(val)}</td>"
+                return f"<td style='{fw}padding:4px 20px;{s}'>{int(val)}</td>"
             header = "".join([th(c) for c in q_cols]
                            + ([th("1H",True),th("2H")] if h_cols else [])
                            + ([th("T",True)] if t_cols else []))
@@ -676,13 +676,13 @@ elif st.session_state.view == "boxscore":
                 team_abbr = str(r["Team"]).upper()
                 logo_url = _logos.get(team_abbr,"")
                 logo_img = f'<img src="{logo_url}" style="width:24px;height:24px;object-fit:contain;margin-right:8px;vertical-align:middle">' if logo_url else ""
-                team_cell = f"<td style='font-weight:700;text-align:left;padding-right:20px;white-space:nowrap'>{logo_img}{team_abbr}</td>"
+                team_cell = f"<td style='font-weight:700;text-align:left;padding-right:30px;white-space:nowrap'>{logo_img}{team_abbr}</td>"
                 cells = "".join([td(r.get(c,0)) for c in q_cols]
                               + ([td(r.get("1H",0),sep=True),td(r.get("2H",0))] if h_cols else [])
                               + ([td(r.get("T",0),bold=True,sep=True)] if t_cols else []))
                 rows_html += f"<tr style='line-height:2.2'>{team_cell}{cells}</tr>"
-            return f"""<div style="display:flex;justify-content:center;margin:8px 0">
-            <table style="border-collapse:collapse;font-size:13px;text-align:center">
+            return f"""<div style="display:flex;justify-content:center;margin:4px 0;width:100%">
+            <table style="border-collapse:collapse;font-size:13px;text-align:center;width:70%;min-width:420px">
               <thead><tr><th style="text-align:left;padding-right:20px"></th>{header}</tr></thead>
               <tbody>{rows_html}</tbody>
             </table></div>"""
@@ -701,7 +701,7 @@ elif st.session_state.view == "boxscore":
                              horizontal=True, label_visibility="collapsed")
 
     def get_pbp_key(pf):
-        return {"1st Half":"1H","2nd Half":"2H"}.get(pf, pf)
+        return {"1st Half":"H1","2nd Half":"H2"}.get(pf, pf)
 
     def show_df(df, pf, sort=None, drop_cols=None):
         if df is None or df.empty:
@@ -719,7 +719,7 @@ elif st.session_state.view == "boxscore":
         st.dataframe(df, use_container_width=True, hide_index=True)
 
     # Key map: display label → internal key used in by_period
-    _PERIOD_KEY = {"1st Half":"1H","2nd Half":"2H"}
+    _PERIOD_KEY = {"1st Half":"H1","2nd Half":"H2"}
 
     def show_period_df(category: str, sort="YDS"):
         """Show per-period offensive stat.
@@ -989,7 +989,7 @@ elif st.session_state.view == "boxscore":
 
     def build_half_prop_table(category: str) -> pd.DataFrame | None:
         halves = ["1H", "2H"]
-        half_labels = {"1H": "1st Half", "2H": "2nd Half"}
+        half_labels = {"1H": "H1", "2H": "H2"}
 
         if category == "passing":
             thr_yds, thr_td = thr_h_pass_yds, thr_h_pass_td
@@ -1760,7 +1760,7 @@ elif st.session_state.view == "boxscore":
                 if operator == "under":   return v < threshold
                 if operator == "exactly": return v == threshold
                 return v >= threshold
-            _INLINE_MAP = {"Q1":"Q1","Q2":"Q2","Q3":"Q3","Q4":"Q4","1st Half":"1H","2nd Half":"2H"}
+            _INLINE_MAP = {"Q1":"Q1","Q2":"Q2","Q3":"Q3","Q4":"Q4","1st Half":"H1","2nd Half":"H2"}
 
 
             period_results = {}
@@ -1772,7 +1772,7 @@ elif st.session_state.view == "boxscore":
                     period_results[q] = f"{'✅' if hit(v) else '❌'} {v:.0f}"
                 won = all(hit(get_player_val(player, category, col, q)) for q in ["Q1","Q2","Q3","Q4"])
             elif "each half" in condition:
-                for h, lbl in [("1H","1st Half"),("2H","2nd Half")]:
+                for h, lbl in [("1H","H1"),("2H","H2")]:
                     v = get_player_val(player, category, col, h)
                     period_results[lbl] = f"{'✅' if hit(v) else '❌'} {v:.0f}"
                 won = all(hit(get_player_val(player, category, col, h)) for h in ["1H","2H"])
@@ -2332,7 +2332,7 @@ elif st.session_state.view == "boxscore":
                 won = all(_check_reqs(reqs, p, is_each) for p in periods)
 
             # Build Data column from scoring_df directly
-            plbl = {"Q1":"Q1","Q2":"Q2","Q3":"Q3","Q4":"Q4","1H":"1H","2H":"2H"}
+            plbl = {"Q1":"Q1","Q2":"Q2","Q3":"Q3","Q4":"Q4","1H":"H1","2H":"H2"}
             sorted_teams = sorted(_game_teams)
             req_lbls = {"rushing_td":"Rush TD","passing_td":"Pass TD","any_td":"TD","fg":"","score":""}
 
