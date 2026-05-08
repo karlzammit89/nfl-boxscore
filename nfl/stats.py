@@ -528,9 +528,14 @@ def get_player_stats_by_period(game_id: str) -> dict:
                         sacking[period][sacker]["sacks"] += 1
                 # Fall through to pass block to count QB pass attempt
 
-            # ── Pass plays ─────────────────────────────────────────────────────
+            # ── Pass plays ──────────────────────────────────────────────────────
             if ptype in _PASS_PTYPES:
-                pm = _PASSER_RE.search(text)
+                # Strip formation/eligibility prefixes before matching passer
+                _clean_pass = _re.sub(
+                    r"^(?:\([^)]+\)\s*)+"  # (Shotgun), (No Huddle, Shotgun) etc
+                    r"|(?:[A-Z]\.[A-Za-z-]+(?:\s+[A-Za-z-]+)*\s+reported\s+[^.]+\.\s*)+",
+                    "", text, flags=_re.I).strip()
+                pm = _PASSER_RE.search(_clean_pass) or _PASSER_RE.search(text)
                 if not pm:
                     continue
                 passer = pm.group(1).strip()
@@ -543,7 +548,7 @@ def get_player_stats_by_period(game_id: str) -> dict:
                     d["yds"]  += stat_yds
                     if is_td:
                         d["td"] += 1
-                    rv = _RECV_RE.search(text)
+                    rv = _RECV_RE.search(_clean_pass) or _RECV_RE.search(text)
                     if rv:
                         receiver = rv.group(1).strip()
                         rd = receiving[period][receiver]
