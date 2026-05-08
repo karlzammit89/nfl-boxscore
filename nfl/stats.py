@@ -556,13 +556,21 @@ def get_player_stats_by_period(game_id: str) -> dict:
                     d["int"] += 1
                 continue
 
-            # ── Rush plays ─────────────────────────────────────────────────────
+            # ── Rush plays ──────────────────────────────────────────────────────
             if ptype in _RUSH_PTYPES:
-                rm = _RUSH_RE.search(text)
+                # Strip eligibility notes e.g. "D.Skipper reported in as eligible. "
+                # and formation prefixes e.g. "(Shotgun) " before matching rusher
+                _eligible_re = _re.compile(
+                    r"^(?:\([^)]+\)\s*)+"          # "(Shotgun) " or "(No Huddle) "
+                    r"|(?:[A-Z]\.[A-Za-z-]+(?:\s+[A-Za-z-]+)*\s+reported\s+[^.]+\.\s*)+",
+                    _re.I)
+                _clean_text = _eligible_re.sub("", text).strip()
+                rm = _RUSH_RE.search(_clean_text) or _RUSH_RE.search(text)
                 if not rm:
-                    # Fallback: first abbreviated name in text is the rusher
-                    fm = _re.match(rf'(?:\(\S+\)\s+)?({_NAME})', text)
-                    rm = fm
+                    # Fallback: first abbreviated name in cleaned text
+                    _fb = _re.match(r"([A-Z][a-z]?\.[A-Z][A-Za-z\-]+)", _clean_text)
+                    if _fb:
+                        rm = _fb
                 if rm:
                     rusher = rm.group(1).strip()
                     d = rushing[period][rusher]
@@ -571,6 +579,7 @@ def get_player_stats_by_period(game_id: str) -> dict:
                     d["yds"] += stat_yds
                     if is_td:
                         d["td"] += 1
+                continue
                 continue
 
     # ── DataFrame builders ────────────────────────────────────────────────
