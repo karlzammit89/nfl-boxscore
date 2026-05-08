@@ -1321,9 +1321,9 @@ elif st.session_state.view == "boxscore":
                             m = _re_ftd.match(r'^(.+?)\s+\d+', desc)
                             if m:
                                 return m.group(1).strip().lower()
-                            return desc.lower()
                         _first_type_ftd = _td_r.iloc[0].get("Type","") if "Type" in _td_r.columns else ""
                         _scorer_ftd = _get_td_scorer(_fdesc, _first_type_ftd)
+                        _won_ftd = any(p.split()[-1].lower() in _scorer_ftd for p in _ftd_pls)
                         _ftd_deferred.append({
                             "prop_line": line, "players": _ftd_pls,
                             "won": _won_ftd, "detail": _ftd_detail2})
@@ -2325,14 +2325,7 @@ elif st.session_state.view == "boxscore":
                         _first_type2 = _td_rows2.iloc[0].get("Type","") if "Type" in _td_rows2.columns else ""
                         _scorer2 = _get_td_scorer2(_first_desc2, _first_type2)
                         won = any(p.split()[-1].lower() in _scorer2 for p in _players_ftd)
-                # Validate all players are in this game
-                _not_in_ftd2 = [p for p in _players_ftd
-                    if not player_found_in_game(normalise_name(p), "passing")
-                    and not player_found_in_game(normalise_name(p), "rushing")
-                    and not player_found_in_game(normalise_name(p), "receiving")]
-                if _not_in_ftd2:
-                    graded.append({"Prop": line, "Data": f"{_not_in_ftd2[0]} not in this game", "Result": "❗ Error"})
-                    continue
+
                 _ftd_deferred.append({
                     "prop_line": line, "players": _players_ftd,
                     "won": won, "detail": _ftd_detail})
