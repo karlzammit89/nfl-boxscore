@@ -505,12 +505,36 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 _seen_play_ids.add(play_id)
 
             # Skip play types we don't care about
-            if ptype in _SKIP_PTYPES or not text:
+            if not text:
                 continue
 
-            # Skip only ENFORCED penalties (those with "No Play" marker).
-            # Declined penalties keep their stats — the play still counts.
-            if _re.search(r'No Play', text, _re.I):
+            # For penalty plays: check if the text contains a pass or rush before PENALTY
+            # e.g. "J.Love pass incomplete short left.PENALTY on DET..." → treat as pass
+            if ptype == "penalty":
+                _text_before_penalty = _re.split(r'PENALTY', text, flags=_re.I)[0].strip()
+                if _re.search(r'\bpass\b', _text_before_penalty, _re.I):
+                    ptype = "pass incompletion"  # incomplete pass followed by penalty
+                elif _re.search(r'\bright\s+(?:end|guard|tackle)|left\s+(?:end|guard|tackle)|up the middle|rushes?', _text_before_penalty, _re.I):
+                    ptype = "rush"
+                else:
+                    continue  # pure penalty with no play — skip
+
+            # For fumble plays: check if text contains "pass" → count as pass play
+            if ptype in ("fumble recovery (own)", "fumble", "fumble lost"):
+                if _re.search(r'\bpass\b', text, _re.I):
+                    # Pass that resulted in fumble — determine if complete
+                    _recv_m_fmbl = _RECV_RE.search(text)
+                    ptype = "pass reception" if _recv_m_fmbl else "pass incompletion"
+                else:
+                    continue  # rushing fumble — skip for pass stats
+
+            if ptype in _SKIP_PTYPES:
+                continue
+
+            # Skip "No Play" ONLY if it is a pure penalty with no underlying play stats
+            # e.g. "PENALTY on GB...No Play" → skip
+            # But "J.Love pass incomplete...PENALTY...No Play" → keep (pass attempt counted)
+            if _re.search(r'No Play', text, _re.I) and ptype in _SKIP_PTYPES | {"penalty"}:
                 continue
 
             # TD: use ESPN's scoringPlay flag first, fallback to play type
