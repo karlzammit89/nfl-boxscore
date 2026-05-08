@@ -444,10 +444,9 @@ _SACK_RE = _re.compile(
 
 def get_player_stats_by_period(game_id: str) -> dict:
     """
-    Build per-quarter and per-half player stat tables by parsing ESPN play text.
-    ESPN stores play text in 'text' field using abbreviated names (T.Tagovailoa).
-    Play type comes from play['type']['text'] e.g. 'Pass Reception', 'Rush'.
-    Yardage comes from play['statYardage'] (always accurate).
+    Build per-quarter and per-half player stat tables by intelligently parsing
+    ESPN play text. Uses text-based classification (not ESPN ptype) for accuracy,
+    handling formation prefixes, eligibility notices, compound plays, and edge cases.
     """
     from collections import defaultdict
 
@@ -465,7 +464,6 @@ def get_player_stats_by_period(game_id: str) -> dict:
     if not all_drives:
         return {}
 
-    # Deduplicate plays by play ID to avoid double-counting
     _seen_play_ids = set()
 
     def new_pass(): return {"Team":"","comp":0,"att":0,"yds":0,"td":0,"int":0}
@@ -478,23 +476,160 @@ def get_player_stats_by_period(game_id: str) -> dict:
     receiving = defaultdict(lambda: defaultdict(new_recv))
     sacking   = defaultdict(lambda: defaultdict(new_sack))
 
+    # ── Smart text-based play classifier ─────────────────────────────────────
+
+    _N = r'[A-Z][a-z]?\.[A-Z][A-Za-z\'\-]+'
+
+    # Strip formation notes and eligibility prefixes
+    _strip_re = _re.compile(
+        r'^(?:\([^)]+\)\s*)*'
+        r'(?:' + _N + r'(?:\s+[A-Za-z\'\-]+)*\s+reported\s+[^.]+\.\s*)*',
+        _re.I
+    )
+
+    # Detect if a text fragment describes a pass play
+    _pass_detect_re = _re.compile(
+        r'^(' + _N + r')\s+pass\s+'
+        r'(incomplete\s+)?'
+        r'(?:short|deep|long|screen|flat|)?\s*'
+        r'(?:left|right|middle|out|over|cross|flat|)?\s*'
+        r'(?:to\s+)?(' + _N + r')?',
+        _re.I
+    )
+
+    # Detect receiver in completed pass
+    _recv_detect_re = _re.compile(
+        r'pass\s+(?:complete\s+to\s+|(?:short|deep|long|screen|flat)?\s*'
+        r'(?:left|right|middle|out|over|cross|flat)?\s*to\s+)?(' + _N + r')',
+        _re.I
+    )
+
+    # Detect rush: name followed by direction, scramble, kneel, or bare "to TEAM YD for"
+    _rush_detect_re = _re.compile(
+        r'^(' + _N + r')\s+'
+        r'(?:right end|left end|right tackle|left tackle|right guard|left guard|'
+        r'right side|left side|up the middle|center\b|'
+        r'scrambles?\s|kneels?\s|rushes?\s|runs?\s|ran\s+ob|'
+        r'to\s+[A-Z]{2,3}\s+\d+\s+for\s)',
+        _re.I
+    )
+
+    # Direct snap trick play: "Direct snap to NAME. NAME direction"
+    _direct_snap_re = _re.compile(
+        r'Direct snap to (' + _N + r')',
+        _re.I
+    )
+
+    # Sack
+    _sack_detect_re = _re.compile(
+        r'(' + _N + r')\s+sacked\s+',
+        _re.I
+    )
+
+    def classify_sentences(text, stat_yds, team):
+        """
+        Parse ALL sentences in a play text and yield stat events.
+        Handles compound plays (fumble+pass, etc.)
+        Returns list of (event_type, player1, player2, yds, is_td, is_int) tuples.
+        """
+        # Check for No Play — but only skip if it's a PURE penalty with no stats
+        is_no_play = bool(_re.search(r'No\s+Play', text, _re.I))
+
+        # Strip formation/eligibility prefix from full text
+        clean = _strip_re.sub('', text).strip()
+
+        # Split into sentences for compound play handling
+        sentences = _re.split(r'\.\s+(?=[A-Z(])', clean)
+
+        is_td  = bool(_re.search(r'TOUCHDOWN', text, _re.I))
+        is_int = bool(_re.search(r'intercepted|INTERCEPTED', text, _re.I))
+
+        events = []
+
+        for sent in sentences:
+            sent = sent.strip().rstrip('.')
+
+            # Skip non-action sentences
+            if _re.match(r'^(FUMBLES|recovers|PENALTY|Official|Timeout|Two-Minute|Injury|END|\*\*)', sent, _re.I):
+                continue
+
+            # ── Sack ─────────────────────────────────────────────────────────
+            sack_m = _sack_detect_re.search(sent)
+            if sack_m and not _re.search(r'\bpass\b', sent[:sack_m.start()], _re.I):
+                qb = sack_m.group(1)
+                # Also find sacker(s)
+                sacker_m = _SACK_RE.search(text)
+                sacker = (sacker_m.group(1) or sacker_m.group(2) or "").strip() if sacker_m else ""
+                events.append(("sack", qb, sacker, stat_yds, False, False))
+                continue
+
+            # ── Pass ─────────────────────────────────────────────────────────
+            pass_m = _pass_detect_re.match(sent)
+            if pass_m:
+                # Skip No Play pure penalties — but NOT pass+penalty plays
+                # (pass+penalty: text has pass action BEFORE PENALTY keyword)
+                if is_no_play:
+                    pre_penalty = _re.split(r'PENALTY', text, flags=_re.I)[0]
+                    if not _re.search(r'\bpass\b', pre_penalty, _re.I):
+                        continue  # pure No Play penalty, no pass happened
+
+                passer = pass_m.group(1).strip()
+                is_incomplete = bool(pass_m.group(2)) or bool(_re.search(r'\bincomplete\b', sent, _re.I))
+                receiver = None
+
+                if not is_incomplete:
+                    rv = _recv_detect_re.search(sent)
+                    if rv:
+                        receiver = rv.group(1).strip()
+                    # If no receiver found but no "incomplete", check if it's a TD pass
+                    # (some TD texts omit the to: "pass short left to R.Doubs for 2 yards, TOUCHDOWN")
+                    if not receiver and is_td:
+                        rv2 = _re.search(r'\bto\s+(' + _N + r')\s+(?:for|,)', sent, _re.I)
+                        if rv2:
+                            receiver = rv2.group(1).strip()
+
+                events.append(("pass", passer, receiver, stat_yds, is_td and not is_incomplete, is_int))
+                continue
+
+            # ── Rush ─────────────────────────────────────────────────────────
+            # Check for direct snap trick play first
+            ds_m = _direct_snap_re.search(sent)
+            if ds_m:
+                rusher = ds_m.group(1)
+                events.append(("rush", rusher, None, stat_yds, is_td, False))
+                continue
+
+            rush_m = _rush_detect_re.match(sent)
+            if rush_m:
+                # Exclude penalties that look like rush (NAME to TEAM for...PENALTY)
+                if is_no_play and not _re.search(r'\bpass\b', text, _re.I):
+                    continue
+                rusher = rush_m.group(1).strip()
+                events.append(("rush", rusher, None, stat_yds, is_td, False))
+                continue
+
+        return events
+
+    # ── Main drive loop ───────────────────────────────────────────────────────
+
     for drive in all_drives:
         if not drive:
             continue
         team = drive.get("team", {}).get("abbreviation", "")
-        # Derive drive's primary period from its start period as fallback
         _drive_period = _safe_int(drive.get("start", {}).get("period", {}).get("number", 0))
-        _last_valid_period = _drive_period  # track last known valid period within drive
+        _last_valid_period = _drive_period
+
         for play in drive.get("plays", []):
-            _p_raw2 = play.get("period", {})
-            _raw_period = _safe_int(_p_raw2.get("number", 0) if isinstance(_p_raw2, dict) else _p_raw2)
+            _p_raw = play.get("period", {})
+            _raw_period = _safe_int(_p_raw.get("number", 0) if isinstance(_p_raw, dict) else _p_raw)
             if _raw_period == 0:
                 _raw_period = _safe_int(play.get("start", {}).get("period", {}).get("number", 0))
             if _raw_period > 0:
                 _last_valid_period = _raw_period
             period = _last_valid_period if _last_valid_period > 0 else _drive_period
+
+            text     = play.get("text", "") or play.get("description", "") or ""
             ptype    = play.get("type", {}).get("text", "").lower().strip()
-            text     = play.get("text", "") or ""
             stat_yds = _safe_int(play.get("statYardage", 0))
 
             # Deduplicate by play ID
@@ -504,114 +639,60 @@ def get_player_stats_by_period(game_id: str) -> dict:
             if play_id:
                 _seen_play_ids.add(play_id)
 
-            # Skip play types we don't care about
-            if not text:
+            # Skip non-play types entirely (no text to parse)
+            if ptype in _SKIP_PTYPES or not text:
                 continue
 
-            # For penalty plays: check if the text contains a pass or rush before PENALTY
-            # e.g. "J.Love pass incomplete short left.PENALTY on DET..." → treat as pass
-            if ptype == "penalty":
-                _text_before_penalty = _re.split(r'PENALTY', text, flags=_re.I)[0].strip()
-                if _re.search(r'\bpass\b', _text_before_penalty, _re.I):
-                    ptype = "pass incompletion"  # incomplete pass followed by penalty
-                elif _re.search(r'\bright\s+(?:end|guard|tackle)|left\s+(?:end|guard|tackle)|up the middle|rushes?', _text_before_penalty, _re.I):
-                    ptype = "rush"
-                else:
-                    continue  # pure penalty with no play — skip
+            # Run smart text classifier
+            events = classify_sentences(text, stat_yds, team)
 
-            # For fumble plays: check if text contains "pass" → count as pass play
-            if ptype in ("fumble recovery (own)", "fumble", "fumble lost"):
-                if _re.search(r'\bpass\b', text, _re.I):
-                    # Pass that resulted in fumble — determine if complete
-                    _recv_m_fmbl = _RECV_RE.search(text)
-                    ptype = "pass reception" if _recv_m_fmbl else "pass incompletion"
-                else:
-                    continue  # rushing fumble — skip for pass stats
-
-            if ptype in _SKIP_PTYPES:
-                continue
-
-            # Skip "No Play" ONLY if it is a pure penalty with no underlying play stats
-            # e.g. "PENALTY on GB...No Play" → skip
-            # But "J.Love pass incomplete...PENALTY...No Play" → keep (pass attempt counted)
-            if _re.search(r'No Play', text, _re.I) and ptype in _SKIP_PTYPES | {"penalty"}:
-                continue
-
-            # TD: use ESPN's scoringPlay flag first, fallback to play type
-            is_scoring = play.get("scoringPlay", False)
-            is_td = is_scoring or ptype in ("passing touchdown", "rushing touchdown",
-                                             "receiving touchdown", "touchdown")
-            is_int = "interception" in ptype
-
-            # ── Sack plays — ptype-gated first, text fallback second ──────────
-            if ptype == "sack" or "sacked" in text.lower():
-                sm = _SACK_RE.search(text)
-                if sm:
-                    sacker = (sm.group(1) or sm.group(2) or "").strip()
-                    if sacker:
-                        sacking[period][sacker]["sacks"] += 1
-                # Fall through to pass block to count QB pass attempt
-
-            # ── Pass plays ──────────────────────────────────────────────────────
-            if ptype in _PASS_PTYPES:
-                # Strip formation/eligibility prefixes before matching passer
-                _clean_pass = _re.sub(
-                    r"^(?:\([^)]+\)\s*)+"  # (Shotgun), (No Huddle, Shotgun) etc
-                    r"|(?:[A-Z]\.[A-Za-z-]+(?:\s+[A-Za-z-]+)*\s+reported\s+[^.]+\.\s*)+",
-                    "", text, flags=_re.I).strip()
-                pm = _PASSER_RE.search(_clean_pass) or _PASSER_RE.search(text)
-                if not pm:
-                    continue
-                passer = pm.group(1).strip()
-                d = passing[period][passer]
-                d["Team"] = team
-                d["att"] += 1
-                is_complete = ptype in ("pass reception", "passing touchdown", "receiving touchdown")
-                if is_complete:
-                    d["comp"] += 1
-                    d["yds"]  += stat_yds
-                    if is_td:
-                        d["td"] += 1
-                    rv = _RECV_RE.search(_clean_pass) or _RECV_RE.search(text)
-                    if rv:
-                        receiver = rv.group(1).strip()
-                        rd = receiving[period][receiver]
-                        rd["Team"] = team
-                        rd["rec"] += 1
-                        rd["yds"] += stat_yds
+            for evt_type, p1, p2, yds, is_td, is_int in events:
+                if evt_type == "pass":
+                    passer, receiver = p1, p2
+                    if not passer:
+                        continue
+                    d = passing[period][passer]
+                    d["Team"] = team
+                    d["att"] += 1
+                    is_complete = receiver is not None
+                    if is_complete:
+                        d["comp"] += 1
+                        d["yds"]  += yds
                         if is_td:
-                            rd["td"] += 1
-                if is_int:
-                    d["int"] += 1
-                continue
+                            d["td"] += 1
+                        if receiver:
+                            rd = receiving[period][receiver]
+                            rd["Team"] = team
+                            rd["rec"] += 1
+                            rd["yds"] += yds
+                            if is_td:
+                                rd["td"] += 1
+                    if is_int:
+                        d["int"] += 1
 
-            # ── Rush plays ──────────────────────────────────────────────────────
-            if ptype in _RUSH_PTYPES:
-                # Strip eligibility notes e.g. "D.Skipper reported in as eligible. "
-                # and formation prefixes e.g. "(Shotgun) " before matching rusher
-                _eligible_re = _re.compile(
-                    r"^(?:\([^)]+\)\s*)+"          # "(Shotgun) " or "(No Huddle) "
-                    r"|(?:[A-Z]\.[A-Za-z-]+(?:\s+[A-Za-z-]+)*\s+reported\s+[^.]+\.\s*)+",
-                    _re.I)
-                _clean_text = _eligible_re.sub("", text).strip()
-                rm = _RUSH_RE.search(_clean_text) or _RUSH_RE.search(text)
-                if not rm:
-                    # Fallback: first abbreviated name in cleaned text
-                    _fb = _re.match(r"([A-Z][a-z]?\.[A-Z][A-Za-z\-]+)", _clean_text)
-                    if _fb:
-                        rm = _fb
-                if rm:
-                    rusher = rm.group(1).strip()
+                elif evt_type == "rush":
+                    rusher = p1
+                    if not rusher:
+                        continue
                     d = rushing[period][rusher]
                     d["Team"] = team
                     d["car"] += 1
-                    d["yds"] += stat_yds
+                    d["yds"] += yds
                     if is_td:
                         d["td"] += 1
-                continue
-                continue
 
-    # ── DataFrame builders ────────────────────────────────────────────────
+                elif evt_type == "sack":
+                    qb, sacker = p1, p2
+                    if qb:
+                        d = passing[period][qb]
+                        d["Team"] = team
+                        d["att"] += 1
+                    if sacker:
+                        sd = sacking[period][sacker]
+                        sd["Team"] = team
+                        sd["sacks"] += 1
+
+    # ── DataFrame builders ────────────────────────────────────────────────────
 
     def to_sack_df(acc):
         rows = [{"Player": n, "Team": d["Team"], "SACKS": d["sacks"]}
@@ -659,7 +740,7 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
     result = {}
     for p in all_periods:
-        if p > 4:   # skip OT
+        if p > 4:
             continue
         lbl = _quarter_label(p)
         result[lbl] = {"passing":   to_pass_df(passing[p]),
@@ -669,7 +750,6 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
     h1 = [p for p in all_periods if p in (1, 2)]
     h2 = [p for p in all_periods if p in (3, 4)]
-    # OT excluded — only Q1-Q4 and halves
     if h1:
         result["1H"] = {"passing":   to_pass_df(merge(passing,  h1, new_pass)),
                         "rushing":   to_rush_df(merge(rushing,  h1, new_rush)),
