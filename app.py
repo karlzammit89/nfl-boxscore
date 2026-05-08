@@ -1289,14 +1289,6 @@ elif st.session_state.view == "boxscore":
                     elif _single_ftd:
                         _ftd_pls = [_single_ftd.group(1).strip()]
                     if _ftd_pls:
-                        # Validate all players are in this game
-                        _not_in_ftd = [p for p in _ftd_pls
-                            if not player_found_in_game(normalise_name(p), "passing")
-                            and not player_found_in_game(normalise_name(p), "rushing")
-                            and not player_found_in_game(normalise_name(p), "receiving")]
-                        if _not_in_ftd:
-                            graded.append({"Prop": line, "Data": f"{_not_in_ftd[0]} not in this game", "Result": "❗ Error"})
-                            continue
                         _sdf_ftd2 = data.get("scoring", pd.DataFrame())
                         _won_ftd = None
                         _ftd_detail2 = "No TDs"
@@ -1332,6 +1324,14 @@ elif st.session_state.view == "boxscore":
                         _first_type_ftd = _td_r.iloc[0].get("Type","") if "Type" in _td_r.columns else ""
                         _scorer_ftd = _get_td_scorer(_fdesc, _first_type_ftd)
                         _won_ftd = any(p.split()[-1].lower() in _scorer_ftd for p in _ftd_pls)
+                        # Validate all players are in this game
+                        _not_in_ftd = [p for p in _ftd_pls
+                            if not player_found_in_game(normalise_name(p), "passing")
+                            and not player_found_in_game(normalise_name(p), "rushing")
+                            and not player_found_in_game(normalise_name(p), "receiving")]
+                        if _not_in_ftd:
+                            graded.append({"Prop": line, "Data": f"{_not_in_ftd[0]} not in this game", "Result": "❗ Error"})
+                            continue
                         _ftd_res = "✅ Won" if _won_ftd is True else ("❗ Error" if _won_ftd is None else "❌ Lost")
                         graded.append({"Prop": line, "Data": f"First TD: {_ftd_detail2}", "Result": _ftd_res})
                         continue
@@ -2285,14 +2285,6 @@ elif st.session_state.view == "boxscore":
                 _p1 = _ftd_m.group(1).strip()
                 _p2 = _ftd_m.group(2).strip() if _ftd_m.group(2) else None
                 _players_ftd = [p for p in [_p1, _p2] if p]
-                # Validate all players are in this game
-                _not_in_ftd2 = [p for p in _players_ftd
-                    if not player_found_in_game(normalise_name(p), "passing")
-                    and not player_found_in_game(normalise_name(p), "rushing")
-                    and not player_found_in_game(normalise_name(p), "receiving")]
-                if _not_in_ftd2:
-                    graded.append({"Prop": line, "Data": f"{_not_in_ftd2[0]} not in this game", "Result": "❗ Error"})
-                    continue
                 _sdf_ftd = data.get("scoring", pd.DataFrame())
                 won = None
                 _ftd_detail = "No TDs"
@@ -2324,6 +2316,14 @@ elif st.session_state.view == "boxscore":
                         _first_type2 = _td_rows2.iloc[0].get("Type","") if "Type" in _td_rows2.columns else ""
                         _scorer2 = _get_td_scorer2(_first_desc2, _first_type2)
                         won = any(p.split()[-1].lower() in _scorer2 for p in _players_ftd)
+                # Validate all players are in this game
+                _not_in_ftd2 = [p for p in _players_ftd
+                    if not player_found_in_game(normalise_name(p), "passing")
+                    and not player_found_in_game(normalise_name(p), "rushing")
+                    and not player_found_in_game(normalise_name(p), "receiving")]
+                if _not_in_ftd2:
+                    graded.append({"Prop": line, "Data": f"{_not_in_ftd2[0]} not in this game", "Result": "❗ Error"})
+                    continue
                 _ftd_res = "✅ Won" if won is True else ("❗ Error" if won is None else "❌ Lost")
                 graded.append({"Prop": line, "Data": f"First TD: {_ftd_detail}", "Result": _ftd_res})
                 continue
