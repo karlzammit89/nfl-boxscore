@@ -481,9 +481,12 @@ def get_player_stats_by_period(game_id: str) -> dict:
         team = drive.get("team", {}).get("abbreviation", "")
         # Derive drive's primary period from its start period as fallback
         _drive_period = _safe_int(drive.get("start", {}).get("period", {}).get("number", 0))
+        _last_valid_period = _drive_period  # track last known valid period within drive
         for play in drive.get("plays", []):
             _raw_period = _safe_int(play.get("period", {}).get("number", 0))
-            period = _raw_period if _raw_period > 0 else _drive_period
+            if _raw_period > 0:
+                _last_valid_period = _raw_period
+            period = _last_valid_period if _last_valid_period > 0 else _drive_period
             ptype    = play.get("type", {}).get("text", "").lower().strip()
             text     = play.get("text", "") or ""
             stat_yds = _safe_int(play.get("statYardage", 0))
