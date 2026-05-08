@@ -1301,19 +1301,29 @@ elif st.session_state.view == "boxscore":
                             if not _td_r.empty:
                                 _fdesc = _td_r.iloc[0].get("Description", "")
                                 _ftd_detail2 = _fdesc[:60]
-                                import re as _re_ftd
-                        _first_type_lower = _td_r.iloc[0].get("Type","").lower() if "Type" in _td_r.columns else ""
-                        if "passing" in _first_type_lower or "receiving" in _first_type_lower:
-                            # Passing TD: scorer is the receiver, not the passer
-                            # Description: "Receiver N Yd pass from Passer (Kicker Kick)"
-                            _recv_m = _re_ftd.match(r'^([A-Z]\.[A-Za-z]+)', _fdesc)
-                            _scorer_name = _recv_m.group(1).split(".")[-1].lower() if _recv_m else ""
-                            _won_ftd = any(_scorer_name and _scorer_name in p.split()[-1].lower() or
-                                          p.split()[-1].lower() in _fdesc.lower()
-                                          for p in _ftd_pls) if _scorer_name else any(
-                                          p.split()[-1].lower() in _fdesc.lower() for p in _ftd_pls)
-                        else:
-                            _won_ftd = any(p.split()[-1].lower() in _fdesc.lower() for p in _ftd_pls)
+        
+                        import re as _re_ftd
+                        def _get_td_scorer(desc, td_type):
+                            """Extract the scoring player from ESPN TD description."""
+                            td_lower = td_type.lower()
+                            # Passing/Receiving TD: scorer is receiver before 'N Yd pass from'
+                            if "passing" in td_lower or "receiving" in td_lower:
+                                m = _re_ftd.match(r'^(.+?)\s+\d+\s+[Yy]d\s+pass\s+from\s+', desc)
+                                if m:
+                                    return m.group(1).strip().lower()
+                            # Rushing TD: scorer is rusher before 'N Yd run' or 'N Yd rush'
+                            if "rushing" in td_lower:
+                                m = _re_ftd.match(r'^(.+?)\s+\d+\s+[Yy]d\s+(?:run|rush)', desc)
+                                if m:
+                                    return m.group(1).strip().lower()
+                            # Any TD / return TD: first token(s) before yardage
+                            m = _re_ftd.match(r'^(.+?)\s+\d+', desc)
+                            if m:
+                                return m.group(1).strip().lower()
+                            return desc.lower()
+                        _first_type_ftd = _td_r.iloc[0].get("Type","") if "Type" in _td_r.columns else ""
+                        _scorer_ftd = _get_td_scorer(_fdesc, _first_type_ftd)
+                        _won_ftd = any(p.split()[-1].lower() in _scorer_ftd for p in _ftd_pls)
                         _ftd_res = "✅ Won" if _won_ftd is True else ("❗ Error" if _won_ftd is None else "❌ Lost")
                         graded.append({"Prop": line, "Data": f"First TD: {_ftd_detail2}", "Result": _ftd_res})
                         continue
@@ -2275,20 +2285,29 @@ elif st.session_state.view == "boxscore":
                     if not _td_rows2.empty:
                         _first_desc2 = _td_rows2.iloc[0].get("Description", "")
                         _ftd_detail = _first_desc2[:60]
+
                         import re as _re_ftd2
-                        _first_type2 = _td_rows2.iloc[0].get("Type","").lower() if "Type" in _td_rows2.columns else ""
-                        if "passing" in _first_type2 or "receiving" in _first_type2:
-                            _recv_m2 = _re_ftd2.match(r'^([A-Z]\.[A-Za-z]+)', _first_desc2)
-                            _scorer2 = _recv_m2.group(1).split(".")[-1].lower() if _recv_m2 else ""
-                            won = any(_scorer2 and _scorer2 in p.split()[-1].lower() or
-                                     p.split()[-1].lower() in _first_desc2.lower()
-                                     for p in _players_ftd) if _scorer2 else any(
-                                     p.split()[-1].lower() in _first_desc2.lower() for p in _players_ftd)
-                        else:
-                            won = any(
-                                p.split()[-1].lower() in _first_desc2.lower()
-                                for p in _players_ftd
-                            )
+                        def _get_td_scorer2(desc, td_type):
+                            """Extract the scoring player from ESPN TD description."""
+                            td_lower = td_type.lower()
+                            # Passing/Receiving TD: scorer is receiver before 'N Yd pass from'
+                            if "passing" in td_lower or "receiving" in td_lower:
+                                m = _re_ftd2.match(r'^(.+?)\s+\d+\s+[Yy]d\s+pass\s+from\s+', desc)
+                                if m:
+                                    return m.group(1).strip().lower()
+                            # Rushing TD: scorer is rusher before 'N Yd run' or 'N Yd rush'
+                            if "rushing" in td_lower:
+                                m = _re_ftd2.match(r'^(.+?)\s+\d+\s+[Yy]d\s+(?:run|rush)', desc)
+                                if m:
+                                    return m.group(1).strip().lower()
+                            # Any TD / return TD: first token(s) before yardage
+                            m = _re_ftd2.match(r'^(.+?)\s+\d+', desc)
+                            if m:
+                                return m.group(1).strip().lower()
+                            return desc.lower()
+                        _first_type2 = _td_rows2.iloc[0].get("Type","") if "Type" in _td_rows2.columns else ""
+                        _scorer2 = _get_td_scorer2(_first_desc2, _first_type2)
+                        won = any(p.split()[-1].lower() in _scorer2 for p in _players_ftd)
                 _ftd_res = "✅ Won" if won is True else ("❗ Error" if won is None else "❌ Lost")
                 graded.append({"Prop": line, "Data": f"First TD: {_ftd_detail}", "Result": _ftd_res})
                 continue
