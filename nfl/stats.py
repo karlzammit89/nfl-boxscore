@@ -689,9 +689,10 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 elif evt_type == "sack":
                     qb, sacker = p1, p2
                     if qb:
+                        # ESPN ATT column excludes sacks — sacks are tracked separately
                         d = passing[period][qb]
                         d["Team"] = team
-                        d["att"] += 1
+                        # Do NOT increment att for sacks (ESPN convention)
                     if sacker:
                         sd = sacking[period][sacker]
                         sd["Team"] = team
