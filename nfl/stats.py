@@ -604,6 +604,11 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 # Exclude penalties that look like rush (NAME to TEAM for...PENALTY)
                 if is_no_play and not _re.search(r'\bpass\b', text, _re.I):
                     continue
+                # Skip rush on fumble plays that also contain a pass attempt
+                # e.g. "J.Love to GB 42...FUMBLES...J.Love pass incomplete"
+                # The fumbled snap is not counted as a rushing attempt
+                if _re.search(r'FUMBLES', text, _re.I) and _re.search(r'\bpass\b', text, _re.I):
+                    continue
                 rusher = rush_m.group(1).strip()
                 events.append(("rush", rusher, None, stat_yds, is_td, False))
                 continue
