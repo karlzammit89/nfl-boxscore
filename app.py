@@ -1258,6 +1258,7 @@ elif st.session_state.view == "boxscore":
         props = []
         error_rows = []
         graded = []
+        _ftd_deferred = []  # first TD props to grade after player_found_in_game is defined
         try:
             for i, line in enumerate(clean_lines):
                 # Skip team/game market lines — handled separately below
@@ -1323,17 +1324,9 @@ elif st.session_state.view == "boxscore":
                             return desc.lower()
                         _first_type_ftd = _td_r.iloc[0].get("Type","") if "Type" in _td_r.columns else ""
                         _scorer_ftd = _get_td_scorer(_fdesc, _first_type_ftd)
-                        _won_ftd = any(p.split()[-1].lower() in _scorer_ftd for p in _ftd_pls)
-                        # Validate all players are in this game
-                        _not_in_ftd = [p for p in _ftd_pls
-                            if not player_found_in_game(normalise_name(p), "passing")
-                            and not player_found_in_game(normalise_name(p), "rushing")
-                            and not player_found_in_game(normalise_name(p), "receiving")]
-                        if _not_in_ftd:
-                            graded.append({"Prop": line, "Data": f"{_not_in_ftd[0]} not in this game", "Result": "❗ Error"})
-                            continue
-                        _ftd_res = "✅ Won" if _won_ftd is True else ("❗ Error" if _won_ftd is None else "❌ Lost")
-                        graded.append({"Prop": line, "Data": f"First TD: {_ftd_detail2}", "Result": _ftd_res})
+                        _ftd_deferred.append({
+                            "prop_line": line, "players": _ftd_pls,
+                            "won": _won_ftd, "detail": _ftd_detail2})
                         continue
                 stat = None
                 for pat, label in STAT_MAP_RE:
@@ -1963,6 +1956,22 @@ elif st.session_state.view == "boxscore":
                     "Data":   f"Unexpected error: {str(_ge)[:60]}",
                     "Result": "❗ Error",
                 }
+        # Process deferred first TD props — now player_found_in_game is available
+        for _ftd_d in _ftd_deferred:
+            _pls = _ftd_d["players"]
+            _not_in = [p for p in _pls
+                if not player_found_in_game(normalise_name(p), "passing")
+                and not player_found_in_game(normalise_name(p), "rushing")
+                and not player_found_in_game(normalise_name(p), "receiving")]
+            if _not_in:
+                graded.append({"Prop": _ftd_d["prop_line"],
+                    "Data": f"{_not_in[0]} not in this game", "Result": "❗ Error"})
+            else:
+                _w = _ftd_d["won"]
+                graded.append({"Prop": _ftd_d["prop_line"],
+                    "Data": f"First TD: {_ftd_d['detail']}",
+                    "Result": "✅ Won" if _w is True else ("❗ Error" if _w is None else "❌ Lost")})
+
         graded += [safe_grade(group) for group in by_line.values()]
         for er in error_rows:
             graded.append({
@@ -2324,8 +2333,9 @@ elif st.session_state.view == "boxscore":
                 if _not_in_ftd2:
                     graded.append({"Prop": line, "Data": f"{_not_in_ftd2[0]} not in this game", "Result": "❗ Error"})
                     continue
-                _ftd_res = "✅ Won" if won is True else ("❗ Error" if won is None else "❌ Lost")
-                graded.append({"Prop": line, "Data": f"First TD: {_ftd_detail}", "Result": _ftd_res})
+                _ftd_deferred.append({
+                    "prop_line": line, "players": _players_ftd,
+                    "won": won, "detail": _ftd_detail})
                 continue
 
             if _SCORELESS_RE2.search(line):
