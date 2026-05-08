@@ -1292,7 +1292,7 @@ elif st.session_state.view == "boxscore":
                         _sdf_ftd2 = data.get("scoring", pd.DataFrame())
                         _won_ftd = None
                         _ftd_detail2 = "No TDs"
-                        _ALL_TD_T = {"rushing touchdown","receiving touchdown",
+                        _ALL_TD_T = {"rushing touchdown","passing touchdown","receiving touchdown",
                                      "punt return touchdown","kickoff return touchdown",
                                      "blocked punt touchdown","blocked field goal touchdown",
                                      "interception return touchdown","fumble return touchdown","touchdown"}
@@ -1301,7 +1301,19 @@ elif st.session_state.view == "boxscore":
                             if not _td_r.empty:
                                 _fdesc = _td_r.iloc[0].get("Description", "")
                                 _ftd_detail2 = _fdesc[:60]
-                                _won_ftd = any(p.split()[-1].lower() in _fdesc.lower() for p in _ftd_pls)
+                                import re as _re_ftd
+                        _first_type_lower = _td_r.iloc[0].get("Type","").lower() if "Type" in _td_r.columns else ""
+                        if "passing" in _first_type_lower or "receiving" in _first_type_lower:
+                            # Passing TD: scorer is the receiver, not the passer
+                            # Description: "Receiver N Yd pass from Passer (Kicker Kick)"
+                            _recv_m = _re_ftd.match(r'^([A-Z]\.[A-Za-z]+)', _fdesc)
+                            _scorer_name = _recv_m.group(1).split(".")[-1].lower() if _recv_m else ""
+                            _won_ftd = any(_scorer_name and _scorer_name in p.split()[-1].lower() or
+                                          p.split()[-1].lower() in _fdesc.lower()
+                                          for p in _ftd_pls) if _scorer_name else any(
+                                          p.split()[-1].lower() in _fdesc.lower() for p in _ftd_pls)
+                        else:
+                            _won_ftd = any(p.split()[-1].lower() in _fdesc.lower() for p in _ftd_pls)
                         _ftd_res = "✅ Won" if _won_ftd is True else ("❗ Error" if _won_ftd is None else "❌ Lost")
                         graded.append({"Prop": line, "Data": f"First TD: {_ftd_detail2}", "Result": _ftd_res})
                         continue
@@ -2259,18 +2271,24 @@ elif st.session_state.view == "boxscore":
                 won = None
                 _ftd_detail = "No TDs"
                 if _sdf_ftd is not None and not _sdf_ftd.empty and "Type" in _sdf_ftd.columns:
-                    _SCORER_TD_TYPES = {"rushing touchdown","receiving touchdown",
-                        "punt return touchdown","kickoff return touchdown",
-                        "blocked punt touchdown","blocked field goal touchdown",
-                        "interception return touchdown","fumble return touchdown","touchdown"}
-                    _td_rows2 = _sdf_ftd[_sdf_ftd["Type"].str.lower().isin(_SCORER_TD_TYPES)]
+                    _td_rows2 = _sdf_ftd[_sdf_ftd["Type"].str.lower().isin(_ALL_TD_TYPES)]
                     if not _td_rows2.empty:
                         _first_desc2 = _td_rows2.iloc[0].get("Description", "")
                         _ftd_detail = _first_desc2[:60]
-                        won = any(
-                            p.split()[-1].lower() in _first_desc2.lower()
-                            for p in _players_ftd
-                        )
+                        import re as _re_ftd2
+                        _first_type2 = _td_rows2.iloc[0].get("Type","").lower() if "Type" in _td_rows2.columns else ""
+                        if "passing" in _first_type2 or "receiving" in _first_type2:
+                            _recv_m2 = _re_ftd2.match(r'^([A-Z]\.[A-Za-z]+)', _first_desc2)
+                            _scorer2 = _recv_m2.group(1).split(".")[-1].lower() if _recv_m2 else ""
+                            won = any(_scorer2 and _scorer2 in p.split()[-1].lower() or
+                                     p.split()[-1].lower() in _first_desc2.lower()
+                                     for p in _players_ftd) if _scorer2 else any(
+                                     p.split()[-1].lower() in _first_desc2.lower() for p in _players_ftd)
+                        else:
+                            won = any(
+                                p.split()[-1].lower() in _first_desc2.lower()
+                                for p in _players_ftd
+                            )
                 _ftd_res = "✅ Won" if won is True else ("❗ Error" if won is None else "❌ Lost")
                 graded.append({"Prop": line, "Data": f"First TD: {_ftd_detail}", "Result": _ftd_res})
                 continue
