@@ -566,13 +566,9 @@ def get_player_stats_by_period(game_id: str) -> dict:
             # ── Pass ─────────────────────────────────────────────────────────
             pass_m = _pass_detect_re.match(sent)
             if pass_m:
-                # Skip No Play pure penalties — but NOT pass+penalty plays
-                # (pass+penalty: text has pass action BEFORE PENALTY keyword)
+                # Skip No Play plays entirely — wiped out plays don't count as attempts
                 if is_no_play:
-                    pre_penalty = _re.split(r'PENALTY', text, flags=_re.I)[0]
-                    if not _re.search(r'\bpass\b', pre_penalty, _re.I):
-                        continue  # pure No Play penalty, no pass happened
-
+                    continue
                 passer = pass_m.group(1).strip()
                 is_incomplete = bool(pass_m.group(2)) or bool(_re.search(r'\bincomplete\b', sent, _re.I))
                 receiver = None
