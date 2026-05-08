@@ -727,7 +727,7 @@ elif st.session_state.view == "boxscore":
         st.markdown(_render_stats_df_html(df), unsafe_allow_html=True)
 
     # Key map: display label → internal key used in by_period
-    _PERIOD_KEY = {"1st Half":"H1","2nd Half":"H2"}
+    _PERIOD_KEY = {"1st Half":"1H","2nd Half":"2H"}
 
     def _render_stats_df_html(df):
         """Render stats df as HTML with logos in Team column."""
@@ -1292,7 +1292,7 @@ elif st.session_state.view == "boxscore":
                         _sdf_ftd2 = data.get("scoring", pd.DataFrame())
                         _won_ftd = None
                         _ftd_detail2 = "No TDs"
-                        _ALL_TD_T = {"rushing touchdown","passing touchdown","receiving touchdown",
+                        _ALL_TD_T = {"rushing touchdown","receiving touchdown",
                                      "punt return touchdown","kickoff return touchdown",
                                      "blocked punt touchdown","blocked field goal touchdown",
                                      "interception return touchdown","fumble return touchdown","touchdown"}
@@ -2259,7 +2259,11 @@ elif st.session_state.view == "boxscore":
                 won = None
                 _ftd_detail = "No TDs"
                 if _sdf_ftd is not None and not _sdf_ftd.empty and "Type" in _sdf_ftd.columns:
-                    _td_rows2 = _sdf_ftd[_sdf_ftd["Type"].str.lower().isin(_ALL_TD_TYPES)]
+                    _SCORER_TD_TYPES = {"rushing touchdown","receiving touchdown",
+                        "punt return touchdown","kickoff return touchdown",
+                        "blocked punt touchdown","blocked field goal touchdown",
+                        "interception return touchdown","fumble return touchdown","touchdown"}
+                    _td_rows2 = _sdf_ftd[_sdf_ftd["Type"].str.lower().isin(_SCORER_TD_TYPES)]
                     if not _td_rows2.empty:
                         _first_desc2 = _td_rows2.iloc[0].get("Description", "")
                         _ftd_detail = _first_desc2[:60]
