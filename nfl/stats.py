@@ -341,7 +341,10 @@ def get_pbp_by_quarter(game_id: str) -> dict[str, pd.DataFrame]:
             continue
         team_abbr = drive.get("team", {}).get("abbreviation", "")
         for play in drive.get("plays", []):
-            period = _safe_int(play.get("period", {}).get("number", 0))
+            _p_raw = play.get("period", {})
+            period = _safe_int(_p_raw.get("number", 0) if isinstance(_p_raw, dict) else _p_raw)
+            if period == 0:
+                period = _safe_int(play.get("start", {}).get("period", {}).get("number", 0))
             clock  = play.get("clock", {}).get("displayValue", "")
             desc   = play.get("description", "")
             yards  = play.get("statYardage", 0)
@@ -418,7 +421,7 @@ _INT_RE = _re.compile(r'intercepted', _re.I)
 _PASS_PTYPES = {"pass reception", "pass incompletion", "passing touchdown",
                 "receiving touchdown",
                 "interception", "interception return", "pass", "sack"}
-_RUSH_PTYPES = {"rush", "rushing touchdown", "scramble"}
+_RUSH_PTYPES = {"rush", "rushing touchdown", "scramble", "kneel"}
 _SKIP_PTYPES = {"kickoff", "punt", "field goal", "extra point", "penalty",
                 "timeout", "end period", "end of half", "two-point conversion",
                 "two point conversion", "kick off", "no play", "",
@@ -483,7 +486,10 @@ def get_player_stats_by_period(game_id: str) -> dict:
         _drive_period = _safe_int(drive.get("start", {}).get("period", {}).get("number", 0))
         _last_valid_period = _drive_period  # track last known valid period within drive
         for play in drive.get("plays", []):
-            _raw_period = _safe_int(play.get("period", {}).get("number", 0))
+            _p_raw2 = play.get("period", {})
+            _raw_period = _safe_int(_p_raw2.get("number", 0) if isinstance(_p_raw2, dict) else _p_raw2)
+            if _raw_period == 0:
+                _raw_period = _safe_int(play.get("start", {}).get("period", {}).get("number", 0))
             if _raw_period > 0:
                 _last_valid_period = _raw_period
             period = _last_valid_period if _last_valid_period > 0 else _drive_period
@@ -553,6 +559,10 @@ def get_player_stats_by_period(game_id: str) -> dict:
             # ── Rush plays ─────────────────────────────────────────────────────
             if ptype in _RUSH_PTYPES:
                 rm = _RUSH_RE.search(text)
+                if not rm:
+                    # Fallback: first abbreviated name in text is the rusher
+                    fm = _re.match(rf'(?:\(\S+\)\s+)?({_NAME})', text)
+                    rm = fm
                 if rm:
                     rusher = rm.group(1).strip()
                     d = rushing[period][rusher]
