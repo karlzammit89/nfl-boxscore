@@ -789,7 +789,7 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
 def _reconcile(result: dict, game_id: str) -> None:
     """
-    Step 2: Compare PBP quarter/half splits against ESPN official totals.
+    Step 2: Compare PBP quarter/half splits against official totals.
     Step 3: Log PASSED if everything matches.
     Step 4: Log which quarter/half is suspected missing if gaps remain.
     """
@@ -864,7 +864,7 @@ def _adjust_att(df, player, diff):
 
 def _build_reconciliation_report(result: dict, game_id: str) -> list:
     """
-    Compare Full Game PBP totals against ESPN official.
+    Compare Full Game PBP totals against official boxscore.
     Returns list of (player, cat, col, pbp_val, official_val, suspected_quarter) tuples
     for any mismatches.
     """
@@ -936,7 +936,7 @@ def get_reconciliation_status(result: dict, game_id: str) -> dict:
         return {
             "passed": True,
             "mismatches": [],
-            "message": "✅ Reconciliation passed — all quarter/half stats match ESPN official totals."
+            "message": "✅ Reconciliation passed — all quarter/half stats match official totals."
         }
     lines = []
     for player, cat, col, pbp, official, qtr in mismatches:
