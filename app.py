@@ -212,7 +212,6 @@ MONTH_NAMES = ["January","February","March","April","May","June",
 # ── Header ────────────────────────────────────────────────────────────────────
 
 st.markdown("## 🏈 NFL Box Scores")
-st.caption("Live stats · Quarter & half splits · All times Eastern")
 st.divider()
 
 # ── Data loaders ──────────────────────────────────────────────────────────────
@@ -708,14 +707,14 @@ elif st.session_state.view == "boxscore":
             st.markdown(
                 "Some plays could not be mapped to a specific quarter from the play-by-play. "
                 "The quarter/half totals below may be understated. "
-                "Full Game stats are always accurate (sourced directly from ESPN official boxscore)."
+                "Full Game stats are always accurate (sourced directly from official boxscore)."
             )
             for player, cat, col, pbp, official, _ in _recon["mismatches"]:
                 diff = official - pbp
                 sign = "+" if diff > 0 else ""
                 st.markdown(
                     f"- **{player}** ({cat} · {col}): "
-                    f"quarter/half total = **{pbp}**, ESPN official = **{official}** "
+                    f"quarter/half total = **{pbp}**, official = **{official}** "
                     f"— **{sign}{diff} plays unclassified** (not assigned to any quarter)"
                 )
 
@@ -1571,7 +1570,7 @@ elif st.session_state.view == "boxscore":
             abbr = _abbr_from_name(player)
 
             if period_key == "Full Game":
-                # Use ESPN official boxscore for accuracy
+                # Use official boxscore for accuracy
                 pdf = data.get(category, pd.DataFrame())
                 if pdf is None or pdf.empty or "Player" not in pdf.columns:
                     return pd.DataFrame()
