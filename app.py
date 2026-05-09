@@ -21,6 +21,7 @@ from nfl.stats import (
     get_team_stats,
     get_scoring_summary,
     get_pbp_by_quarter,
+    get_reconciliation_status,
 )
 
 # ── Eastern Time helpers ──────────────────────────────────────────────────────
@@ -697,6 +698,27 @@ elif st.session_state.view == "boxscore":
 
         st.markdown(_ls_html(_ls_show), unsafe_allow_html=True)
     st.divider()
+
+    # ── Reconciliation status ─────────────────────────────────────────────────
+    _recon = get_reconciliation_status(data, game_id)
+    if _recon["passed"]:
+        st.success(_recon["message"])
+    else:
+        with st.expander("❗ Stats reconciliation — unclassified plays detected", expanded=True):
+            st.markdown(
+                "Some plays could not be mapped to a specific quarter from the play-by-play. "
+                "The quarter/half totals below may be understated. "
+                "Full Game stats are always accurate (sourced directly from ESPN official boxscore)."
+            )
+            for player, cat, col, pbp, official, _ in _recon["mismatches"]:
+                diff = official - pbp
+                sign = "+" if diff > 0 else ""
+                st.markdown(
+                    f"- **{player}** ({cat} · {col}): "
+                    f"quarter/half total = **{pbp}**, ESPN official = **{official}** "
+                    f"— **{sign}{diff} plays unclassified** (not assigned to any quarter)"
+                )
+
 
     # Period filter
     st.markdown("<div class='sec-div' style='margin-top:18px'>Player Stats</div>",
