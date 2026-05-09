@@ -534,10 +534,14 @@ def get_player_stats_by_period(game_id: str) -> dict:
         Handles compound plays (fumble+pass, etc.)
         Returns list of (event_type, player1, player2, yds, is_td, is_int) tuples.
         """
+        # Two-point conversions: NEVER count towards any regular stats
+        # (passing ATT/CMP/YDS, receiving REC/YDS, rushing CAR/YDS, TDs)
+        is_two_pt  = bool(_re.search(r'TWO.POINT\s+CONVERSION', text, _re.I))
+        if is_two_pt:
+            return []
+
         # No Play = down wiped out, don't count any stats
         is_no_play = bool(_re.search(r'No\s+Play', text, _re.I))
-        # Two-point conversion: pass attempts don't count in regular ATT
-        is_two_pt  = bool(_re.search(r'TWO.POINT\s+CONVERSION', text, _re.I))
 
         # Strip formation/eligibility prefix from full text
         clean = _strip_re.sub('', text).strip()
@@ -570,9 +574,6 @@ def get_player_stats_by_period(game_id: str) -> dict:
             # ── Pass ─────────────────────────────────────────────────────────
             pass_m = _pass_detect_re.match(sent)
             if pass_m:
-                # 2pt conversion attempts don't count in regular passing ATT
-                if is_two_pt:
-                    continue
                 # No Play = down wiped out, skip all pass attempts
                 if is_no_play:
                     continue
