@@ -1232,16 +1232,16 @@ elif st.session_state.view == "boxscore":
         import re as _re
 
         STAT_MAP_RE = [
-            (_re.compile(r'rushing yards?|rushing yds?|rush yards?|rush yds?|rush yd\\b', _re.I),   "Rushing Yards"),
-            (_re.compile(r'rushing tds?|rushing touchdowns?', _re.I), "Rushing TDs"),
-            (_re.compile(r'passing yards?|passing yds?', _re.I),   "Passing Yards"),
-            (_re.compile(r'passing tds?|passing touchdowns?', _re.I), "Passing TDs"),
-            (_re.compile(r'receiving yards?|receiving yds?|rec yards?|rec yds?', _re.I), "Receiving Yards"),
-            (_re.compile(r'receptions?', _re.I),                   "Receptions"),
+            (_re.compile(r'rush(?:ing)? yards?|rush(?:ing)? yds?|rush yd\b', _re.I),   "Rushing Yards"),
+            (_re.compile(r'rush(?:ing)? tds?|rush(?:ing)? touchdowns?', _re.I), "Rushing TDs"),
+            (_re.compile(r'pass(?:ing)? yards?|pass(?:ing)? yds?', _re.I),   "Passing Yards"),
+            (_re.compile(r'pass(?:ing)? tds?|pass(?:ing)? touchdowns?', _re.I), "Passing TDs"),
+            (_re.compile(r'receiv(?:ing|e)? yards?|receiv(?:ing|e)? yds?', _re.I), "Receiving Yards"),
+            (_re.compile(r'receptions?|\brec\b(?!\s*tds?|\s*touchdowns?|\s+yards?|\s+yds?)', _re.I), "Receptions"),
             (_re.compile(r'interceptions?', _re.I),                "Interceptions"),
             (_re.compile(r'sacks?|record a sack', _re.I),          "Sacks"),
             (_re.compile(r'completions?|completed passes?', _re.I),          "Completions"),
-            (_re.compile(r'receiving tds?|receiving touchdowns?|rec tds?', _re.I), "Receiving TDs"),
+            (_re.compile(r'receiv(?:ing|e)? tds?|receiv(?:ing|e)? touchdowns?|rec tds?', _re.I), "Receiving TDs"),
         ]
         COND_MAP_RE = [
             (_re.compile(r'each quarter', _re.I),  "each quarter"),
@@ -1274,7 +1274,7 @@ elif st.session_state.view == "boxscore":
             import re as _rn
             n = n.strip()
             n = _rn.sub(r'\s+(?:jr\.?|sr\.?|ii|iii|iv)\s*$', '', n, flags=_rn.I).strip()
-            return NAME_ALIASES.get(n.lower(), n)
+            return NAME_ALIASES.get(n.lower(), n.title())
 
         props = []
         error_rows = []
@@ -2092,7 +2092,7 @@ elif st.session_state.view == "boxscore":
         _OT_WIN_RE     = _re_t.compile(r'^([\w\s]+?)\s+to\s+beat\s+(?:the\s+)?([\w\s]+?)\s+in\s+overtime', _re_t.I)
         _NO_TD_RE      = _re_t.compile(r'^no\s+touchdown\s+in\s+the\s+game', _re_t.I)
         _FIRST_TD_RE   = _re_t.compile(r'^([\w\s]+?)\s+(?:or\s+([\w\s]+?)\s+)?to\s+score\s+the\s+first\s+td', _re_t.I)
-        _TWO_PT_RE     = _re_t.compile(r'^successful\s+2\s*pt\s+conversion', _re_t.I)
+        _TWO_PT_RE     = _re_t.compile(r'^successful\s+(?:2\s*pt|2\s*point|two\s*pt|two\s*point)\s+conversion', _re_t.I)
         _KICK_TD_RE    = _re_t.compile(r'^opening kick(?:off)?.*(?:return|returned).*td|opening kickoff.*touchdown', _re_t.I)
 
         # Special teams TD types from ESPN scoring summary
