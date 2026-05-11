@@ -1728,7 +1728,15 @@ elif st.session_state.view == "boxscore":
                 vals2={}; all_found2=True
                 for p2 in players_list:
                     v2=_mltd2(p2) if cat2=="multi" else _fg2(p2,cat2,col2)
-                    if v2 is None: all_found2=False; v2=0
+                    if v2 is None:
+                        # Player not in that stat df — check if they're in the game at all
+                        in_game = (player_found_in_game(normalise_name(p2), "passing")
+                                   or player_found_in_game(normalise_name(p2), "rushing")
+                                   or player_found_in_game(normalise_name(p2), "receiving")
+                                   or player_found_in_game(normalise_name(p2), "defense"))
+                        if not in_game:
+                            all_found2 = False  # truly not in this game
+                        v2 = 0  # in game with 0 of this stat → valid 0
                     vals2[p2]=v2
                 total2=sum(vals2.values())
                 detail2=" | ".join(f"{p2.split()[-1]}: {v2:.0f}" for p2,v2 in vals2.items())
@@ -1743,7 +1751,14 @@ elif st.session_state.view == "boxscore":
                     won2=all(v2>=thr2 for v2 in vals2.values()) if all_found2 else None
                     scope2=detail2
                 if not all_found2:
-                    not_found = [p2 for p2 in players_list if vals2.get(p2,0)==0 and _fg2(p2,cat2,col2) is None]
+                    # A player is "not in this game" only if they don't appear
+                    # in the game roster at all — not merely because they have 0
+                    # of a specific stat (e.g. WR with 0 rush yards is still in the game)
+                    not_found = [p2 for p2 in players_list
+                                 if not player_found_in_game(normalise_name(p2), "passing")
+                                 and not player_found_in_game(normalise_name(p2), "rushing")
+                                 and not player_found_in_game(normalise_name(p2), "receiving")
+                                 and not player_found_in_game(normalise_name(p2), "defense")]
                     scope2 = f"{', '.join(not_found) if not_found else 'Player'} not in this game"
                     won2 = None
                 return {
