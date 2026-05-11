@@ -1528,11 +1528,20 @@ elif st.session_state.view == "boxscore":
                         _game_abbrs.add(_abbr)
                         _game_players[_abbr] = _team
         def _abbr_from_name(player: str) -> str:
-            """Convert 'Bijan Robinson' → 'B.Robinson'."""
+            """Convert player name to ESPN abbreviation.
+            'Bijan Robinson' → 'B.Robinson'
+            'Amon-Ra St. Brown' → 'A.St. Brown'
+            'D\'Andre Swift' → 'D.Swift'
+            """
             parts = player.strip().split()
             if len(parts) < 2:
                 return player
-            return f"{parts[0][0].upper()}.{parts[-1].title()}"
+            first_initial = parts[0][0].upper()
+            if len(parts) == 2:
+                return f"{first_initial}.{parts[1]}"
+            # 3+ parts: check if middle parts look like name prefixes (St., De, La, etc.)
+            # ESPN keeps them as part of the last name: "A.St. Brown"
+            return f"{first_initial}.{' '.join(parts[1:])}"
 
         def _name_matches_game(player: str) -> bool:
             """
