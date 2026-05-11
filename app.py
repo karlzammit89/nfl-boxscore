@@ -1297,7 +1297,7 @@ elif st.session_state.view == "boxscore":
                     continue
                 if _re_skip.match(r'^no\s+touchdown\s+in\s+the\s+game', line, _re_skip.I):
                     continue
-                if _re_skip.match(r'^successful\s+(?:2\s*pt|2\s*point|two\s*pt|two\s*point)\s+conversion', line, _re_skip.I):
+                if _re_skip.match(r'^succe(?:ss|s)ful\s+(?:2\s*(?:pt\s*)?point|2\s*pt|two\s*(?:pt\s*)?point|two\s*pt)\s+conversion', line, _re_skip.I):
                     continue
                 if _re_skip.match(r'^opening kick', line, _re_skip.I):
                     continue
@@ -2116,7 +2116,7 @@ elif st.session_state.view == "boxscore":
         _OT_WIN_RE     = _re_t.compile(r'^([\w\s]+?)\s+to\s+beat\s+(?:the\s+)?([\w\s]+?)\s+in\s+overtime', _re_t.I)
         _NO_TD_RE      = _re_t.compile(r'^no\s+touchdown\s+in\s+the\s+game', _re_t.I)
         _FIRST_TD_RE   = _re_t.compile(r'^([\w\s]+?)\s+(?:or\s+([\w\s]+?)\s+)?to\s+score\s+the\s+first\s+td', _re_t.I)
-        _TWO_PT_RE     = _re_t.compile(r'^successful\s+(?:2\s*pt|2\s*point|two\s*pt|two\s*point)\s+conversion', _re_t.I)
+        _TWO_PT_RE     = _re_t.compile(r'^succe(?:ss|s)ful\s+(?:2\s*(?:pt\s*)?point|2\s*pt|two\s*(?:pt\s*)?point|two\s*pt)\s+conversion', _re_t.I)
         _KICK_TD_RE    = _re_t.compile(r'^opening kick(?:off)?.*(?:return|returned).*td|opening kickoff.*touchdown', _re_t.I)
 
         # Special teams TD types from ESPN scoring summary
