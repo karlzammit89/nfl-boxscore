@@ -2721,7 +2721,8 @@ elif st.session_state.view == "boxscore":
 - `Both [Player] and [Player] to Each Record N+ [stat] in Each Half`
 
 *Two or more players — combined total*
-- `[Player] and [Player] to Combine for N+ [stat]` (up to 5 players)
+- `[Player] and [Player] to Combine for N+ [stat]`
+- `[Player], [Player] and [Player] to Combine for N+ [stat]` (up to 5 players)
 
 *First TD scorer*
 - `[Player] to Score the First TD`
@@ -2753,13 +2754,13 @@ elif st.session_state.view == "boxscore":
 
 *Other*
 - `[Team] to Beat the [Team] in Overtime`
-- `Successful 2pt Conversion` / `Successful 2 point Conversion` / `Successful two point Conversion` / `Successful two pt Conversion` / `Succesful 2pt Conversion` *(typo-tolerant)*
+- `Successful 2pt Conversion` / `Successful 2 point Conversion` / `Successful two point Conversion` / `Successful two pt Conversion`
 
 ---
 
 ⚠️ **Notes**
 - Player names are **not case-sensitive** — `andrew billings` and `Andrew Billings` both work
-- Player names must be in this game or result will be ❗ Error
+- Player names must be from this game or result will be ❗ Error
 - Team names accept abbreviations (DAL), city (Dallas), nickname (Cowboys) or full name (Dallas Cowboys)
 - N+ means any positive number e.g. 1+, 2+, 25+
         """)
@@ -2768,7 +2769,7 @@ elif st.session_state.view == "boxscore":
         st.markdown("""
 **🏃 Rushing**
 
-| You can write | Resolves to |
+| Input | Resolves to |
 |---|---|
 | `Rushing Yards` | Rushing Yards |
 | `Rush Yards` | Rushing Yards |
@@ -2782,9 +2783,9 @@ elif st.session_state.view == "boxscore":
 
 ---
 
-**✈️ Passing**
+**🏈 Passing**
 
-| You can write | Resolves to |
+| Input | Resolves to |
 |---|---|
 | `Passing Yards` | Passing Yards |
 | `Pass Yards` | Passing Yards |
@@ -2805,7 +2806,7 @@ elif st.session_state.view == "boxscore":
 
 **🙌 Receiving**
 
-| You can write | Resolves to |
+| Input | Resolves to |
 |---|---|
 | `Receiving Yards` | Receiving Yards |
 | `Receive Yards` | Receiving Yards |
