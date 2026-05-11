@@ -480,7 +480,7 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
     # ── Smart text-based play classifier ─────────────────────────────────────
 
-    _N = r'[A-Z][a-z]?\.[A-Z][A-Za-z\'\-]+'
+    _N = r'[A-Z][a-z]?\.[A-Z][A-Za-z\'\-]+(?:\.\s*[A-Z][A-Za-z\'\-]+)*'
 
     # Strip formation notes and eligibility prefixes
     _strip_re = _re.compile(
@@ -821,22 +821,45 @@ def _last_period(result, cat, player, periods):
     return None
 
 
+def _match_player(df, player):
+    """Match player row handling full-name vs ESPN-abbr mismatch.
+    e.g. 'Amon-Ra St. Brown' matches 'A.St. Brown' in PBP df.
+    """
+    if "Player" not in df.columns:
+        return df.iloc[0:0]
+    row = df[df["Player"] == player]
+    if not row.empty:
+        return row
+    parts = player.strip().split()
+    if len(parts) >= 2:
+        abbr = f"{parts[0][0].upper()}.{chr(32).join(parts[1:])}"
+        row = df[df["Player"] == abbr]
+        if not row.empty:
+            return row
+    last = parts[-1] if parts else ""
+    first_init = parts[0][0].upper() if parts else ""
+    candidates = df[df["Player"].str.endswith(last, na=False)]
+    if not candidates.empty and first_init:
+        candidates = candidates[candidates["Player"].str.startswith(first_init, na=False)]
+    return candidates.iloc[0:1] if not candidates.empty else df.iloc[0:0]
+
+
 def _in_df(df, player):
     if "Player" not in df.columns: return False
-    return (df["Player"] == player).any()
+    return not _match_player(df, player).empty
 
 
 def _get_col(df, player, col):
     if df is None or df.empty or "Player" not in df.columns or col not in df.columns:
         return 0
-    row = df[df["Player"] == player]
+    row = _match_player(df, player)
     if row.empty: return 0
     return int(pd.to_numeric(row.iloc[0].get(col, 0), errors="coerce") or 0)
 
 
 def _get_att(df, player):
     if df is None or df.empty or "Player" not in df.columns: return 0
-    row = df[df["Player"] == player]
+    row = _match_player(df, player)
     if row.empty: return 0
     ca = str(row.iloc[0].get("C/ATT","0/0"))
     try: return int(ca.split("/")[1])
