@@ -12,7 +12,10 @@ Per-player quarter splits are derived by parsing drives + plays.
 
 import pandas as pd
 from typing import Optional
-from .api import get_game_summary, get_linescore, get_scoring_plays
+try:
+    from .api import get_game_summary, get_linescore, get_scoring_plays
+except ImportError:
+    from nfl.api import get_game_summary, get_linescore, get_scoring_plays
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
