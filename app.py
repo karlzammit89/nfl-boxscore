@@ -1297,7 +1297,7 @@ elif st.session_state.view == "boxscore":
                     continue
                 if _re_skip.match(r'^no\s+touchdown\s+in\s+the\s+game', line, _re_skip.I):
                     continue
-                if _re_skip.match(r'^successful\s+2\s*pt\s+conversion', line, _re_skip.I):
+                if _re_skip.match(r'^successful\s+(?:2\s*pt|2\s*point|two\s*pt|two\s*point)\s+conversion', line, _re_skip.I):
                     continue
                 if _re_skip.match(r'^opening kick', line, _re_skip.I):
                     continue
@@ -1472,12 +1472,12 @@ elif st.session_state.view == "boxscore":
                     error_rows.append({"line_index": i, "raw_line": line})
                     continue
                 if dual:
-                    for player in [dual.group(1).strip(), dual.group(2).strip()]:
+                    for player in [dual.group(1).strip().title(), dual.group(2).strip().title()]:
                         props.append({"line_index": i, "player": player, "stat": stat,
                                       "threshold": threshold, "condition": condition,
                                       "operator": operator, "raw_line": line})
                 else:
-                    player_raw = (single or alt).group(1).strip()
+                    player_raw = (single or alt).group(1).strip().title()
                     props.append({"line_index": i, "player": player_raw, "stat": stat,
                                   "threshold": threshold, "condition": condition,
                                   "operator": operator, "raw_line": line})
@@ -1532,7 +1532,7 @@ elif st.session_state.view == "boxscore":
             parts = player.strip().split()
             if len(parts) < 2:
                 return player
-            return f"{parts[0][0].upper()}.{parts[-1]}"
+            return f"{parts[0][0].upper()}.{parts[-1].title()}"
 
         def _name_matches_game(player: str) -> bool:
             """
