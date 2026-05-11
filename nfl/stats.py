@@ -12,10 +12,16 @@ Per-player quarter splits are derived by parsing drives + plays.
 
 import pandas as pd
 from typing import Optional
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 try:
     from .api import get_game_summary, get_linescore, get_scoring_plays
 except ImportError:
-    from nfl.api import get_game_summary, get_linescore, get_scoring_plays
+    import importlib as _il
+    _api = _il.import_module('api' if 'nfl' not in _sys.modules else 'nfl.api')
+    get_game_summary  = _api.get_game_summary
+    get_linescore     = _api.get_linescore
+    get_scoring_plays = _api.get_scoring_plays
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
