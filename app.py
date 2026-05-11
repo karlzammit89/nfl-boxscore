@@ -2706,15 +2706,7 @@ elif st.session_state.view == "boxscore":
 **👤 Player Props**
 
 *Single player — game total*
-- `[Player] to record N+ Passing Yards`
-- `[Player] to record N+ Rushing Yards`
-- `[Player] to record N+ Receiving Yards`
-- `[Player] to record N+ Passing TDs`
-- `[Player] to record N+ Rushing TDs`
-- `[Player] to record N+ Receiving TDs`
-- `[Player] to record N+ Receptions`
-- `[Player] to record N+ Completions`
-- `[Player] to Record a Sack` / `[Player] to Record N+ Sacks`
+- `[Player] to record N+ [stat]`
 
 *Single player — per period*
 - `[Player] to record N+ [stat] in Each Quarter`
@@ -2729,12 +2721,11 @@ elif st.session_state.view == "boxscore":
 - `Both [Player] and [Player] to Each Record N+ [stat] in Each Half`
 
 *Two or more players — combined total*
-- `[Player], [Player] and [Player] to Combine for N+ [stat]`
-- `[Player], [Player] and [Player] to Combine for N+ [stat]` (up to 5 players)
+- `[Player] and [Player] to Combine for N+ [stat]` (up to 5 players)
 
 *First TD scorer*
 - `[Player] to Score the First TD`
-- `[Player] or [Player] to Score the First TD` (up to 2 players)
+- `[Player] or [Player] to Score the First TD`
 
 ---
 
@@ -2748,7 +2739,7 @@ elif st.session_state.view == "boxscore":
 - `N+ TDs to be Scored in Each Quarter`
 - `N+ Made Field Goals in Each Quarter`
 
-*Team scoring — structured (exact format required, N+ is flexible)*
+*Team scoring — halves (exact format, N+ is flexible)*
 - `Each Team to Score N+ TD in Each Quarter`
 - `Each Team to Score N+ TD & N+ FG in Each Half`
 - `Each Team to Score N+ Rushing TDs & N+ Passing TDs`
@@ -2760,14 +2751,79 @@ elif st.session_state.view == "boxscore":
 - `Opening Kickoff to be Returned for a Touchdown`
 - `No Touchdown in the Game`
 
-*Others*
+*Other*
 - `[Team] to Beat the [Team] in Overtime`
-- `Successful 2pt Conversion` / `Successful 2 point Conversion` / `Successful two point Conversion`
+- `Successful 2pt Conversion` / `Successful 2 point Conversion` / `Successful two point Conversion` / `Successful two pt Conversion` / `Succesful 2pt Conversion` *(typo-tolerant)*
 
 ---
 
 ⚠️ **Notes**
-- Player names must match players in the current game or result will be ❗ Error
+- Player names are **not case-sensitive** — `andrew billings` and `Andrew Billings` both work
+- Player names must be in this game or result will be ❗ Error
 - Team names accept abbreviations (DAL), city (Dallas), nickname (Cowboys) or full name (Dallas Cowboys)
-- N+ means any number e.g. 1+, 2+, 25+
+- N+ means any positive number e.g. 1+, 2+, 25+
+        """)
+
+    with st.expander("📊 Supported Stats", expanded=False):
+        st.markdown("""
+**🏃 Rushing**
+
+| You can write | Resolves to |
+|---|---|
+| `Rushing Yards` | Rushing Yards |
+| `Rush Yards` | Rushing Yards |
+| `Rushing Yds` | Rushing Yards |
+| `Rush Yds` | Rushing Yards |
+| `Rushing TDs` | Rushing TDs |
+| `Rushing TD` | Rushing TDs |
+| `Rush TDs` | Rushing TDs |
+| `Rush TD` | Rushing TDs |
+| `Rushing Touchdowns` | Rushing TDs |
+
+---
+
+**✈️ Passing**
+
+| You can write | Resolves to |
+|---|---|
+| `Passing Yards` | Passing Yards |
+| `Pass Yards` | Passing Yards |
+| `Passing Yds` | Passing Yards |
+| `Pass Yds` | Passing Yards |
+| `Passing TDs` | Passing TDs |
+| `Passing TD` | Passing TDs |
+| `Pass TDs` | Passing TDs |
+| `Pass TD` | Passing TDs |
+| `Passing Touchdowns` | Passing TDs |
+| `Completions` | Completions |
+| `Completed Passes` | Completions |
+| `Interceptions` | Interceptions |
+| `Sacks` | Sacks |
+| `Record a Sack` | Sacks |
+
+---
+
+**🙌 Receiving**
+
+| You can write | Resolves to |
+|---|---|
+| `Receiving Yards` | Receiving Yards |
+| `Receive Yards` | Receiving Yards |
+| `Receiving Yds` | Receiving Yards |
+| `Receive Yds` | Receiving Yards |
+| `Receiving TDs` | Receiving TDs |
+| `Receiving TD` | Receiving TDs |
+| `Receive TDs` | Receiving TDs |
+| `Receive TD` | Receiving TDs |
+| `Rec TDs` | Receiving TDs |
+| `Receiving Touchdowns` | Receiving TDs |
+| `Receptions` | Receptions |
+| `Reception` | Receptions |
+| `Rec` | Receptions |
+
+---
+
+⚠️ **Notes**
+- `Rec Yards` is **not supported** — use `Receiving Yards` instead
+- Stat names are not case-sensitive
         """)
