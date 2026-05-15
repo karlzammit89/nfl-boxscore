@@ -345,15 +345,51 @@ def get_pbp_by_quarter(game_id: str) -> dict[str, pd.DataFrame]:
     current_drive = drives.get("current")
     all_drives = previous_drives + ([current_drive] if current_drive else [])
 
+    def _pbp_period(play, drive) -> int:
+        """Resolve play period for PBP view using same multi-source logic."""
+        _p_raw = play.get("period", {})
+        p = _safe_int(_p_raw.get("number", 0) if isinstance(_p_raw, dict) else _p_raw)
+        if p > 0: return p
+        if isinstance(_p_raw, dict):
+            dv = _p_raw.get("displayValue", "")
+            if dv:
+                dv = dv.strip().lower()
+                if "4th" in dv or "4th quarter" in dv: p = 4
+                elif "3rd" in dv or "3rd quarter" in dv: p = 3
+                elif "2nd" in dv or "2nd quarter" in dv: p = 2
+                elif "1st" in dv or "1st quarter" in dv: p = 1
+                elif "1st overtime" in dv: p = 5
+                elif "2nd overtime" in dv: p = 6
+                elif "overtime" in dv or dv.startswith("ot"): p = 5
+                if p > 0: return p
+        p = _safe_int(play.get("start", {}).get("period", {}).get("number", 0))
+        if p > 0: return p
+        dv2 = play.get("start", {}).get("period", {}).get("displayValue", "")
+        if dv2:
+            dv2 = dv2.strip().lower()
+            if "4th" in dv2: return 4
+            if "3rd" in dv2: return 3
+            if "2nd" in dv2: return 2
+            if "1st quarter" in dv2: return 1
+            if "overtime" in dv2 or dv2.startswith("ot"): return 5
+        p = _safe_int(drive.get("start", {}).get("period", {}).get("number", 0))
+        if p > 0: return p
+        dv3 = drive.get("start", {}).get("period", {}).get("displayValue", "")
+        if dv3:
+            dv3 = dv3.strip().lower()
+            if "4th" in dv3: return 4
+            if "3rd" in dv3: return 3
+            if "2nd" in dv3: return 2
+            if "1st quarter" in dv3: return 1
+            if "overtime" in dv3 or dv3.startswith("ot"): return 5
+        return 0
+
     for drive in all_drives:
         if not drive:
             continue
         team_abbr = drive.get("team", {}).get("abbreviation", "")
         for play in drive.get("plays", []):
-            _p_raw = play.get("period", {})
-            period = _safe_int(_p_raw.get("number", 0) if isinstance(_p_raw, dict) else _p_raw)
-            if period == 0:
-                period = _safe_int(play.get("start", {}).get("period", {}).get("number", 0))
+            period = _pbp_period(play, drive)
             clock  = play.get("clock", {}).get("displayValue", "")
             desc   = play.get("description", "")
             yards  = play.get("statYardage", 0)
@@ -632,46 +668,92 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
     _global_last_valid_period = 0  # persists across ALL drives — final fallback for period=0 plays
 
+    def _period_from_display(display_val) -> int:
+        """Parse ESPN period displayValue string → integer period number.
+        Handles: '1st Quarter' → 1, '4th Quarter' → 4, 'Overtime' → 5,
+        '1st Overtime' → 5, '2nd Overtime' → 6.
+        This field is populated even when period.number = 0.
+        """
+        import re as _re2
+        if not display_val:
+            return 0
+        dv = str(display_val).strip().lower()
+        if "1st quarter" in dv: return 1
+        if "2nd quarter" in dv: return 2
+        if "3rd quarter" in dv: return 3
+        if "4th quarter" in dv: return 4
+        if "1st overtime" in dv: return 5
+        if "2nd overtime" in dv: return 6
+        if "3rd overtime" in dv: return 7
+        if "overtime" in dv or dv.startswith("ot"): return 5
+        m = _re2.match(r'(\d+)', dv)
+        if m: return int(m.group(1))
+        return 0
+
     def _resolve_drive_period(drive):
         """
         Extract best period estimate for a drive using all available ESPN fields.
-        Tries (in order): start.period → end.period → first valid period in plays.
+        Tries (in order):
+          start.period.number → start.period.displayValue
+          end.period.number   → end.period.displayValue
+          first valid period in plays (number + displayValue)
         """
+        # start.period.number
         p = _safe_int(drive.get("start", {}).get("period", {}).get("number", 0))
-        if p > 0:
-            return p
+        if p > 0: return p
+        # start.period.displayValue  ← key new source
+        p = _period_from_display(drive.get("start", {}).get("period", {}).get("displayValue", ""))
+        if p > 0: return p
+        # end.period.number
         p = _safe_int(drive.get("end", {}).get("period", {}).get("number", 0))
-        if p > 0:
-            return p
-        # Pre-scan plays for first valid period
+        if p > 0: return p
+        # end.period.displayValue
+        p = _period_from_display(drive.get("end", {}).get("period", {}).get("displayValue", ""))
+        if p > 0: return p
+        # Pre-scan plays for first valid period (number + displayValue)
         for _play in drive.get("plays", []):
             _pr = _play.get("period", {})
             p = _safe_int(_pr.get("number", 0) if isinstance(_pr, dict) else _pr)
-            if p > 0:
-                return p
+            if p > 0: return p
+            p = _period_from_display(_pr.get("displayValue", "") if isinstance(_pr, dict) else "")
+            if p > 0: return p
             p = _safe_int(_play.get("start", {}).get("period", {}).get("number", 0))
-            if p > 0:
-                return p
+            if p > 0: return p
+            p = _period_from_display(_play.get("start", {}).get("period", {}).get("displayValue", ""))
+            if p > 0: return p
             p = _safe_int(_play.get("end", {}).get("period", {}).get("number", 0))
-            if p > 0:
-                return p
+            if p > 0: return p
+            p = _period_from_display(_play.get("end", {}).get("period", {}).get("displayValue", ""))
+            if p > 0: return p
         return 0
 
     def _resolve_play_period(play):
         """
         Extract best period estimate for a play using all available ESPN fields.
-        Tries (in order): play.period → play.start.period → play.end.period.
+        Tries (in order):
+          play.period.number → play.period.displayValue
+          play.start.period.number → play.start.period.displayValue
+          play.end.period.number → play.end.period.displayValue
         """
+        # play.period.number
         _p_raw = play.get("period", {})
         p = _safe_int(_p_raw.get("number", 0) if isinstance(_p_raw, dict) else _p_raw)
-        if p > 0:
-            return p
+        if p > 0: return p
+        # play.period.displayValue  ← key new source
+        p = _period_from_display(_p_raw.get("displayValue", "") if isinstance(_p_raw, dict) else "")
+        if p > 0: return p
+        # play.start.period.number
         p = _safe_int(play.get("start", {}).get("period", {}).get("number", 0))
-        if p > 0:
-            return p
+        if p > 0: return p
+        # play.start.period.displayValue
+        p = _period_from_display(play.get("start", {}).get("period", {}).get("displayValue", ""))
+        if p > 0: return p
+        # play.end.period.number
         p = _safe_int(play.get("end", {}).get("period", {}).get("number", 0))
-        if p > 0:
-            return p
+        if p > 0: return p
+        # play.end.period.displayValue
+        p = _period_from_display(play.get("end", {}).get("period", {}).get("displayValue", ""))
+        if p > 0: return p
         return 0
 
     for drive in all_drives:
