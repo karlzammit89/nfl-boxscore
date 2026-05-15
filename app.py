@@ -722,7 +722,7 @@ elif st.session_state.view == "boxscore":
                 fw = "font-weight:700;" if bold else "opacity:0.85;"
                 return f"<td style='{fw}padding:4px 20px;{s}'>{int(val)}</td>"
             header = "".join([th(c) for c in q_cols]
-                           + ([th("1H",True),th("2H")] if h_cols else [])
+                           + ([th("H1",True),th("H2")] if h_cols else [])
                            + ([th("OT",True)] if ot_cols else [])
                            + ([th("T",True)] if t_cols else []))
             rows_html = ""
@@ -773,7 +773,7 @@ elif st.session_state.view == "boxscore":
     # Standard periods only — no OT
     # Include OT option only when OT data exists in this game
     _has_ot_data = bool(by_period.get("OT"))
-    available = ["Full Game", "Q1", "Q2", "Q3", "Q4", "1st Half", "2nd Half"]
+    available = ["Full Game", "Q1", "Q2", "Q3", "Q4", "H1", "H2"]
     if _has_ot_data:
         available.append("OT")
 
@@ -781,7 +781,7 @@ elif st.session_state.view == "boxscore":
                              horizontal=True, label_visibility="collapsed")
 
     def get_pbp_key(pf):
-        return {"1st Half":"H1","2nd Half":"H2"}.get(pf, pf)
+        return {"H1": "H1", "H2": "H2"}.get(pf, pf)
 
     def show_df(df, pf, sort=None, drop_cols=None):
         if df is None or df.empty:
@@ -799,7 +799,7 @@ elif st.session_state.view == "boxscore":
         st.markdown(_render_stats_df_html(df), unsafe_allow_html=True)
 
     # Key map: display label → internal key used in by_period
-    _PERIOD_KEY = {"1st Half":"1H","2nd Half":"2H","OT":"OT"}
+    _PERIOD_KEY = {"H1": "1H", "H2": "2H", "OT": "OT"}
 
     def _render_stats_df_html(df):
         """Render stats df as HTML with logos in Team column."""
@@ -1924,7 +1924,7 @@ elif st.session_state.view == "boxscore":
                 if operator == "under":   return v < threshold
                 if operator == "exactly": return v == threshold
                 return v >= threshold
-            _INLINE_MAP = {"Q1":"Q1","Q2":"Q2","Q3":"Q3","Q4":"Q4","1st Half":"H1","2nd Half":"H2"}
+            _INLINE_MAP = {"Q1":"Q1","Q2":"Q2","Q3":"Q3","Q4":"Q4","1st Half":"H1","2nd Half":"H2","H1":"H1","H2":"H2"}
 
 
             period_results = {}
@@ -2372,7 +2372,7 @@ elif st.session_state.view == "boxscore":
                                   if _game_teams and t not in _game_teams]
                 if _ot_not_found:
                     if len(_ot_not_found) == 2:
-                        _ot_err_msg = "both teams not in this game"
+                        _ot_err_msg = "Both teams not in this game"
                     else:
                         _ot_err_msg = f"{_ot_not_found[0]} not in this game"
                     team_graded.append({"Prop": line,
@@ -2852,6 +2852,12 @@ elif st.session_state.view == "boxscore":
 - `[Player] to Score the First TD`
 - `[Player] or [Player] to Score the First TD`
 
+*Defensive*
+- `[Player] to record N+ Sacks`
+- `[Player] to Record a Sack`
+- `[Player] to record N+ Sacks in Each Quarter`
+- `[Player] to record N+ Sacks in Each Half`
+
 ---
 
 **🏟 Team / Game Props**
@@ -2878,6 +2884,7 @@ elif st.session_state.view == "boxscore":
 
 *Other*
 - `[Team] to Beat the [Team] in Overtime`
+- `[Team] to record/have Successful 2pt Conversion`
 - `Successful 2pt Conversion` / `Successful 2 point Conversion` / `Successful two point Conversion` / `Successful two pt Conversion` / `Succesful 2pt Conversion` *(typo-tolerant)*
 
 ---
