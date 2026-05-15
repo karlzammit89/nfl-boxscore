@@ -21,7 +21,6 @@ from nfl.stats import (
     get_team_stats,
     get_scoring_summary,
     get_pbp_by_quarter,
-    get_reconciliation_status,
 )
 
 # ── Eastern Time helpers ──────────────────────────────────────────────────────
@@ -212,28 +211,10 @@ MONTH_NAMES = ["January","February","March","April","May","June",
 # ── Header ────────────────────────────────────────────────────────────────────
 
 st.markdown("## 🏈 NFL Box Scores")
+st.caption("Live stats · Quarter & half splits · All times Eastern")
 st.divider()
 
 # ── Data loaders ──────────────────────────────────────────────────────────────
-
-@st.cache_data(ttl=60*60*24*30, show_spinner=False)  # 30-day cache per athlete
-def _cached_athlete_name(athlete_id: str, season: str) -> str:
-    """Resolve ESPN athlete ID to displayName, cached 30 days."""
-    from nfl.api import get_athlete_displayname
-    return get_athlete_displayname(athlete_id, season)
-
-
-def _patch_athlete_resolver():
-    """
-    Monkey-patch nfl.api.get_athlete_displayname to use Streamlit's 30-day cache.
-    Called once at startup so all stats computations benefit from caching.
-    """
-    import nfl.api as _nfl_api
-    _nfl_api.get_athlete_displayname = _cached_athlete_name
-
-
-_patch_athlete_resolver()
-
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _fetch_week(week: int, season_type: int) -> list:
@@ -576,14 +557,6 @@ elif st.session_state.view == "boxscore":
     else:
         status_md = f"🕐 **Scheduled** · {et_time_str(game['date'])}"
 
-    # Logo map for use throughout this view
-    _logo_map = {}
-    try:
-        _logo_map[game["away"]["abbr"].upper()] = game["away"].get("logo","")
-        _logo_map[game["home"]["abbr"].upper()] = game["home"].get("logo","")
-    except Exception:
-        pass
-
     al = (f'<img src="{away["logo"]}" style="width:54px;height:54px;object-fit:contain">'
           if away.get("logo") else "")
     hl = (f'<img src="{home["logo"]}" style="width:54px;height:54px;object-fit:contain">'
@@ -624,15 +597,6 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
-
-
-
-
-
-
-
-
-
     # Build linescore from scoring_df (cumulative score diffs per team per quarter)
     _scoring_disp = data.get("scoring", pd.DataFrame())
     _ls_raw = data.get("linescore", pd.DataFrame())
@@ -654,10 +618,6 @@ elif st.session_state.view == "boxscore":
             # Derive from scoring_df first play
             away_t = sdf.iloc[0].get("Team","Away") if not sdf.empty else "Away"
             home_t = sdf[sdf["Team"] != away_t].iloc[0].get("Team","Home") if len(sdf[sdf["Team"]!=away_t])>0 else "Home"
-        # Detect OT quarters in scoring data
-        all_quarters_in_sdf = sdf["Quarter"].dropna().unique().tolist() if "Quarter" in sdf.columns else []
-        ot_quarters = sorted([q for q in all_quarters_in_sdf if str(q).startswith("OT")])
-
         rows = []
         for team, col in [(away_t, "Away Score"), (home_t, "Home Score")]:
             row = {"Team": team}
@@ -679,18 +639,6 @@ elif st.session_state.view == "boxscore":
                 else: h2 += pts
             row["1H"] = h1
             row["2H"] = h2
-            # Add OT: sum all OT quarter scores into single "OT" column
-            if ot_quarters:
-                ot_pts = 0
-                for otq in ot_quarters:
-                    qr = last_per_q[last_per_q["Quarter"] == otq]
-                    if not qr.empty:
-                        val = int(pd.to_numeric(qr.iloc[0][col], errors="coerce") or 0)
-                        pts = val - prev
-                        prev = val
-                        ot_pts += pts
-                row["OT"] = ot_pts
-                total += ot_pts
             row["T"] = total
             rows.append(row)
         return pd.DataFrame(rows)
@@ -698,15 +646,14 @@ elif st.session_state.view == "boxscore":
     _ls_built = _build_ls_from_scoring(_scoring_disp, _ls_raw)
 
     if _ls_built is not None and not _ls_built.empty:
-        _ls_cols = [c for c in ["Team","Q1","Q2","Q3","Q4","1H","2H","OT","T"] if c in _ls_built.columns]
+        _ls_cols = [c for c in ["Team","Q1","Q2","Q3","Q4","1H","2H","T"] if c in _ls_built.columns]
         _ls_show = _ls_built[_ls_cols]
 
         # Render as styled HTML table matching screenshot
         def _ls_html(df):
-            q_cols  = [c for c in ["Q1","Q2","Q3","Q4"] if c in df.columns]
-            h_cols  = [c for c in ["1H","2H"] if c in df.columns]
-            ot_cols = [c for c in ["OT"] if c in df.columns]
-            t_cols  = [c for c in ["T"] if c in df.columns]
+            q_cols = [c for c in ["Q1","Q2","Q3","Q4"] if c in df.columns]
+            h_cols = [c for c in ["1H","2H"] if c in df.columns]
+            t_cols = [c for c in ["T"] if c in df.columns]
             # Build logo lookup from game dict
             _logos = {}
             try:
@@ -722,8 +669,7 @@ elif st.session_state.view == "boxscore":
                 fw = "font-weight:700;" if bold else "opacity:0.85;"
                 return f"<td style='{fw}padding:4px 20px;{s}'>{int(val)}</td>"
             header = "".join([th(c) for c in q_cols]
-                           + ([th("H1",True),th("H2")] if h_cols else [])
-                           + ([th("OT",True)] if ot_cols else [])
+                           + ([th("1H",True),th("2H")] if h_cols else [])
                            + ([th("T",True)] if t_cols else []))
             rows_html = ""
             for _, r in df.iterrows():
@@ -733,7 +679,6 @@ elif st.session_state.view == "boxscore":
                 team_cell = f"<td style='font-weight:700;text-align:left;padding-right:30px;white-space:nowrap'>{logo_img}{team_abbr}</td>"
                 cells = "".join([td(r.get(c,0)) for c in q_cols]
                               + ([td(r.get("1H",0),sep=True),td(r.get("2H",0))] if h_cols else [])
-                              + ([td(r.get("OT",0),sep=True)] if ot_cols else [])
                               + ([td(r.get("T",0),bold=True,sep=True)] if t_cols else []))
                 rows_html += f"<tr style='line-height:2.2'>{team_cell}{cells}</tr>"
             return f"""<div style="display:flex;justify-content:center;margin:4px 0;width:100%">
@@ -745,43 +690,18 @@ elif st.session_state.view == "boxscore":
         st.markdown(_ls_html(_ls_show), unsafe_allow_html=True)
     st.divider()
 
-    # ── Reconciliation status ─────────────────────────────────────────────────
-    _recon = get_reconciliation_status(data, game_id)
-    if _recon["passed"]:
-        st.success(_recon["message"])
-    else:
-        with st.expander("❗ Stats reconciliation — unclassified plays detected", expanded=True):
-            st.markdown(
-                "Some plays could not be mapped to a specific quarter from the play-by-play. "
-                "The quarter/half totals below may be understated. "
-                "Full Game stats are always accurate (sourced directly from official boxscore)."
-            )
-            for player, cat, col, pbp, official, _ in _recon["mismatches"]:
-                diff = official - pbp
-                sign = "+" if diff > 0 else ""
-                st.markdown(
-                    f"- **{player}** ({cat} · {col}): "
-                    f"quarter/half total = **{pbp}**, official = **{official}** "
-                    f"— **{sign}{diff} plays unclassified** (not assigned to any quarter)"
-                )
-
-
     # Period filter
     st.markdown("<div class='sec-div' style='margin-top:18px'>Player Stats</div>",
                 unsafe_allow_html=True)
 
     # Standard periods only — no OT
-    # Include OT option only when OT data exists in this game
-    _has_ot_data = bool(by_period.get("OT"))
-    available = ["Full Game", "Q1", "Q2", "Q3", "Q4", "H1", "H2"]
-    if _has_ot_data:
-        available.append("OT")
+    available = ["Full Game", "Q1", "Q2", "Q3", "Q4", "1st Half", "2nd Half"]
 
     period_filter = st.radio("Period:", options=available,
                              horizontal=True, label_visibility="collapsed")
 
     def get_pbp_key(pf):
-        return {"H1": "H1", "H2": "H2"}.get(pf, pf)
+        return {"1st Half":"H1","2nd Half":"H2"}.get(pf, pf)
 
     def show_df(df, pf, sort=None, drop_cols=None):
         if df is None or df.empty:
@@ -796,37 +716,10 @@ elif st.session_state.view == "boxscore":
                 df = tmp.sort_values(sort, ascending=False)
             except Exception:
                 pass
-        st.markdown(_render_stats_df_html(df), unsafe_allow_html=True)
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
     # Key map: display label → internal key used in by_period
-    _PERIOD_KEY = {"H1": "1H", "H2": "2H", "OT": "OT"}
-
-    def _render_stats_df_html(df):
-        """Render stats df as HTML with logos in Team column."""
-        cols = list(df.columns)
-        ths = "".join(
-            f"<th style='text-align:{'left' if c in ('Player','Team') else 'center'};padding:6px 10px;font-size:12px;opacity:0.5;font-weight:500'>{c}</th>"
-            for c in cols
-        )
-        rows_html = ""
-        for _, r in df.iterrows():
-            cells = ""
-            for c in cols:
-                val = str(r[c]) if pd.notna(r[c]) else ""
-                if c == "Team":
-                    logo = _logo_map.get(val.upper(), "")
-                    cell = f"<td style='padding:5px 10px;text-align:center'><img src='{logo}' style='width:22px;height:22px;object-fit:contain' title='{val}'></td>" if logo else f"<td style='padding:5px 10px;text-align:center;font-size:12px'>{val}</td>"
-                elif c == "Player":
-                    cell = f"<td style='padding:5px 10px;font-size:12px;font-weight:500'>{val}</td>"
-                else:
-                    cell = f"<td style='padding:5px 10px;text-align:center;font-size:12px'>{val}</td>"
-                cells += cell
-            rows_html += f"<tr style='border-bottom:0.5px solid rgba(128,128,128,0.15)'>{cells}</tr>"
-        return f"""<div style='overflow-x:auto;width:100%'>
-        <table style='border-collapse:collapse;width:100%;font-size:12px'>
-          <thead><tr style='border-bottom:1px solid rgba(128,128,128,0.2)'>{ths}</tr></thead>
-          <tbody>{rows_html}</tbody>
-        </table></div>"""
+    _PERIOD_KEY = {"1st Half":"H1","2nd Half":"H2"}
 
     def show_period_df(category: str, sort="YDS"):
         """Show per-period offensive stat.
@@ -850,7 +743,7 @@ elif st.session_state.view == "boxscore":
         # Remove Pos column if present
         if isinstance(df, pd.DataFrame) and "Pos" in df.columns:
             df = df.drop(columns=["Pos"])
-        st.markdown(_render_stats_df_html(df), unsafe_allow_html=True)
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
     tabs = st.tabs(["Passing","Rushing","Receiving","Defense","Kicking"])
     with tabs[0]: show_period_df("passing",   "YDS")
@@ -1009,36 +902,6 @@ elif st.session_state.view == "boxscore":
         df = df.sort_values(["_sort", "Player"]).drop(columns=["_sort"]).reset_index(drop=True)
         return df
 
-    def _render_prop_df_html(df):
-        """Render prop checker df as HTML with logos in Team column."""
-        cols = list(df.columns)
-        # Header row
-        ths = "".join(
-            f"<th style='text-align:left;padding:6px 10px;font-size:12px;opacity:0.5;font-weight:500'>{c}</th>"
-            for c in cols
-        )
-        rows_html = ""
-        for _, r in df.iterrows():
-            cells = ""
-            for c in cols:
-                val = str(r[c])
-                if c == "Team":
-                    logo = _logo_map.get(val.upper(), "")
-                    cell = f"<td style='padding:5px 10px;text-align:center'><img src='{logo}' style='width:22px;height:22px;object-fit:contain' title='{val}'></td>" if logo else f"<td style='padding:5px 10px'>{val}</td>"
-                elif val.startswith("✅"):
-                    cell = f"<td style='padding:5px 10px;color:#22c55e;font-weight:700;font-size:12px'>{val}</td>"
-                elif val.startswith("❌"):
-                    cell = f"<td style='padding:5px 10px;color:#ef4444;font-weight:700;font-size:12px'>{val}</td>"
-                else:
-                    cell = f"<td style='padding:5px 10px;font-size:12px'>{val}</td>"
-                cells += cell
-            rows_html += f"<tr style='border-bottom:0.5px solid rgba(128,128,128,0.15)'>{cells}</tr>"
-        return f"""<div style='overflow-x:auto;width:100%'>
-        <table style='border-collapse:collapse;width:100%;font-size:12px'>
-          <thead><tr style='border-bottom:1px solid rgba(128,128,128,0.2)'>{ths}</tr></thead>
-          <tbody>{rows_html}</tbody>
-        </table></div>"""
-
     def show_prop_or_stats(category: str, sort="YDS"):
         """Show prop table if thresholds set, else show normal stat table."""
         prop_df = build_prop_table(category)
@@ -1047,7 +910,16 @@ elif st.session_state.view == "boxscore":
             if prop_df.empty:
                 st.info(f"No {category} data available.")
                 return
-            st.markdown(_render_prop_df_html(prop_df), unsafe_allow_html=True)
+            def color_cells(val):
+                if isinstance(val, str):
+                    if val.startswith("✅"): return "color: #22c55e; font-weight: 700"
+                    if val.startswith("❌"): return "color: #ef4444; font-weight: 700"
+                return ""
+            cols_to_style = [c for c in prop_df.columns if c not in ("Player","Team")]
+            st.dataframe(
+                prop_df.style.map(color_cells, subset=cols_to_style),
+                use_container_width=True, hide_index=True
+            )
         else:
             # Normal mode — show selected period stats
             stats_key   = _PERIOD_KEY.get(period_filter, period_filter)
@@ -1211,7 +1083,16 @@ elif st.session_state.view == "boxscore":
             if prop_df.empty:
                 st.info(f"No {category} data available.")
                 return
-            st.markdown(_render_prop_df_html(prop_df), unsafe_allow_html=True)
+            def color_cells(val):
+                if isinstance(val, str):
+                    if val.startswith("✅"): return "color: #22c55e; font-weight: 700"
+                    if val.startswith("❌"): return "color: #ef4444; font-weight: 700"
+                return ""
+            cols_to_style = [c for c in prop_df.columns if c not in ("Player","Team")]
+            st.dataframe(
+                prop_df.style.map(color_cells, subset=cols_to_style),
+                use_container_width=True, hide_index=True
+            )
         else:
             stats_key   = _PERIOD_KEY.get(period_filter, period_filter)
             period_data = by_period.get(stats_key, {})
@@ -1283,16 +1164,16 @@ elif st.session_state.view == "boxscore":
         import re as _re
 
         STAT_MAP_RE = [
-            (_re.compile(r'rush(?:ing)? yards?|rush(?:ing)? yds?|rush yd\b', _re.I),   "Rushing Yards"),
-            (_re.compile(r'rush(?:ing)? tds?|rush(?:ing)? touchdowns?', _re.I), "Rushing TDs"),
-            (_re.compile(r'pass(?:ing)? yards?|pass(?:ing)? yds?', _re.I),   "Passing Yards"),
-            (_re.compile(r'pass(?:ing)? tds?|pass(?:ing)? touchdowns?', _re.I), "Passing TDs"),
-            (_re.compile(r'receiv(?:ing|e)? yards?|receiv(?:ing|e)? yds?', _re.I), "Receiving Yards"),
-            (_re.compile(r'receptions?|\brec\b(?!\s*tds?|\s*touchdowns?|\s+yards?|\s+yds?)', _re.I), "Receptions"),
+            (_re.compile(r'rushing yards?|rushing yds?|rush yards?|rush yds?|rush yd\\b', _re.I),   "Rushing Yards"),
+            (_re.compile(r'rushing tds?|rushing touchdowns?', _re.I), "Rushing TDs"),
+            (_re.compile(r'passing yards?|passing yds?', _re.I),   "Passing Yards"),
+            (_re.compile(r'passing tds?|passing touchdowns?', _re.I), "Passing TDs"),
+            (_re.compile(r'receiving yards?|receiving yds?|rec yards?|rec yds?', _re.I), "Receiving Yards"),
+            (_re.compile(r'receptions?', _re.I),                   "Receptions"),
             (_re.compile(r'interceptions?', _re.I),                "Interceptions"),
             (_re.compile(r'sacks?|record a sack', _re.I),          "Sacks"),
             (_re.compile(r'completions?|completed passes?', _re.I),          "Completions"),
-            (_re.compile(r'receiv(?:ing|e)? tds?|receiv(?:ing|e)? touchdowns?|rec tds?', _re.I), "Receiving TDs"),
+            (_re.compile(r'receiving tds?|receiving touchdowns?|rec tds?', _re.I), "Receiving TDs"),
         ]
         COND_MAP_RE = [
             (_re.compile(r'each quarter', _re.I),  "each quarter"),
@@ -1325,12 +1206,11 @@ elif st.session_state.view == "boxscore":
             import re as _rn
             n = n.strip()
             n = _rn.sub(r'\s+(?:jr\.?|sr\.?|ii|iii|iv)\s*$', '', n, flags=_rn.I).strip()
-            return NAME_ALIASES.get(n.lower(), n.title())
+            return NAME_ALIASES.get(n.lower(), n)
 
         props = []
         error_rows = []
         graded = []
-        _ftd_deferred = []  # first TD props to grade after player_found_in_game is defined
         try:
             for i, line in enumerate(clean_lines):
                 # Skip team/game market lines — handled separately below
@@ -1348,10 +1228,7 @@ elif st.session_state.view == "boxscore":
                     continue
                 if _re_skip.match(r'^no\s+touchdown\s+in\s+the\s+game', line, _re_skip.I):
                     continue
-                if _re_skip.match(r'^succe(?:ss|s)ful\s+(?:2\s*(?:pt\s*)?point|2\s*pt|two\s*(?:pt\s*)?point|two\s*pt)\s+conversion', line, _re_skip.I):
-                    continue
-                # Team-specific 2pt: "[Team] to [have|record] a Successful 2pt Conversion"
-                if _re_skip.search(r'\bto\s+(?:(?:have|record)\s+a?\s*)?succe(?:ss|s)ful\s+(?:2\s*(?:pt\s*)?point|2\s*pt|two\s*(?:pt\s*)?point|two\s*pt)\s+conversion', line, _re_skip.I):
+                if _re_skip.match(r'^successful\s+2\s*pt\s+conversion', line, _re_skip.I):
                     continue
                 if _re_skip.match(r'^opening kick', line, _re_skip.I):
                     continue
@@ -1377,31 +1254,9 @@ elif st.session_state.view == "boxscore":
                             if not _td_r.empty:
                                 _fdesc = _td_r.iloc[0].get("Description", "")
                                 _ftd_detail2 = _fdesc[:60]
-        
-                        import re as _re_ftd
-                        def _get_td_scorer(desc, td_type):
-                            """Extract the scoring player from ESPN TD description."""
-                            td_lower = td_type.lower()
-                            # Passing/Receiving TD: scorer is receiver before 'N Yd pass from'
-                            if "passing" in td_lower or "receiving" in td_lower:
-                                m = _re_ftd.match(r'^(.+?)\s+\d+\s+[Yy]d\s+pass\s+from\s+', desc)
-                                if m:
-                                    return m.group(1).strip().lower()
-                            # Rushing TD: scorer is rusher before 'N Yd run' or 'N Yd rush'
-                            if "rushing" in td_lower:
-                                m = _re_ftd.match(r'^(.+?)\s+\d+\s+[Yy]d\s+(?:run|rush)', desc)
-                                if m:
-                                    return m.group(1).strip().lower()
-                            # Any TD / return TD: first token(s) before yardage
-                            m = _re_ftd.match(r'^(.+?)\s+\d+', desc)
-                            if m:
-                                return m.group(1).strip().lower()
-                        _first_type_ftd = _td_r.iloc[0].get("Type","") if "Type" in _td_r.columns else ""
-                        _scorer_ftd = _get_td_scorer(_fdesc, _first_type_ftd)
-                        _won_ftd = any(p.split()[-1].lower() in _scorer_ftd for p in _ftd_pls)
-                        _ftd_deferred.append({
-                            "prop_line": line, "players": _ftd_pls,
-                            "won": _won_ftd, "detail": _ftd_detail2})
+                                _won_ftd = any(p.split()[-1].lower() in _fdesc.lower() for p in _ftd_pls)
+                        _ftd_res = "✅ Won" if _won_ftd is True else ("❗ Error" if _won_ftd is None else "❌ Lost")
+                        graded.append({"Prop": line, "Data": f"First TD: {_ftd_detail2}", "Result": _ftd_res})
                         continue
                 stat = None
                 for pat, label in STAT_MAP_RE:
@@ -1526,12 +1381,12 @@ elif st.session_state.view == "boxscore":
                     error_rows.append({"line_index": i, "raw_line": line})
                     continue
                 if dual:
-                    for player in [dual.group(1).strip().title(), dual.group(2).strip().title()]:
+                    for player in [dual.group(1).strip(), dual.group(2).strip()]:
                         props.append({"line_index": i, "player": player, "stat": stat,
                                       "threshold": threshold, "condition": condition,
                                       "operator": operator, "raw_line": line})
                 else:
-                    player_raw = (single or alt).group(1).strip().title()
+                    player_raw = (single or alt).group(1).strip()
                     props.append({"line_index": i, "player": player_raw, "stat": stat,
                                   "threshold": threshold, "condition": condition,
                                   "operator": operator, "raw_line": line})
@@ -1582,20 +1437,11 @@ elif st.session_state.view == "boxscore":
                         _game_abbrs.add(_abbr)
                         _game_players[_abbr] = _team
         def _abbr_from_name(player: str) -> str:
-            """Convert player name to ESPN abbreviation.
-            'Bijan Robinson' → 'B.Robinson'
-            'Amon-Ra St. Brown' → 'A.St. Brown'
-            'D\'Andre Swift' → 'D.Swift'
-            """
+            """Convert 'Bijan Robinson' → 'B.Robinson'."""
             parts = player.strip().split()
             if len(parts) < 2:
                 return player
-            first_initial = parts[0][0].upper()
-            if len(parts) == 2:
-                return f"{first_initial}.{parts[1]}"
-            # 3+ parts: check if middle parts look like name prefixes (St., De, La, etc.)
-            # ESPN keeps them as part of the last name: "A.St. Brown"
-            return f"{first_initial}.{' '.join(parts[1:])}"
+            return f"{parts[0][0].upper()}.{parts[-1]}"
 
         def _name_matches_game(player: str) -> bool:
             """
@@ -1633,7 +1479,7 @@ elif st.session_state.view == "boxscore":
             abbr = _abbr_from_name(player)
 
             if period_key == "Full Game":
-                # Use official boxscore for accuracy
+                # Use ESPN official boxscore for accuracy
                 pdf = data.get(category, pd.DataFrame())
                 if pdf is None or pdf.empty or "Player" not in pdf.columns:
                     return pd.DataFrame()
@@ -1782,15 +1628,7 @@ elif st.session_state.view == "boxscore":
                 vals2={}; all_found2=True
                 for p2 in players_list:
                     v2=_mltd2(p2) if cat2=="multi" else _fg2(p2,cat2,col2)
-                    if v2 is None:
-                        # Player not in that stat df — check if they're in the game at all
-                        in_game = (player_found_in_game(normalise_name(p2), "passing")
-                                   or player_found_in_game(normalise_name(p2), "rushing")
-                                   or player_found_in_game(normalise_name(p2), "receiving")
-                                   or player_found_in_game(normalise_name(p2), "defense"))
-                        if not in_game:
-                            all_found2 = False  # truly not in this game
-                        v2 = 0  # in game with 0 of this stat → valid 0
+                    if v2 is None: all_found2=False; v2=0
                     vals2[p2]=v2
                 total2=sum(vals2.values())
                 detail2=" | ".join(f"{p2.split()[-1]}: {v2:.0f}" for p2,v2 in vals2.items())
@@ -1805,14 +1643,7 @@ elif st.session_state.view == "boxscore":
                     won2=all(v2>=thr2 for v2 in vals2.values()) if all_found2 else None
                     scope2=detail2
                 if not all_found2:
-                    # A player is "not in this game" only if they don't appear
-                    # in the game roster at all — not merely because they have 0
-                    # of a specific stat (e.g. WR with 0 rush yards is still in the game)
-                    not_found = [p2 for p2 in players_list
-                                 if not player_found_in_game(normalise_name(p2), "passing")
-                                 and not player_found_in_game(normalise_name(p2), "rushing")
-                                 and not player_found_in_game(normalise_name(p2), "receiving")
-                                 and not player_found_in_game(normalise_name(p2), "defense")]
+                    not_found = [p2 for p2 in players_list if vals2.get(p2,0)==0 and _fg2(p2,cat2,col2) is None]
                     scope2 = f"{', '.join(not_found) if not_found else 'Player'} not in this game"
                     won2 = None
                 return {
@@ -1924,7 +1755,7 @@ elif st.session_state.view == "boxscore":
                 if operator == "under":   return v < threshold
                 if operator == "exactly": return v == threshold
                 return v >= threshold
-            _INLINE_MAP = {"Q1":"Q1","Q2":"Q2","Q3":"Q3","Q4":"Q4","1st Half":"H1","2nd Half":"H2","H1":"H1","H2":"H2"}
+            _INLINE_MAP = {"Q1":"Q1","Q2":"Q2","Q3":"Q3","Q4":"Q4","1st Half":"H1","2nd Half":"H2"}
 
 
             period_results = {}
@@ -2055,22 +1886,6 @@ elif st.session_state.view == "boxscore":
                     "Data":   f"Unexpected error: {str(_ge)[:60]}",
                     "Result": "❗ Error",
                 }
-        # Process deferred first TD props — now player_found_in_game is available
-        for _ftd_d in _ftd_deferred:
-            _pls = _ftd_d["players"]
-            _not_in = [p for p in _pls
-                if not player_found_in_game(normalise_name(p), "passing")
-                and not player_found_in_game(normalise_name(p), "rushing")
-                and not player_found_in_game(normalise_name(p), "receiving")]
-            if _not_in:
-                graded.append({"Prop": _ftd_d["prop_line"],
-                    "Data": f"{_not_in[0]} not in this game", "Result": "❗ Error"})
-            else:
-                _w = _ftd_d["won"]
-                graded.append({"Prop": _ftd_d["prop_line"],
-                    "Data": f"First TD: {_ftd_d['detail']}",
-                    "Result": "✅ Won" if _w is True else ("❗ Error" if _w is None else "❌ Lost")})
-
         graded += [safe_grade(group) for group in by_line.values()]
         for er in error_rows:
             graded.append({
@@ -2136,63 +1951,6 @@ elif st.session_state.view == "boxscore":
             except Exception:
                 return 0
 
-        def _detect_2pt(sdf, team_abbr=None):
-            """Detect successful 2pt conversion using score deltas.
-            A successful 2pt conversion causes a score increase of exactly +2 (standalone)
-            or +8 (when ESPN combines TD+2pt in one scoring row).
-            Much more reliable than parsing ESPN Type/Description text fields.
-            Returns (has_2pt: bool, data_str: str)
-            """
-            if sdf is None or sdf.empty:
-                return False, "No 2pt Conversion"
-            if "Away Score" not in sdf.columns or "Home Score" not in sdf.columns:
-                return False, "No 2pt Conversion"
-
-            # Determine which score column to check for team-specific market
-            _col = None
-            if team_abbr and "Team" in sdf.columns:
-                # Find which column (Away/Home) belongs to this team
-                _team_rows = sdf[sdf["Team"].str.upper() == team_abbr.upper()]
-                if not _team_rows.empty:
-                    _fi = _team_rows.index[0]
-                    _prev = sdf.loc[:_fi-1].iloc[-1] if _fi > 0 else None
-                    if _prev is not None:
-                        _da = int(pd.to_numeric(_team_rows.iloc[0]["Away Score"], errors="coerce") or 0) - int(pd.to_numeric(_prev["Away Score"], errors="coerce") or 0)
-                        _col = "Away Score" if _da > 0 else "Home Score"
-
-            prev_away = 0; prev_home = 0
-            for _, row in sdf.iterrows():
-                cur_away = int(pd.to_numeric(row.get("Away Score", 0), errors="coerce") or 0)
-                cur_home = int(pd.to_numeric(row.get("Home Score", 0), errors="coerce") or 0)
-                da = cur_away - prev_away
-                dh = cur_home - prev_home
-
-                # Check for 2pt delta: +2 (standalone row) or +8 (TD+2pt combined)
-                _is_2pt = False
-                if _col == "Away Score":
-                    _is_2pt = da in (2, 8)
-                elif _col == "Home Score":
-                    _is_2pt = dh in (2, 8)
-                else:
-                    # Generic: either team
-                    _is_2pt = da in (2, 8) or dh in (2, 8)
-
-                if _is_2pt:
-                    _team_name = str(row.get("Team", ""))
-                    _desc = str(row.get("Description", ""))[:60]
-                    _delta = da if da in (2, 8) else dh
-                    _score_str = f"{cur_away}-{cur_home}"
-                    _data = f"{_team_name}: score {_score_str} (+{_delta})"
-                    if _desc:
-                        _data += f" | {_desc}"
-                    return True, _data
-
-                prev_away = cur_away
-                prev_home = cur_home
-
-            label = f"{team_abbr} " if team_abbr else ""
-            return False, f"No {label}2pt Conversion"
-
         def _check_reqs(reqs, period_label, each_team):
             plays = _plays_in(period_label) if period_label else (
                 scoring_df["Type"].str.lower().tolist() if scoring_df is not None and not scoring_df.empty and "Type" in scoring_df.columns else [])
@@ -2227,13 +1985,7 @@ elif st.session_state.view == "boxscore":
         _OT_WIN_RE     = _re_t.compile(r'^([\w\s]+?)\s+to\s+beat\s+(?:the\s+)?([\w\s]+?)\s+in\s+overtime', _re_t.I)
         _NO_TD_RE      = _re_t.compile(r'^no\s+touchdown\s+in\s+the\s+game', _re_t.I)
         _FIRST_TD_RE   = _re_t.compile(r'^([\w\s]+?)\s+(?:or\s+([\w\s]+?)\s+)?to\s+score\s+the\s+first\s+td', _re_t.I)
-        _TWO_PT_RE     = _re_t.compile(r'^succe(?:ss|s)ful\s+(?:2\s*(?:pt\s*)?point|2\s*pt|two\s*(?:pt\s*)?point|two\s*pt)\s+conversion', _re_t.I)
-        # Team-specific 2pt: "[Team] to Have a Successful 2pt Conversion"
-        _TEAM_TWO_PT_RE = _re_t.compile(
-            r'^(.+?)\s+to\s+(?:(?:have|record)\s+a?\s*)?succe(?:ss|s)ful\s+'
-            r'(?:2\s*(?:pt\s*)?point|2\s*pt|two\s*(?:pt\s*)?point|two\s*pt)\s+conversion',
-            _re_t.I
-        )
+        _TWO_PT_RE     = _re_t.compile(r'^successful\s+2\s*pt\s+conversion', _re_t.I)
         _KICK_TD_RE    = _re_t.compile(r'^opening kick(?:off)?.*(?:return|returned).*td|opening kickoff.*touchdown', _re_t.I)
 
         # Special teams TD types from ESPN scoring summary
@@ -2338,24 +2090,26 @@ elif st.session_state.view == "boxscore":
                     "Result": "✅ Won" if won else "❌ Lost"})
                 continue
 
-            # ── Team-specific 2pt Conversion ─────────────────────────────────
-            _t2pt_m = _TEAM_TWO_PT_RE.match(line)
-            if _t2pt_m:
-                _t2pt_raw = _t2pt_m.group(1).strip()
-                _t2pt_abbr = _resolve_team(_t2pt_raw)
-                if _game_teams and _t2pt_abbr not in _game_teams:
-                    team_graded.append({"Prop": line, "Data": f"{_t2pt_abbr} not in this game",
-                        "Result": "❗ Error"})
-                    continue
-                _has_2pt, _2pt_data = _detect_2pt(data.get("scoring", pd.DataFrame()), team_abbr=_t2pt_abbr)
-                team_graded.append({"Prop": line, "Data": _2pt_data,
-                    "Result": "✅ Won" if _has_2pt else "❌ Lost"})
-                continue
-
-            # ── Successful 2pt Conversion — score delta approach ────────────────
+            # ── Successful 2pt Conversion ──────────────────────────────────────
             if _TWO_PT_RE.match(line):
                 _sdf_2 = data.get("scoring", pd.DataFrame())
-                _has_2pt, _2pt_data = _detect_2pt(_sdf_2, team_abbr=None)
+                if _sdf_2 is not None and not _sdf_2.empty and "Type" in _sdf_2.columns:
+                    # Only successful 2pt conversions appear in ESPN's scoringPlays
+                    # Check Type field — exclude rows where Description says "Failed"
+                    _2pt_mask = _sdf_2["Type"].str.lower().str.contains("two.point|2.point", na=False)
+                    if "Description" in _sdf_2.columns:
+                        _2pt_mask = _2pt_mask & ~_sdf_2["Description"].str.lower().str.contains("failed", na=False)
+                    _has_2pt = _2pt_mask.any()
+                else:
+                    _has_2pt = False
+                if _has_2pt and _sdf_2 is not None and not _sdf_2.empty:
+                    _2pt_rows = _sdf_2[
+                        _sdf_2["Type"].str.lower().str.contains("two.point|2.point", na=False) &
+                        ~_sdf_2["Description"].str.lower().str.contains("failed", na=False)
+                    ] if "Description" in _sdf_2.columns else pd.DataFrame()
+                    _2pt_data = _2pt_rows.iloc[0]["Description"][:60] if not _2pt_rows.empty else "Successful"
+                else:
+                    _2pt_data = "No 2pt Conversion"
                 team_graded.append({"Prop": line, "Data": _2pt_data,
                     "Result": "✅ Won" if _has_2pt else "❌ Lost"})
                 continue
@@ -2364,19 +2118,9 @@ elif st.session_state.view == "boxscore":
             _ot_m = _OT_WIN_RE.match(line)
             if _ot_m:
                 _winner_raw = _ot_m.group(1).strip()
-                _loser_raw  = _ot_m.group(2).strip()
                 _winner_abbr = _resolve_team(_winner_raw)
-                _loser_abbr  = _resolve_team(_loser_raw)
-                # Validate BOTH teams are in this game
-                _ot_not_found = [n for t, n in [(_winner_abbr, _winner_raw), (_loser_abbr, _loser_raw)]
-                                  if _game_teams and t not in _game_teams]
-                if _ot_not_found:
-                    if len(_ot_not_found) == 2:
-                        _ot_err_msg = "Both teams not in this game"
-                    else:
-                        _ot_err_msg = f"{_ot_not_found[0]} not in this game"
-                    team_graded.append({"Prop": line,
-                        "Data": _ot_err_msg,
+                if _game_teams and _winner_abbr not in _game_teams:
+                    team_graded.append({"Prop": line, "Data": f"{_winner_abbr} not in this game",
                         "Result": "❗ Error"})
                     continue
                 _sdf_ot = data.get("scoring", pd.DataFrame())
@@ -2472,33 +2216,12 @@ elif st.session_state.view == "boxscore":
                     if not _td_rows2.empty:
                         _first_desc2 = _td_rows2.iloc[0].get("Description", "")
                         _ftd_detail = _first_desc2[:60]
-
-                        import re as _re_ftd2
-                        def _get_td_scorer2(desc, td_type):
-                            """Extract the scoring player from ESPN TD description."""
-                            td_lower = td_type.lower()
-                            # Passing/Receiving TD: scorer is receiver before 'N Yd pass from'
-                            if "passing" in td_lower or "receiving" in td_lower:
-                                m = _re_ftd2.match(r'^(.+?)\s+\d+\s+[Yy]d\s+pass\s+from\s+', desc)
-                                if m:
-                                    return m.group(1).strip().lower()
-                            # Rushing TD: scorer is rusher before 'N Yd run' or 'N Yd rush'
-                            if "rushing" in td_lower:
-                                m = _re_ftd2.match(r'^(.+?)\s+\d+\s+[Yy]d\s+(?:run|rush)', desc)
-                                if m:
-                                    return m.group(1).strip().lower()
-                            # Any TD / return TD: first token(s) before yardage
-                            m = _re_ftd2.match(r'^(.+?)\s+\d+', desc)
-                            if m:
-                                return m.group(1).strip().lower()
-                            return desc.lower()
-                        _first_type2 = _td_rows2.iloc[0].get("Type","") if "Type" in _td_rows2.columns else ""
-                        _scorer2 = _get_td_scorer2(_first_desc2, _first_type2)
-                        won = any(p.split()[-1].lower() in _scorer2 for p in _players_ftd)
-
-                _ftd_deferred.append({
-                    "prop_line": line, "players": _players_ftd,
-                    "won": won, "detail": _ftd_detail})
+                        won = any(
+                            p.split()[-1].lower() in _first_desc2.lower()
+                            for p in _players_ftd
+                        )
+                _ftd_res = "✅ Won" if won is True else ("❗ Error" if won is None else "❌ Lost")
+                graded.append({"Prop": line, "Data": f"First TD: {_ftd_detail}", "Result": _ftd_res})
                 continue
 
             if _SCORELESS_RE2.search(line):
@@ -2831,7 +2554,15 @@ elif st.session_state.view == "boxscore":
 **👤 Player Props**
 
 *Single player — game total*
-- `[Player] to record N+ [stat]`
+- `[Player] to record N+ Passing Yards`
+- `[Player] to record N+ Rushing Yards`
+- `[Player] to record N+ Receiving Yards`
+- `[Player] to record N+ Passing TDs`
+- `[Player] to record N+ Rushing TDs`
+- `[Player] to record N+ Receiving TDs`
+- `[Player] to record N+ Receptions`
+- `[Player] to record N+ Completions`
+- `[Player] to Record a Sack` / `[Player] to Record N+ Sacks`
 
 *Single player — per period*
 - `[Player] to record N+ [stat] in Each Quarter`
@@ -2846,17 +2577,12 @@ elif st.session_state.view == "boxscore":
 - `Both [Player] and [Player] to Each Record N+ [stat] in Each Half`
 
 *Two or more players — combined total*
-- `[Player] and [Player] to Combine for N+ [stat]` (up to 5 players)
+- `[Player], [Player] and [Player] to Combine for N+ [stat]`
+- `[Player], [Player] and [Player] to Combine for N+ [stat]` (up to 5 players)
 
 *First TD scorer*
 - `[Player] to Score the First TD`
-- `[Player] or [Player] to Score the First TD`
-
-*Defensive*
-- `[Player] to record N+ Sacks`
-- `[Player] to Record a Sack`
-- `[Player] to record N+ Sacks in Each Quarter`
-- `[Player] to record N+ Sacks in Each Half`
+- `[Player] or [Player] to Score the First TD` (up to 2 players)
 
 ---
 
@@ -2870,7 +2596,7 @@ elif st.session_state.view == "boxscore":
 - `N+ TDs to be Scored in Each Quarter`
 - `N+ Made Field Goals in Each Quarter`
 
-*Team scoring — halves (exact format, N+ is flexible)*
+*Team scoring — structured (exact format required, N+ is flexible)*
 - `Each Team to Score N+ TD in Each Quarter`
 - `Each Team to Score N+ TD & N+ FG in Each Half`
 - `Each Team to Score N+ Rushing TDs & N+ Passing TDs`
@@ -2882,80 +2608,14 @@ elif st.session_state.view == "boxscore":
 - `Opening Kickoff to be Returned for a Touchdown`
 - `No Touchdown in the Game`
 
-*Other*
+*Others*
 - `[Team] to Beat the [Team] in Overtime`
-- `[Team] to record/have Successful 2pt Conversion`
-- `Successful 2pt Conversion` / `Successful 2 point Conversion` / `Successful two point Conversion` / `Successful two pt Conversion` / `Succesful 2pt Conversion` *(typo-tolerant)*
+- `Successful 2pt Conversion` / `Successful 2 point Conversion` / `Successful two point Conversion`
 
 ---
 
 ⚠️ **Notes**
-- Player names are **not case-sensitive** — `andrew billings` and `Andrew Billings` both work
-- Player names must be in this game or result will be ❗ Error
+- Player names must match players in the current game or result will be ❗ Error
 - Team names accept abbreviations (DAL), city (Dallas), nickname (Cowboys) or full name (Dallas Cowboys)
-- N+ means any positive number e.g. 1+, 2+, 25+
-        """)
-
-    with st.expander("📊 Supported Stats", expanded=False):
-        st.markdown("""
-**🏃 Rushing**
-
-| You can write | Resolves to |
-|---|---|
-| `Rushing Yards` | Rushing Yards |
-| `Rush Yards` | Rushing Yards |
-| `Rushing Yds` | Rushing Yards |
-| `Rush Yds` | Rushing Yards |
-| `Rushing TDs` | Rushing TDs |
-| `Rushing TD` | Rushing TDs |
-| `Rush TDs` | Rushing TDs |
-| `Rush TD` | Rushing TDs |
-| `Rushing Touchdowns` | Rushing TDs |
-
----
-
-**✈️ Passing**
-
-| You can write | Resolves to |
-|---|---|
-| `Passing Yards` | Passing Yards |
-| `Pass Yards` | Passing Yards |
-| `Passing Yds` | Passing Yards |
-| `Pass Yds` | Passing Yards |
-| `Passing TDs` | Passing TDs |
-| `Passing TD` | Passing TDs |
-| `Pass TDs` | Passing TDs |
-| `Pass TD` | Passing TDs |
-| `Passing Touchdowns` | Passing TDs |
-| `Completions` | Completions |
-| `Completed Passes` | Completions |
-| `Interceptions` | Interceptions |
-| `Sacks` | Sacks |
-| `Record a Sack` | Sacks |
-
----
-
-**🙌 Receiving**
-
-| You can write | Resolves to |
-|---|---|
-| `Receiving Yards` | Receiving Yards |
-| `Receive Yards` | Receiving Yards |
-| `Receiving Yds` | Receiving Yards |
-| `Receive Yds` | Receiving Yards |
-| `Receiving TDs` | Receiving TDs |
-| `Receiving TD` | Receiving TDs |
-| `Receive TDs` | Receiving TDs |
-| `Receive TD` | Receiving TDs |
-| `Rec TDs` | Receiving TDs |
-| `Receiving Touchdowns` | Receiving TDs |
-| `Receptions` | Receptions |
-| `Reception` | Receptions |
-| `Rec` | Receptions |
-
----
-
-⚠️ **Notes**
-- `Rec Yards` is **not supported** — use `Receiving Yards` instead
-- Stat names are not case-sensitive
+- N+ means any number e.g. 1+, 2+, 25+
         """)
