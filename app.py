@@ -639,8 +639,9 @@ elif st.session_state.view == "boxscore":
                     for _pi, _pl in enumerate(_drv.get("plays", [])[:4]):
                         _clock = _pl.get("clock",{}).get("displayValue","")
                         _desc = (_pl.get("text","") or _pl.get("description",""))[:60]
+                        _ptype = _pl.get("type", {}).get("text", "MISSING") if isinstance(_pl.get("type"), dict) else str(_pl.get("type", "MISSING"))
                         st.markdown(f"&nbsp;&nbsp;**Play {_pi}** ({_clock}): `{_desc}`")
-                        st.code(f"  play.period = {_json.dumps(_pl.get('period','MISSING'))}")
+                        st.code(f"  play.period = {_json.dumps(_pl.get('period','MISSING'))}  |  play.type.text = {_ptype!r}")
             else:
                 st.error("Could not fetch game data for debug")
     # ── END TEMPORARY DEBUG ───────────────────────────────────────────────────
