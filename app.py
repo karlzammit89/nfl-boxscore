@@ -644,6 +644,25 @@ elif st.session_state.view == "boxscore":
                         st.code(f"  play.period = {_json.dumps(_pl.get('period','MISSING'))}  |  play.type.text = {_ptype!r}")
             else:
                 st.error("Could not fetch game data for debug")
+        
+        with st.expander("🔍 DEBUG: by_period contents", expanded=True):
+            st.markdown("**result keys in by_period:**")
+            st.code(str(list(by_period.keys())))
+            for _pk in ["Q1","Q2","Q3","Q4","OT","OT1","1H","2H","Full Game"]:
+                _pdata = by_period.get(_pk, {})
+                _pdf = _pdata.get("passing") if _pdata else None
+                if _pdf is not None and not _pdf.empty:
+                    st.markdown(f"**{_pk} passing:**")
+                    st.dataframe(_pdf)
+                elif _pk in by_period:
+                    st.markdown(f"**{_pk} passing:** empty DataFrame")
+            # Also show Full Game passing
+            _fg = by_period.get("Full Game", {}).get("passing")
+            if _fg is not None and not _fg.empty:
+                st.markdown("**Full Game passing (PBP):**")
+                st.dataframe(_fg)
+            else:
+                st.markdown("**Full Game passing (PBP): EMPTY**")
     # ── END TEMPORARY DEBUG ───────────────────────────────────────────────────
 
     # Build linescore from scoring_df (cumulative score diffs per team per quarter)
