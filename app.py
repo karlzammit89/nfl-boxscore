@@ -605,57 +605,72 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
-    # ── TEMPORARY DEBUG: ESPN Core API plays endpoint ─────────────────────────
+    # ── TEMPORARY DEBUG: ESPN Core API plays + roster endpoints ─────────────────
     if game_id == "401772949":
         import json as _json
+        import re as _dre
         import urllib.request as _ur
-        with st.expander("DEBUG: ESPN Core API plays endpoint", expanded=True):
-            _core_url = (
-                "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
-                "/events/" + game_id + "/competitions/" + game_id + "/plays?limit=5"
-            )
-            st.code("URL: " + _core_url)
+
+        def _fetch_url(url):
+            _req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
+            with _ur.urlopen(_req, timeout=10) as _r:
+                return _json.loads(_r.read())
+
+        _BASE = "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
+
+        with st.expander("DEBUG 1: Pass play participants (passer/receiver roles)", expanded=True):
             try:
-                _req = _ur.Request(_core_url, headers={
-                    "User-Agent": "Mozilla/5.0",
-                    "Accept": "application/json",
-                })
-                with _ur.urlopen(_req, timeout=10) as _r:
-                    _raw = _json.loads(_r.read())
-
-                st.markdown("**Top-level keys:** `" + str(list(_raw.keys())) + "`")
-                st.markdown("**Total plays in game:** `" + str(_raw.get("count", "?")) + "`")
-
-                _items = _raw.get("items", [])
-                st.markdown("**Plays returned:** `" + str(len(_items)) + "`")
-
-                for _i, _play in enumerate(_items[:3]):
-                    st.markdown("---")
-                    st.markdown("**Play " + str(_i) + "**")
-                    _period = _play.get("period", {})
-                    _type   = _play.get("type", {})
-                    _text   = _play.get("text", "") or _play.get("description", "")
-                    _yds    = _play.get("statYardage", "?")
-                    _pts    = _play.get("participants", [])
-
-                    st.code(
-                        "period = " + str(_period) + "\n" +
-                        "type   = " + str(_type) + "\n" +
-                        "yds    = " + str(_yds) + "\n" +
-                        "text   = " + str(_text[:100])
-                    )
-                    st.markdown("**participants** (" + str(len(_pts)) + " entries):")
-                    if _pts:
-                        st.code(_json.dumps(_pts, indent=2)[:3000])
-                    else:
-                        st.warning("No participants — full play keys:")
-                        st.code(_json.dumps(list(_play.keys()), indent=2))
-                        st.code(_json.dumps(_play, indent=2)[:2000])
-
+                _plays_data = _fetch_url(_BASE + "/events/" + game_id + "/competitions/" + game_id + "/plays?limit=300")
+                st.markdown("**Total plays:** " + str(_plays_data.get("count", "?")))
+                _pass_play = None
+                for _pl in _plays_data.get("items", []):
+                    _pt = _pl.get("type", {}).get("text", "")
+                    if "Pass Reception" in _pt or "Passing Touchdown" in _pt:
+                        _pts = _pl.get("participants", [])
+                        if len(_pts) >= 2:
+                            _roles = [p.get("type","") for p in _pts]
+                            if "passer" in _roles and "receiver" in _roles:
+                                _pass_play = _pl
+                                break
+                if _pass_play:
+                    st.markdown("**Found pass play:** " + str(_pass_play.get("type", {}).get("text", "")) +
+                                "  yds=" + str(_pass_play.get("statYardage", "?")))
+                    st.code(_pass_play.get("text", "")[:120])
+                    st.code(_json.dumps(_pass_play.get("participants", []), indent=2)[:3000])
+                else:
+                    st.warning("No pass play with passer+receiver found in 300 plays")
             except Exception as _e:
-                st.error("Request failed: " + str(_e))
-                st.info("The endpoint may be blocked or structure may differ.")
+                st.error("Error: " + str(_e))
+
+        with st.expander("DEBUG 2: Roster endpoint — athlete IDs and displayNames", expanded=True):
+            for _team_id in ["14", "26"]:
+                st.markdown("**Team " + _team_id + " roster:**")
+                try:
+                    _roster_url = (_BASE + "/events/" + game_id + "/competitions/" + game_id +
+                                   "/competitors/" + _team_id + "/roster")
+                    _roster_data = _fetch_url(_roster_url)
+                    _entries = _roster_data.get("entries", [])
+                    st.markdown("Roster entries: " + str(len(_entries)))
+                    _lines = []
+                    for _ent in _entries[:8]:
+                        _ath = _ent.get("athlete", {})
+                        _aid  = str(_ath.get("id", "?"))
+                        _aref = _ath.get("$ref", "")
+                        if _aid == "?" and _aref:
+                            _m = _dre.search(r"/athletes/(\d+)", _aref)
+                            if _m:
+                                _aid = _m.group(1)
+                        _adn = _ath.get("displayName", "MISSING")
+                        _asn = _ath.get("shortName", "MISSING")
+                        _lines.append("id=" + _aid + "  displayName=" + str(_adn) + "  shortName=" + str(_asn))
+                    st.code("\n".join(_lines))
+                    if _entries:
+                        st.markdown("**Raw first entry athlete field:**")
+                        st.code(_json.dumps(_entries[0].get("athlete", {}), indent=2)[:800])
+                except Exception as _e:
+                    st.error("Team " + _team_id + " error: " + str(_e))
     # ── END TEMPORARY DEBUG ───────────────────────────────────────────────────
+
 
 
 
