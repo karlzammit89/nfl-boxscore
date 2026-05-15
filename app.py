@@ -750,22 +750,29 @@ elif st.session_state.view == "boxscore":
     # ── Reconciliation status ─────────────────────────────────────────────────
     _recon = get_reconciliation_status(data, game_id)
     if _recon["passed"]:
-        st.success(_recon["message"])
+        st.success("✅ Reconciliation Passed — All Quarter/Half stats match official totals.")
     else:
-        with st.expander("❗ Stats reconciliation — unclassified plays detected", expanded=True):
-            st.markdown(
-                "Some plays could not be mapped to a specific quarter from the play-by-play. "
-                "The quarter/half totals below may be understated. "
-                "Full Game stats are always accurate (sourced directly from official boxscore)."
-            )
-            for player, cat, col, pbp, official, _ in _recon["mismatches"]:
-                diff = official - pbp
-                sign = "+" if diff > 0 else ""
-                st.markdown(
-                    f"- **{player}** ({cat} · {col}): "
-                    f"quarter/half total = **{pbp}**, official = **{official}** "
-                    f"— **{sign}{diff} plays unclassified** (not assigned to any quarter)"
-                )
+        st.error("❌ Reconciliation Failed — Some plays are missing in the Quarter/Half splits.")
+        _rows = []
+        for player, cat, col, pbp, official, _ in _recon["mismatches"]:
+            diff = pbp - official
+            _rows.append({
+                "Player":     player,
+                "Stat":       cat.capitalize(),
+                "Col":        col,
+                "Q/H Total":  pbp,
+                "Game Total": official,
+                "Missing":    str(diff),
+            })
+        _mdf = pd.DataFrame(_rows)
+        st.dataframe(
+            _mdf.style.map(
+                lambda v: "color:#f59e0b;font-weight:700" if str(v).startswith("-") else "",
+                subset=["Missing"]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
     # Period filter
@@ -2886,8 +2893,8 @@ elif st.session_state.view == "boxscore":
 
 *Other*
 - `[Team] to Beat the [Team] in Overtime`
-- `[Team] to record/have Successful 2pt Conversion`
-- `Successful 2pt Conversion` / `Successful 2 point Conversion` / `Successful two point Conversion` / `Successful two pt Conversion` / `Succesful 2pt Conversion` *(typo-tolerant)*
+- `Successful 2pt Conversion` / `Successful 2 point Conversion` / `Successful two point Conversion` / `Successful two pt Conversion` / `Succesful 2pt Conversion` 
+- `[Team] to Record a Successful 2pt Conversion` / `[Team] to Have a Successful 2pt Conversion` *(supports same formats as above)*
 
 ---
 
