@@ -130,3 +130,69 @@ def get_linescore(game_id: str) -> dict:
         result[f"{side}_team"] = team_name
         result[side] = [ls.get("value", 0) for ls in competitor.get("linescores", [])]
     return result
+
+
+_CORE_BASE = "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
+
+# The ESPN Core API requires browser-style headers — requests.Session gets 403
+# from some IP ranges while urllib with full browser User-Agent works reliably.
+_CORE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.espn.com/",
+    "Origin": "https://www.espn.com",
+}
+
+
+def _get_core(url: str, timeout: int = 15) -> Optional[dict]:
+    """HTTP GET for ESPN Core API using urllib with browser headers."""
+    import urllib.request as _ur
+    import json as _json
+    try:
+        req = _ur.Request(url, headers=_CORE_HEADERS)
+        with _ur.urlopen(req, timeout=timeout) as r:
+            return _json.loads(r.read())
+    except Exception as e:
+        logger.error(f"ESPN Core API error [{url}]: {e}")
+        return None
+
+
+def get_core_plays(game_id: str) -> list[dict]:
+    """
+    Fetch all plays for a game from the ESPN Core API plays endpoint.
+    Returns list of play dicts with participants[], period, type, statYardage.
+    Each participant has: type (role), athlete.$ref (contains athlete_id).
+    Empty list on failure.
+    """
+    url = (
+        f"{_CORE_BASE}/events/{game_id}"
+        f"/competitions/{game_id}/plays?limit=400"
+    )
+    data = _get_core(url)
+    if not data:
+        return []
+    return data.get("items", [])
+
+
+def get_athlete_displayname(athlete_id: str, season: str = "2025") -> str:
+    """
+    Resolve an ESPN athlete ID to their full displayName.
+    Returns displayName string, or empty string on 404/failure.
+    Callers should cache the result — this makes one HTTP call per athlete.
+    """
+    if not athlete_id:
+        return ""
+    url = f"{_CORE_BASE}/seasons/{season}/athletes/{athlete_id}"
+    data = _get_core(url)
+    if not data:
+        # Some athletes are accessible without a season year
+        if season:
+            data = _get_core(f"{_CORE_BASE}/athletes/{athlete_id}")
+    if not data:
+        return ""
+    return data.get("displayName", "")
