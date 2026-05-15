@@ -605,6 +605,42 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
+    # ── TEMPORARY DEBUG — remove after investigation ──────────────────────────
+    if game_id == "401772949":
+        import json as _json
+        from nfl.api import get_game_summary as _dbg_sum
+        with st.expander("🔍 DEBUG: Raw ESPN Period Fields", expanded=True):
+            _dbg = _dbg_sum(game_id)
+            if _dbg:
+                _dbg_drives = _dbg.get("drives", {})
+                _dbg_all = _dbg_drives.get("previous", []) + (
+                    [_dbg_drives.get("current")] if _dbg_drives.get("current") else [])
+                st.markdown(f"**Total drives: {len(_dbg_all)}**")
+                for _di, _drv in enumerate(_dbg_all[:5]):
+                    if not _drv: continue
+                    _d_start = _drv.get("start", {})
+                    _d_end   = _drv.get("end", {})
+                    st.markdown(f"**Drive {_di}**")
+                    st.code(f"start.period = {_json.dumps(_d_start.get('period','MISSING'))}")
+                    st.code(f"end.period   = {_json.dumps(_d_end.get('period','MISSING'))}")
+                    for _pi, _pl in enumerate(_drv.get("plays", [])[:3]):
+                        _clock = _pl.get("clock",{}).get("displayValue","")
+                        _desc = (_pl.get("text","") or _pl.get("description",""))[:60]
+                        st.markdown(f"&nbsp;&nbsp;**Play {_pi}** ({_clock}): `{_desc}`")
+                        st.code(f"  play.period       = {_json.dumps(_pl.get('period','MISSING'))}")
+                        st.code(f"  play.start.period = {_json.dumps(_pl.get('start',{}).get('period','MISSING'))}")
+                        st.code(f"  play.end.period   = {_json.dumps(_pl.get('end',{}).get('period','MISSING'))}")
+                # Show all top-level play keys from first play
+                for _drv in _dbg_all:
+                    _pls = _drv.get("plays",[]) if _drv else []
+                    if _pls:
+                        st.markdown("**First play — all top-level keys:**")
+                        st.code(_json.dumps(list(_pls[0].keys()), indent=2))
+                        break
+            else:
+                st.error("Could not fetch game data for debug")
+    # ── END TEMPORARY DEBUG ───────────────────────────────────────────────────
+
     # Build linescore from scoring_df (cumulative score diffs per team per quarter)
     _scoring_disp = data.get("scoring", pd.DataFrame())
     _ls_raw = data.get("linescore", pd.DataFrame())
