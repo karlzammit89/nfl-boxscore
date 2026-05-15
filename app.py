@@ -605,65 +605,6 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
-    # ── TEMPORARY DEBUG — remove after investigation ──────────────────────────
-    if game_id == "401772949":
-        import json as _json
-        from nfl.api import get_game_summary as _dbg_sum
-        with st.expander("🔍 DEBUG: Drive Period Numbers (all drives)", expanded=True):
-            _dbg = _dbg_sum(game_id)
-            if _dbg:
-                _dbg_drives = _dbg.get("drives", {})
-                _dbg_all = _dbg_drives.get("previous", []) + (
-                    [_dbg_drives.get("current")] if _dbg_drives.get("current") else [])
-                st.markdown(f"**Total drives: {len(_dbg_all)}**")
-                st.markdown("**All drives — start/end period numbers:**")
-                _lines = []
-                for _di, _drv in enumerate(_dbg_all):
-                    if not _drv: continue
-                    _sn = _drv.get("start",{}).get("period",{}).get("number","?")
-                    _en = _drv.get("end",{}).get("period",{}).get("number","?")
-                    _np = len(_drv.get("plays",[]))
-                    # Check first play period number
-                    _pls = _drv.get("plays",[])
-                    _p0 = _pls[0].get("period",{}).get("number","?") if _pls else "?"
-                    _lines.append(f"Drive {_di:2d}: start={_sn} end={_en} play[0].period={_p0} ({_np} plays)")
-                st.code("\n".join(_lines))
-                st.markdown("**Last 5 drives — full play detail:**")
-                for _di, _drv in enumerate(_dbg_all[-5:], len(_dbg_all)-5):
-                    if not _drv: continue
-                    _d_start = _drv.get("start", {})
-                    _d_end   = _drv.get("end", {})
-                    st.markdown(f"**Drive {_di}**")
-                    st.code(f"start.period = {_json.dumps(_d_start.get('period','MISSING'))}")
-                    st.code(f"end.period   = {_json.dumps(_d_end.get('period','MISSING'))}")
-                    for _pi, _pl in enumerate(_drv.get("plays", [])[:4]):
-                        _clock = _pl.get("clock",{}).get("displayValue","")
-                        _desc = (_pl.get("text","") or _pl.get("description",""))[:60]
-                        _ptype = _pl.get("type", {}).get("text", "MISSING") if isinstance(_pl.get("type"), dict) else str(_pl.get("type", "MISSING"))
-                        st.markdown(f"&nbsp;&nbsp;**Play {_pi}** ({_clock}): `{_desc}`")
-                        st.code(f"  play.period = {_json.dumps(_pl.get('period','MISSING'))}  |  play.type.text = {_ptype!r}")
-            else:
-                st.error("Could not fetch game data for debug")
-        
-        with st.expander("🔍 DEBUG: by_period contents", expanded=True):
-            st.markdown("**result keys in by_period:**")
-            st.code(str(list(by_period.keys())))
-            for _pk in ["Q1","Q2","Q3","Q4","OT","OT1","1H","2H","Full Game"]:
-                _pdata = by_period.get(_pk, {})
-                _pdf = _pdata.get("passing") if _pdata else None
-                if _pdf is not None and not _pdf.empty:
-                    st.markdown(f"**{_pk} passing:**")
-                    st.dataframe(_pdf)
-                elif _pk in by_period:
-                    st.markdown(f"**{_pk} passing:** empty DataFrame")
-            # Also show Full Game passing
-            _fg = by_period.get("Full Game", {}).get("passing")
-            if _fg is not None and not _fg.empty:
-                st.markdown("**Full Game passing (PBP):**")
-                st.dataframe(_fg)
-            else:
-                st.markdown("**Full Game passing (PBP): EMPTY**")
-    # ── END TEMPORARY DEBUG ───────────────────────────────────────────────────
 
     # Build linescore from scoring_df (cumulative score diffs per team per quarter)
     _scoring_disp = data.get("scoring", pd.DataFrame())
