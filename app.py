@@ -675,9 +675,10 @@ elif st.session_state.view == "boxscore":
 
         # Render as styled HTML table matching screenshot
         def _ls_html(df):
-            q_cols = [c for c in ["Q1","Q2","Q3","Q4"] if c in df.columns]
-            h_cols = [c for c in ["1H","2H"] if c in df.columns]
-            t_cols = [c for c in ["T"] if c in df.columns]
+            q_cols  = [c for c in ["Q1","Q2","Q3","Q4"] if c in df.columns]
+            h_cols  = [c for c in ["1H","2H"] if c in df.columns]
+            ot_cols = [c for c in ["OT"] if c in df.columns]
+            t_cols  = [c for c in ["T"] if c in df.columns]
             # Build logo lookup from game dict
             _logos = {}
             try:
@@ -694,6 +695,7 @@ elif st.session_state.view == "boxscore":
                 return f"<td style='{fw}padding:4px 20px;{s}'>{int(val)}</td>"
             header = "".join([th(c) for c in q_cols]
                            + ([th("1H",True),th("2H")] if h_cols else [])
+                           + ([th("OT",True)] if ot_cols else [])
                            + ([th("T",True)] if t_cols else []))
             rows_html = ""
             for _, r in df.iterrows():
@@ -703,6 +705,7 @@ elif st.session_state.view == "boxscore":
                 team_cell = f"<td style='font-weight:700;text-align:left;padding-right:30px;white-space:nowrap'>{logo_img}{team_abbr}</td>"
                 cells = "".join([td(r.get(c,0)) for c in q_cols]
                               + ([td(r.get("1H",0),sep=True),td(r.get("2H",0))] if h_cols else [])
+                              + ([td(r.get("OT",0),sep=True)] if ot_cols else [])
                               + ([td(r.get("T",0),bold=True,sep=True)] if t_cols else []))
                 rows_html += f"<tr style='line-height:2.2'>{team_cell}{cells}</tr>"
             return f"""<div style="display:flex;justify-content:center;margin:4px 0;width:100%">
@@ -1319,8 +1322,8 @@ elif st.session_state.view == "boxscore":
                     continue
                 if _re_skip.match(r'^succe(?:ss|s)ful\s+(?:2\s*(?:pt\s*)?point|2\s*pt|two\s*(?:pt\s*)?point|two\s*pt)\s+conversion', line, _re_skip.I):
                     continue
-                # Team-specific 2pt: "[Team] to Have a Successful 2pt Conversion"
-                if _re_skip.search(r'\bsucce(?:ss|s)ful\s+(?:2\s*(?:pt\s*)?point|2\s*pt|two\s*(?:pt\s*)?point|two\s*pt)\s+conversion', line, _re_skip.I):
+                # Team-specific 2pt: "[Team] to [have|record] a Successful 2pt Conversion"
+                if _re_skip.search(r'\bto\s+(?:(?:have|record)\s+a?\s*)?succe(?:ss|s)ful\s+(?:2\s*(?:pt\s*)?point|2\s*pt|two\s*(?:pt\s*)?point|two\s*pt)\s+conversion', line, _re_skip.I):
                     continue
                 if _re_skip.match(r'^opening kick', line, _re_skip.I):
                     continue
@@ -2199,7 +2202,7 @@ elif st.session_state.view == "boxscore":
         _TWO_PT_RE     = _re_t.compile(r'^succe(?:ss|s)ful\s+(?:2\s*(?:pt\s*)?point|2\s*pt|two\s*(?:pt\s*)?point|two\s*pt)\s+conversion', _re_t.I)
         # Team-specific 2pt: "[Team] to Have a Successful 2pt Conversion"
         _TEAM_TWO_PT_RE = _re_t.compile(
-            r'^(.+?)\s+to\s+(?:have\s+a?\s*)?succe(?:ss|s)ful\s+'
+            r'^(.+?)\s+to\s+(?:(?:have|record)\s+a?\s*)?succe(?:ss|s)ful\s+'
             r'(?:2\s*(?:pt\s*)?point|2\s*pt|two\s*(?:pt\s*)?point|two\s*pt)\s+conversion',
             _re_t.I
         )
@@ -2340,8 +2343,12 @@ elif st.session_state.view == "boxscore":
                 _ot_not_found = [n for t, n in [(_winner_abbr, _winner_raw), (_loser_abbr, _loser_raw)]
                                   if _game_teams and t not in _game_teams]
                 if _ot_not_found:
+                    if len(_ot_not_found) == 2:
+                        _ot_err_msg = "both teams not in this game"
+                    else:
+                        _ot_err_msg = f"{_ot_not_found[0]} not in this game"
                     team_graded.append({"Prop": line,
-                        "Data": f"{_ot_not_found[0]} not in this game",
+                        "Data": _ot_err_msg,
                         "Result": "❗ Error"})
                     continue
                 _sdf_ot = data.get("scoring", pd.DataFrame())
