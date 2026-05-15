@@ -605,6 +605,73 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
+    # ── TEMPORARY DEBUG: teamParticipants structured stats ────────────────────
+    if game_id == "401772949":
+        import json as _json
+        from nfl.api import get_game_summary as _dbg_sum
+        with st.expander("🔍 DEBUG: teamParticipants per play", expanded=True):
+            _dbg = _dbg_sum(game_id)
+            if _dbg:
+                _dbg_drives = _dbg.get("drives", {})
+                _dbg_all = _dbg_drives.get("previous", []) + (
+                    [_dbg_drives.get("current")] if _dbg_drives.get("current") else [])
+
+                # Specific plays to inspect:
+                # 1. Normal pass (Drive 1, early play)
+                # 2. Barner TD+2pt play (Drive 21/22 area, Q4)
+                # 3. A reversed play (look for REVERSED in text)
+                # 4. A rushing play
+                # 5. OT JSN TD play
+
+                _targets = {
+                    "normal_pass": None,
+                    "barner_td": None,
+                    "reversed": None,
+                    "rush": None,
+                    "jsn_ot_td": None,
+                }
+
+                for _di, _drv in enumerate(_dbg_all):
+                    if not _drv: continue
+                    for _pi, _pl in enumerate(_drv.get("plays", [])):
+                        _txt = (_pl.get("text","") or "").lower()
+                        _ptype = _pl.get("type",{}).get("text","").lower()
+
+                        if _targets["barner_td"] is None and "barner" in _txt and "touchdown" in _txt:
+                            _targets["barner_td"] = (_di, _pi, _pl)
+                        if _targets["jsn_ot_td"] is None and "smith-njigba" in _txt and "touchdown" in _txt:
+                            _targets["jsn_ot_td"] = (_di, _pi, _pl)
+                        if _targets["reversed"] is None and "reversed" in _txt and "pass" in _txt:
+                            _targets["reversed"] = (_di, _pi, _pl)
+                        if _targets["rush"] is None and _ptype == "rush" and "walker" in _txt:
+                            _targets["rush"] = (_di, _pi, _pl)
+                        if _targets["normal_pass"] is None and _ptype == "pass reception" and "stafford" in _txt and "nacua" in _txt:
+                            _targets["normal_pass"] = (_di, _pi, _pl)
+
+                for _label, _val in _targets.items():
+                    st.markdown(f"---")
+                    st.markdown(f"### {_label.replace('_',' ').title()}")
+                    if _val is None:
+                        st.warning("Play not found")
+                        continue
+                    _di, _pi, _pl = _val
+                    _txt = _pl.get("text","") or _pl.get("description","")
+                    _period = _pl.get("period",{})
+                    _ptype = _pl.get("type",{}).get("text","")
+                    _yds = _pl.get("statYardage","")
+                    _participants = _pl.get("teamParticipants", [])
+
+                    st.markdown(f"**Drive {_di}, Play {_pi}** | period={_period} | type={_ptype!r} | statYardage={_yds}")
+                    st.code(_txt[:200])
+                    st.markdown(f"**teamParticipants** ({len(_participants)} entries):")
+                    if _participants:
+                        st.code(_json.dumps(_participants, indent=2)[:3000])
+                    else:
+                        st.error("teamParticipants is EMPTY []")
+            else:
+                st.error("Could not fetch game data")
+    # ── END TEMPORARY DEBUG ───────────────────────────────────────────────────
+
 
     # Build linescore from scoring_df (cumulative score diffs per team per quarter)
     _scoring_disp = data.get("scoring", pd.DataFrame())
