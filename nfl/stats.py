@@ -15,13 +15,15 @@ from typing import Optional
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 try:
-    from .api import get_game_summary, get_linescore, get_scoring_plays
+    from .api import get_game_summary, get_linescore, get_scoring_plays, get_core_plays, get_athlete_displayname
 except ImportError:
     import importlib as _il
     _api = _il.import_module('api' if 'nfl' not in _sys.modules else 'nfl.api')
-    get_game_summary  = _api.get_game_summary
-    get_linescore     = _api.get_linescore
-    get_scoring_plays = _api.get_scoring_plays
+    get_game_summary       = _api.get_game_summary
+    get_linescore          = _api.get_linescore
+    get_scoring_plays      = _api.get_scoring_plays
+    get_core_plays         = _api.get_core_plays
+    get_athlete_displayname = _api.get_athlete_displayname
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -480,73 +482,63 @@ _SACK_RE = _re.compile(
 
 def get_player_stats_by_period(game_id: str) -> dict:
     """
-    Build per-quarter and per-half player stat tables using ESPN structured fields.
+    Build per-quarter and per-half player stat tables using ESPN Core API plays.
 
-    Classification uses play.type.text (authoritative ESPN play type) and
-    play.statYardage (exact yards) — no inference from play text.
-    Player names are extracted from play.text using 4 simple regex patterns,
-    then resolved to full display names via a boxscore abbr->fullname map
-    built from summary.boxscore.players (already fetched, no extra API call).
+    Approach: fetches all plays from the Core API plays endpoint which provides
+    structured participant roles (passer/receiver/rusher/sackedBy) and athlete IDs
+    per play — no text parsing needed for player identification.
 
-    Play type handling based on complete ESPN NFL type list (36 types):
-      PROCESS: Pass Reception, Pass Incompletion, Passing Touchdown,
-               Pass Interception Return, Rush, Rushing Touchdown,
-               Sack, Fumble Recovery (Own/Opponent), Scramble, Pass
-      SKIP:    Everything else (kickoffs, punts, timeouts, penalties,
-               field goals, extra points, 2pt conversions, end markers, etc.)
+    Athlete IDs are resolved to displayNames via individual athlete API calls.
+    Callers (app.py) cache these resolutions for 30 days via @st.cache_data.
+
+    Data sources:
+      1. summary endpoint (existing) — boxscore official stats + season year
+      2. core API plays endpoint (new, +1 call) — all plays with structured roles
+      3. /athletes/{id} per unique player (new, cached) — displayName resolution
     """
+    import re as _re
     from collections import defaultdict
 
     summary = get_game_summary(game_id)
     if not summary:
         return {}
 
-    drives = summary.get("drives", {})
-    if not drives:
+    # Determine the current season year from summary header for athlete lookups
+    _season_year = "2025"
+    try:
+        _season_year = str(
+            summary.get("header", {})
+                   .get("season", {})
+                   .get("year", 2025)
+        )
+    except Exception:
+        pass
+
+    # ── Fetch all plays from Core API ─────────────────────────────────────────
+    core_plays = get_core_plays(game_id)
+    if not core_plays:
         return {}
 
-    prev_drives   = drives.get("previous", [])
-    current_drive = drives.get("current")
-    all_drives    = prev_drives + ([current_drive] if current_drive else [])
-    if not all_drives:
-        return {}
+    # ── Athlete ID → displayName resolution (one call per unique ID) ──────────
+    _ID_RE = _re.compile(r"/athletes/([0-9]+)")
+    _name_cache = {}   # athlete_id str → displayName str (local per-call cache)
 
-    # ── Option 4: Build abbr->fullname map from boxscore athletes ────────────
-    # summary.boxscore.players[].statistics[].athletes[].athlete.displayName
-    # shortName does NOT exist in this structure; displayName always does.
-    # We derive abbreviation from displayName (no shortName needed).
-    # Build abbr→fullname map from boxscore athletes.
-    # ESPN's boxscore.players athletes have displayName ("Matthew Stafford") but
-    # NOT shortName — so we derive the abbreviation from displayName directly:
-    #   "Matthew Stafford"   → "M.Stafford"
-    #   "Kenneth Walker III" → strip suffix "III" → "K.Walker"
-    #   "AJ Barner"          → "A.Barner"
-    _SUFFIX_PAT = _re.compile(r'\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$', _re.I)
+    def _resolve_athlete(athlete_id: str) -> str:
+        """Resolve athlete_id to displayName. Cached locally and by caller."""
+        if athlete_id in _name_cache:
+            return _name_cache[athlete_id]
+        name = get_athlete_displayname(athlete_id, _season_year)
+        if not name:
+            # Try without season (some athletes only available without year)
+            name = get_athlete_displayname(athlete_id, "")
+        _name_cache[athlete_id] = name
+        return name
 
-    def _displayname_to_abbr(full):
-        clean = _SUFFIX_PAT.sub("", full.strip()).strip()
-        parts = clean.split()
-        if len(parts) < 2:
-            return full
-        return f"{parts[0][0].upper()}.{' '.join(parts[1:])}"
-
-    _abbr_to_full = {}
-    for _team_block in summary.get("boxscore", {}).get("players", []):
-        for _cat in _team_block.get("statistics", []):
-            for _ath_entry in _cat.get("athletes", []):
-                _ath = _ath_entry.get("athlete", {})
-                _full = _ath.get("displayName", "")
-                if _full:
-                    _abbr = _displayname_to_abbr(_full)
-                    if _abbr not in _abbr_to_full:
-                        _abbr_to_full[_abbr] = _full
-
-    def _resolve_name(abbr):
-        return _abbr_to_full.get(abbr, abbr)
+    def _extract_id(ref_url: str) -> str:
+        m = _ID_RE.search(ref_url)
+        return m.group(1) if m else ""
 
     # ── Stat accumulators ─────────────────────────────────────────────────────
-    _seen_play_ids = set()
-
     def new_pass(): return {"Team": "", "comp": 0, "att": 0, "yds": 0, "td": 0, "int": 0}
     def new_rush(): return {"Team": "", "car": 0, "yds": 0, "td": 0}
     def new_recv(): return {"Team": "", "rec": 0, "yds": 0, "td": 0}
@@ -557,11 +549,11 @@ def get_player_stats_by_period(game_id: str) -> dict:
     receiving = defaultdict(lambda: defaultdict(new_recv))
     sacking   = defaultdict(lambda: defaultdict(new_sack))
 
-    # ── Complete ESPN NFL play type skip set ──────────────────────────────────
+    # ── Play type skip set ────────────────────────────────────────────────────
     _SKIP_TYPES = {
         "end period", "end of half", "end of game", "end of regulation",
         "timeout", "official timeout", "two-minute warning", "two minute warning",
-        "kickoff", "kickoff return (offense)", "kickoff return (defense)",
+        "coin toss", "kickoff", "kickoff return (offense)", "kickoff return (defense)",
         "kickoff return touchdown",
         "punt", "punt return", "punt return touchdown",
         "blocked punt", "blocked punt touchdown", "blocked field goal",
@@ -576,203 +568,130 @@ def get_player_stats_by_period(game_id: str) -> dict:
         "penalty", "uncategorized", "placeholder", "",
     }
 
-    # ── Player name extraction (text only, 4 patterns) ────────────────────────
-    _N = r"[A-Z][a-z]?\.[A-Z][A-Za-z'\-]+(?:\.\s*[A-Z][A-Za-z'\-]+)*"
-    _STRIP_RE    = _re.compile(r"^(?:\([^)]+\)\s*)*(?:" + _N + r"(?:\s+[A-Za-z'\-]+)*\s+reported\s+[^.]+\.\s*)*", _re.I)
-    _PASSER_RE   = _re.compile(r"^(" + _N + r")\s+(?:pass|spike[sd]?)\b", _re.I)
-    _RECEIVER_RE = _re.compile(r"\bto\s+(" + _N + r")(?:\s+(?:pushed|to|for|at|in|ran)\b)", _re.I)
-    _RUSHER_RE   = _re.compile(r"^(" + _N + r")\s+", _re.I)
-    _SACKER_RE   = _re.compile(r"^(" + _N + r")\s+sacked\b", _re.I)
+    # Roles we track — all pat* roles (2pt conversions embedded in TD rows) are
+    # intentionally excluded so they don't double-count passing/rushing attempts
+    _STAT_ROLES = {"passer", "receiver", "rusher", "sackedBy"}
 
-    def _clean(text):
-        return _STRIP_RE.sub('', text).strip()
+    # ── Team abbreviation lookup from summary boxscore ────────────────────────
+    # Maps ESPN team ID string → abbreviation (e.g. "26" → "SEA")
+    _team_id_to_abbr = {}
+    for _tb in summary.get("boxscore", {}).get("teams", []):
+        _tid = str(_tb.get("team", {}).get("id", ""))
+        _tab = _tb.get("team", {}).get("abbreviation", "")
+        if _tid and _tab:
+            _team_id_to_abbr[_tid] = _tab
 
-    def _passer(text):
-        m = _PASSER_RE.match(_clean(text))
-        return _resolve_name(m.group(1)) if m else None
+    def _team_abbr_from_play(play: dict) -> str:
+        """Get possessing team abbreviation from a core API play."""
+        team_ref = play.get("team", {}).get("$ref", "")
+        m = _re.search(r"/teams/([0-9]+)", team_ref)
+        if m:
+            return _team_id_to_abbr.get(m.group(1), "")
+        return ""
 
-    def _receiver(text):
-        m = _RECEIVER_RE.search(text)
-        return _resolve_name(m.group(1)) if m else None
+    # ── Main play loop ────────────────────────────────────────────────────────
+    _seen_ids = set()
 
-    _DIRECT_SNAP_RE = _re.compile(
-        r"Direct\s+snap\s+to\s+(" + _N + r")", _re.I
-    )
-
-    def _rusher(text):
-        # Direct snap plays: "Direct snap to A.Barner.  A.Barner up the middle..."
-        ds = _DIRECT_SNAP_RE.search(text)
-        if ds:
-            return _resolve_name(ds.group(1))
-        m = _RUSHER_RE.match(_clean(text))
-        return _resolve_name(m.group(1)) if m else None
-
-    def _sacker(text):
-        m = _SACKER_RE.match(_clean(text))
-        return _resolve_name(m.group(1)) if m else None
-
-    # ── Period resolution ─────────────────────────────────────────────────────
-    _global_last_valid_period = 0
-
-    def _period_from_display(display_val):
-        import re as _re2
-        if not display_val: return 0
-        dv = str(display_val).strip().lower()
-        if "1st quarter" in dv: return 1
-        if "2nd quarter" in dv: return 2
-        if "3rd quarter" in dv: return 3
-        if "4th quarter" in dv: return 4
-        if "1st overtime" in dv: return 5
-        if "2nd overtime" in dv: return 6
-        if "3rd overtime" in dv: return 7
-        if "overtime" in dv or dv.startswith("ot"): return 5
-        m = _re2.match(r'(\d+)', dv)
-        if m: return int(m.group(1))
-        return 0
-
-    def _resolve_drive_period(drive):
-        p = _safe_int(drive.get("start", {}).get("period", {}).get("number", 0))
-        if p > 0: return p
-        p = _period_from_display(drive.get("start", {}).get("period", {}).get("displayValue", ""))
-        if p > 0: return p
-        p = _safe_int(drive.get("end", {}).get("period", {}).get("number", 0))
-        if p > 0: return p
-        p = _period_from_display(drive.get("end", {}).get("period", {}).get("displayValue", ""))
-        if p > 0: return p
-        for _play in drive.get("plays", []):
-            _pr = _play.get("period", {})
-            p = _safe_int(_pr.get("number", 0) if isinstance(_pr, dict) else _pr)
-            if p > 0: return p
-            p = _period_from_display(_pr.get("displayValue", "") if isinstance(_pr, dict) else "")
-            if p > 0: return p
-            p = _safe_int(_play.get("start", {}).get("period", {}).get("number", 0))
-            if p > 0: return p
-            p = _period_from_display(_play.get("start", {}).get("period", {}).get("displayValue", ""))
-            if p > 0: return p
-            p = _safe_int(_play.get("end", {}).get("period", {}).get("number", 0))
-            if p > 0: return p
-            p = _period_from_display(_play.get("end", {}).get("period", {}).get("displayValue", ""))
-            if p > 0: return p
-        return 0
-
-    def _resolve_play_period(play):
-        _p_raw = play.get("period", {})
-        p = _safe_int(_p_raw.get("number", 0) if isinstance(_p_raw, dict) else _p_raw)
-        if p > 0: return p
-        p = _period_from_display(_p_raw.get("displayValue", "") if isinstance(_p_raw, dict) else "")
-        if p > 0: return p
-        p = _safe_int(play.get("start", {}).get("period", {}).get("number", 0))
-        if p > 0: return p
-        p = _period_from_display(play.get("start", {}).get("period", {}).get("displayValue", ""))
-        if p > 0: return p
-        p = _safe_int(play.get("end", {}).get("period", {}).get("number", 0))
-        if p > 0: return p
-        p = _period_from_display(play.get("end", {}).get("period", {}).get("displayValue", ""))
-        if p > 0: return p
-        return 0
-
-    # ── Main drive loop ───────────────────────────────────────────────────────
-    for drive in all_drives:
-        if not drive:
+    for play in core_plays:
+        play_id = play.get("id", "")
+        if play_id in _seen_ids:
             continue
-        team = drive.get("team", {}).get("abbreviation", "")
+        if play_id:
+            _seen_ids.add(play_id)
 
-        _drive_period = _resolve_drive_period(drive)
-        _last_valid_period = _drive_period if _drive_period > 0 else _global_last_valid_period
+        ptype = (play.get("type", {}).get("text", "") or "").lower().strip()
+        if ptype in _SKIP_TYPES:
+            continue
 
-        for play in drive.get("plays", []):
-            _raw_period = _resolve_play_period(play)
-            if _raw_period > 0:
-                _last_valid_period = _raw_period
-                _global_last_valid_period = _raw_period
-            period = _last_valid_period if _last_valid_period > 0 else (
-                     _drive_period      if _drive_period      > 0 else _global_last_valid_period)
+        if play.get("isPenalty") and not play.get("scoringPlay"):
+            continue
 
-            play_id = play.get("id", "")
-            if play_id and play_id in _seen_play_ids:
+        period = _safe_int((play.get("period") or {}).get("number", 0))
+        if period == 0:
+            continue   # can't assign to a quarter — skip
+
+        stat_yds = _safe_int(play.get("statYardage", 0))
+        team     = _team_abbr_from_play(play)
+
+        # Build role → displayName map for this play
+        # Only resolve IDs for roles we actually use
+        roles = {}   # role_str → displayName
+        for participant in play.get("participants", []):
+            role = participant.get("type", "")
+            if role not in _STAT_ROLES:
                 continue
-            if play_id:
-                _seen_play_ids.add(play_id)
-
-            ptype    = (play.get("type", {}).get("text", "") or "").lower().strip()
-            text     = play.get("text", "") or play.get("description", "") or ""
-            stat_yds = _safe_int(play.get("statYardage", 0))
-            is_pen   = play.get("isPenalty", False)
-
-            if ptype in _SKIP_TYPES:
+            ref = participant.get("athlete", {}).get("$ref", "")
+            aid = _extract_id(ref)
+            if not aid:
                 continue
-            if is_pen and _re.search(r'No\s+Play', text, _re.I):
-                continue
-            if not text:
-                continue
+            name = _resolve_athlete(aid)
+            if name and role not in roles:   # first participant of each role wins
+                roles[role] = name
 
-            # ── Classify by ESPN type.text ────────────────────────────────────
-            if ptype in {"pass reception", "pass"}:
-                psr = _passer(text); rcv = _receiver(text)
-                if psr:
-                    d = passing[period][psr]; d["Team"] = team
-                    d["att"] += 1; d["comp"] += 1; d["yds"] += stat_yds
-                    if rcv:
-                        rd = receiving[period][rcv]; rd["Team"] = team
-                        rd["rec"] += 1; rd["yds"] += stat_yds
+        psr = roles.get("passer")
+        rcv = roles.get("receiver")
+        rsh = roles.get("rusher")
+        skr = roles.get("sackedBy")
 
-            elif ptype == "pass incompletion":
-                psr = _passer(text)
-                if psr:
-                    d = passing[period][psr]; d["Team"] = team
-                    d["att"] += 1
+        # ── Classify and accumulate ───────────────────────────────────────────
+        if ptype in {"pass reception", "pass"}:
+            if psr:
+                d = passing[period][psr]; d["Team"] = team or d["Team"]
+                d["att"] += 1; d["comp"] += 1; d["yds"] += stat_yds
+            if rcv:
+                rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
+                rd["rec"] += 1; rd["yds"] += stat_yds
 
-            elif ptype == "passing touchdown":
-                psr = _passer(text); rcv = _receiver(text)
-                if psr:
-                    d = passing[period][psr]; d["Team"] = team
-                    d["att"] += 1; d["comp"] += 1; d["yds"] += stat_yds; d["td"] += 1
-                    if rcv:
-                        rd = receiving[period][rcv]; rd["Team"] = team
-                        rd["rec"] += 1; rd["yds"] += stat_yds; rd["td"] += 1
+        elif ptype == "pass incompletion":
+            if psr:
+                d = passing[period][psr]; d["Team"] = team or d["Team"]
+                d["att"] += 1
 
-            elif ptype == "pass interception return":
-                psr = _passer(text)
-                if psr:
-                    d = passing[period][psr]; d["Team"] = team
-                    d["att"] += 1; d["int"] += 1
+        elif ptype == "passing touchdown":
+            if psr:
+                d = passing[period][psr]; d["Team"] = team or d["Team"]
+                d["att"] += 1; d["comp"] += 1; d["yds"] += stat_yds; d["td"] += 1
+            if rcv:
+                rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
+                rd["rec"] += 1; rd["yds"] += stat_yds; rd["td"] += 1
 
-            elif ptype == "sack":
-                qb = _sacker(text) or _passer(text)
-                if qb:
-                    d = passing[period][qb]; d["Team"] = team
+        elif ptype == "pass interception return":
+            if psr:
+                d = passing[period][psr]; d["Team"] = team or d["Team"]
+                d["att"] += 1; d["int"] += 1
 
-            elif ptype in {"rush", "scramble", "rushing touchdown"}:
-                rsh = _rusher(text)
-                is_td = (ptype == "rushing touchdown")
-                if rsh:
-                    d = rushing[period][rsh]; d["Team"] = team
-                    d["car"] += 1; d["yds"] += stat_yds
-                    if is_td:
-                        d["td"] += 1
+        elif ptype == "sack":
+            # QB still recorded in passing (no stat increment — ESPN convention)
+            if psr:
+                d = passing[period][psr]; d["Team"] = team or d["Team"]
+            if skr:
+                sd = sacking[period][skr]; sd["Team"] = team or sd["Team"]
+                sd["sacks"] += 1
 
-            elif ptype in {"fumble recovery (own)", "fumble recovery (opponent)"}:
-                # ESPN sets statYardage=0 for fumble plays where a reversal occurred,
-                # but the official boxscore still credits yards gained before the fumble.
-                # Parse yards from "for N yards" in the play text as a fallback.
-                _fum_yds = stat_yds
-                if _fum_yds == 0:
-                    _yd_m = _re.search(r"\bfor\s+(-?\d+)\s+yards?", text, _re.I)
-                    if _yd_m:
-                        _fum_yds = _safe_int(_yd_m.group(1))
-                if "pass" in text.lower():
-                    psr = _passer(text); rcv = _receiver(text)
-                    if psr:
-                        d = passing[period][psr]; d["Team"] = team
-                        d["att"] += 1; d["comp"] += 1; d["yds"] += _fum_yds
-                        if rcv:
-                            rd = receiving[period][rcv]; rd["Team"] = team
-                            rd["rec"] += 1; rd["yds"] += _fum_yds
-                else:
-                    rsh = _rusher(text)
-                    if rsh:
-                        d = rushing[period][rsh]; d["Team"] = team
-                        d["car"] += 1; d["yds"] += _fum_yds
+        elif ptype in {"rush", "scramble", "rushing touchdown"}:
+            if rsh:
+                d = rushing[period][rsh]; d["Team"] = team or d["Team"]
+                d["car"] += 1; d["yds"] += stat_yds
+                if ptype == "rushing touchdown":
+                    d["td"] += 1
+
+        elif ptype in {"fumble recovery (own)", "fumble recovery (opponent)"}:
+            # ESPN sets statYardage=0 when a reversal occurs; parse from text instead
+            fum_yds = stat_yds
+            if fum_yds == 0:
+                text = play.get("text", "") or ""
+                yd_m = _re.search(r"\bfor\s+(-?[0-9]+)\s+yards?", text, _re.I)
+                if yd_m:
+                    fum_yds = _safe_int(yd_m.group(1))
+            if psr:
+                d = passing[period][psr]; d["Team"] = team or d["Team"]
+                d["att"] += 1; d["comp"] += 1; d["yds"] += fum_yds
+            if rcv:
+                rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
+                rd["rec"] += 1; rd["yds"] += fum_yds
+            if rsh and not psr:   # rushing fumble recovery
+                d = rushing[period][rsh]; d["Team"] = team or d["Team"]
+                d["car"] += 1; d["yds"] += fum_yds
 
     # ── DataFrame builders ────────────────────────────────────────────────────
     def to_sack_df(acc):
@@ -804,7 +723,6 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 .reset_index(drop=True)) if rows else pd.DataFrame()
 
     def merge(base, periods, factory):
-        from collections import defaultdict
         merged = defaultdict(factory)
         for p in periods:
             for name, d in base[p].items():
@@ -842,10 +760,11 @@ def get_player_stats_by_period(game_id: str) -> dict:
                         "receiving": to_recv_df(merge(receiving, h2, new_recv)),
                         "defense":   to_sack_df(merge(sacking,   h2, new_sack))}
     if ot:
-        result["OT"] = {"passing":   to_pass_df(merge(passing,   ot, new_pass)),
-                        "rushing":   to_rush_df(merge(rushing,   ot, new_rush)),
-                        "receiving": to_recv_df(merge(receiving, ot, new_recv)),
-                        "defense":   to_sack_df(merge(sacking,   ot, new_sack))}
+        ot_periods = sorted(p for p in all_periods if p > 4)
+        result["OT"] = {"passing":   to_pass_df(merge(passing,   ot_periods, new_pass)),
+                        "rushing":   to_rush_df(merge(rushing,   ot_periods, new_rush)),
+                        "receiving": to_recv_df(merge(receiving, ot_periods, new_recv)),
+                        "defense":   to_sack_df(merge(sacking,   ot_periods, new_sack))}
 
     result["Full Game"] = {
         "passing":   to_pass_df(merge(passing,   all_periods, new_pass)),
@@ -856,7 +775,6 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
     _reconcile(result, game_id)
     return result
-
 
 def _reconcile(result: dict, game_id: str) -> None:
     """
