@@ -626,6 +626,10 @@ elif st.session_state.view == "boxscore":
             # Derive from scoring_df first play
             away_t = sdf.iloc[0].get("Team","Away") if not sdf.empty else "Away"
             home_t = sdf[sdf["Team"] != away_t].iloc[0].get("Team","Home") if len(sdf[sdf["Team"]!=away_t])>0 else "Home"
+        # Detect OT quarters in scoring data
+        all_quarters_in_sdf = sdf["Quarter"].dropna().unique().tolist() if "Quarter" in sdf.columns else []
+        ot_quarters = sorted([q for q in all_quarters_in_sdf if str(q).startswith("OT")])
+
         rows = []
         for team, col in [(away_t, "Away Score"), (home_t, "Home Score")]:
             row = {"Team": team}
@@ -647,6 +651,18 @@ elif st.session_state.view == "boxscore":
                 else: h2 += pts
             row["1H"] = h1
             row["2H"] = h2
+            # Add OT: sum all OT quarter scores into single "OT" column
+            if ot_quarters:
+                ot_pts = 0
+                for otq in ot_quarters:
+                    qr = last_per_q[last_per_q["Quarter"] == otq]
+                    if not qr.empty:
+                        val = int(pd.to_numeric(qr.iloc[0][col], errors="coerce") or 0)
+                        pts = val - prev
+                        prev = val
+                        ot_pts += pts
+                row["OT"] = ot_pts
+                total += ot_pts
             row["T"] = total
             rows.append(row)
         return pd.DataFrame(rows)
@@ -654,7 +670,7 @@ elif st.session_state.view == "boxscore":
     _ls_built = _build_ls_from_scoring(_scoring_disp, _ls_raw)
 
     if _ls_built is not None and not _ls_built.empty:
-        _ls_cols = [c for c in ["Team","Q1","Q2","Q3","Q4","1H","2H","T"] if c in _ls_built.columns]
+        _ls_cols = [c for c in ["Team","Q1","Q2","Q3","Q4","1H","2H","OT","T"] if c in _ls_built.columns]
         _ls_show = _ls_built[_ls_cols]
 
         # Render as styled HTML table matching screenshot
@@ -724,7 +740,11 @@ elif st.session_state.view == "boxscore":
                 unsafe_allow_html=True)
 
     # Standard periods only — no OT
+    # Include OT option only when OT data exists in this game
+    _has_ot_data = bool(by_period.get("OT"))
     available = ["Full Game", "Q1", "Q2", "Q3", "Q4", "1st Half", "2nd Half"]
+    if _has_ot_data:
+        available.append("OT")
 
     period_filter = st.radio("Period:", options=available,
                              horizontal=True, label_visibility="collapsed")
@@ -748,7 +768,7 @@ elif st.session_state.view == "boxscore":
         st.markdown(_render_stats_df_html(df), unsafe_allow_html=True)
 
     # Key map: display label → internal key used in by_period
-    _PERIOD_KEY = {"1st Half":"1H","2nd Half":"2H"}
+    _PERIOD_KEY = {"1st Half":"1H","2nd Half":"2H","OT":"OT"}
 
     def _render_stats_df_html(df):
         """Render stats df as HTML with logos in Team column."""
@@ -1298,6 +1318,9 @@ elif st.session_state.view == "boxscore":
                 if _re_skip.match(r'^no\s+touchdown\s+in\s+the\s+game', line, _re_skip.I):
                     continue
                 if _re_skip.match(r'^succe(?:ss|s)ful\s+(?:2\s*(?:pt\s*)?point|2\s*pt|two\s*(?:pt\s*)?point|two\s*pt)\s+conversion', line, _re_skip.I):
+                    continue
+                # Team-specific 2pt: "[Team] to Have a Successful 2pt Conversion"
+                if _re_skip.search(r'\bsucce(?:ss|s)ful\s+(?:2\s*(?:pt\s*)?point|2\s*pt|two\s*(?:pt\s*)?point|two\s*pt)\s+conversion', line, _re_skip.I):
                     continue
                 if _re_skip.match(r'^opening kick', line, _re_skip.I):
                     continue
@@ -2082,6 +2105,63 @@ elif st.session_state.view == "boxscore":
             except Exception:
                 return 0
 
+        def _detect_2pt(sdf, team_abbr=None):
+            """Detect successful 2pt conversion using score deltas.
+            A successful 2pt conversion causes a score increase of exactly +2 (standalone)
+            or +8 (when ESPN combines TD+2pt in one scoring row).
+            Much more reliable than parsing ESPN Type/Description text fields.
+            Returns (has_2pt: bool, data_str: str)
+            """
+            if sdf is None or sdf.empty:
+                return False, "No 2pt Conversion"
+            if "Away Score" not in sdf.columns or "Home Score" not in sdf.columns:
+                return False, "No 2pt Conversion"
+
+            # Determine which score column to check for team-specific market
+            _col = None
+            if team_abbr and "Team" in sdf.columns:
+                # Find which column (Away/Home) belongs to this team
+                _team_rows = sdf[sdf["Team"].str.upper() == team_abbr.upper()]
+                if not _team_rows.empty:
+                    _fi = _team_rows.index[0]
+                    _prev = sdf.loc[:_fi-1].iloc[-1] if _fi > 0 else None
+                    if _prev is not None:
+                        _da = int(pd.to_numeric(_team_rows.iloc[0]["Away Score"], errors="coerce") or 0) - int(pd.to_numeric(_prev["Away Score"], errors="coerce") or 0)
+                        _col = "Away Score" if _da > 0 else "Home Score"
+
+            prev_away = 0; prev_home = 0
+            for _, row in sdf.iterrows():
+                cur_away = int(pd.to_numeric(row.get("Away Score", 0), errors="coerce") or 0)
+                cur_home = int(pd.to_numeric(row.get("Home Score", 0), errors="coerce") or 0)
+                da = cur_away - prev_away
+                dh = cur_home - prev_home
+
+                # Check for 2pt delta: +2 (standalone row) or +8 (TD+2pt combined)
+                _is_2pt = False
+                if _col == "Away Score":
+                    _is_2pt = da in (2, 8)
+                elif _col == "Home Score":
+                    _is_2pt = dh in (2, 8)
+                else:
+                    # Generic: either team
+                    _is_2pt = da in (2, 8) or dh in (2, 8)
+
+                if _is_2pt:
+                    _team_name = str(row.get("Team", ""))
+                    _desc = str(row.get("Description", ""))[:60]
+                    _delta = da if da in (2, 8) else dh
+                    _score_str = f"{cur_away}-{cur_home}"
+                    _data = f"{_team_name}: score {_score_str} (+{_delta})"
+                    if _desc:
+                        _data += f" | {_desc}"
+                    return True, _data
+
+                prev_away = cur_away
+                prev_home = cur_home
+
+            label = f"{team_abbr} " if team_abbr else ""
+            return False, f"No {label}2pt Conversion"
+
         def _check_reqs(reqs, period_label, each_team):
             plays = _plays_in(period_label) if period_label else (
                 scoring_df["Type"].str.lower().tolist() if scoring_df is not None and not scoring_df.empty and "Type" in scoring_df.columns else [])
@@ -2117,6 +2197,12 @@ elif st.session_state.view == "boxscore":
         _NO_TD_RE      = _re_t.compile(r'^no\s+touchdown\s+in\s+the\s+game', _re_t.I)
         _FIRST_TD_RE   = _re_t.compile(r'^([\w\s]+?)\s+(?:or\s+([\w\s]+?)\s+)?to\s+score\s+the\s+first\s+td', _re_t.I)
         _TWO_PT_RE     = _re_t.compile(r'^succe(?:ss|s)ful\s+(?:2\s*(?:pt\s*)?point|2\s*pt|two\s*(?:pt\s*)?point|two\s*pt)\s+conversion', _re_t.I)
+        # Team-specific 2pt: "[Team] to Have a Successful 2pt Conversion"
+        _TEAM_TWO_PT_RE = _re_t.compile(
+            r'^(.+?)\s+to\s+(?:have\s+a?\s*)?succe(?:ss|s)ful\s+'
+            r'(?:2\s*(?:pt\s*)?point|2\s*pt|two\s*(?:pt\s*)?point|two\s*pt)\s+conversion',
+            _re_t.I
+        )
         _KICK_TD_RE    = _re_t.compile(r'^opening kick(?:off)?.*(?:return|returned).*td|opening kickoff.*touchdown', _re_t.I)
 
         # Special teams TD types from ESPN scoring summary
@@ -2221,26 +2307,24 @@ elif st.session_state.view == "boxscore":
                     "Result": "✅ Won" if won else "❌ Lost"})
                 continue
 
-            # ── Successful 2pt Conversion ──────────────────────────────────────
+            # ── Team-specific 2pt Conversion ─────────────────────────────────
+            _t2pt_m = _TEAM_TWO_PT_RE.match(line)
+            if _t2pt_m:
+                _t2pt_raw = _t2pt_m.group(1).strip()
+                _t2pt_abbr = _resolve_team(_t2pt_raw)
+                if _game_teams and _t2pt_abbr not in _game_teams:
+                    team_graded.append({"Prop": line, "Data": f"{_t2pt_abbr} not in this game",
+                        "Result": "❗ Error"})
+                    continue
+                _has_2pt, _2pt_data = _detect_2pt(data.get("scoring", pd.DataFrame()), team_abbr=_t2pt_abbr)
+                team_graded.append({"Prop": line, "Data": _2pt_data,
+                    "Result": "✅ Won" if _has_2pt else "❌ Lost"})
+                continue
+
+            # ── Successful 2pt Conversion — score delta approach ────────────────
             if _TWO_PT_RE.match(line):
                 _sdf_2 = data.get("scoring", pd.DataFrame())
-                if _sdf_2 is not None and not _sdf_2.empty and "Type" in _sdf_2.columns:
-                    # Only successful 2pt conversions appear in ESPN's scoringPlays
-                    # Check Type field — exclude rows where Description says "Failed"
-                    _2pt_mask = _sdf_2["Type"].str.lower().str.contains("two.point|2.point", na=False)
-                    if "Description" in _sdf_2.columns:
-                        _2pt_mask = _2pt_mask & ~_sdf_2["Description"].str.lower().str.contains("failed", na=False)
-                    _has_2pt = _2pt_mask.any()
-                else:
-                    _has_2pt = False
-                if _has_2pt and _sdf_2 is not None and not _sdf_2.empty:
-                    _2pt_rows = _sdf_2[
-                        _sdf_2["Type"].str.lower().str.contains("two.point|2.point", na=False) &
-                        ~_sdf_2["Description"].str.lower().str.contains("failed", na=False)
-                    ] if "Description" in _sdf_2.columns else pd.DataFrame()
-                    _2pt_data = _2pt_rows.iloc[0]["Description"][:60] if not _2pt_rows.empty else "Successful"
-                else:
-                    _2pt_data = "No 2pt Conversion"
+                _has_2pt, _2pt_data = _detect_2pt(_sdf_2, team_abbr=None)
                 team_graded.append({"Prop": line, "Data": _2pt_data,
                     "Result": "✅ Won" if _has_2pt else "❌ Lost"})
                 continue
@@ -2249,9 +2333,15 @@ elif st.session_state.view == "boxscore":
             _ot_m = _OT_WIN_RE.match(line)
             if _ot_m:
                 _winner_raw = _ot_m.group(1).strip()
+                _loser_raw  = _ot_m.group(2).strip()
                 _winner_abbr = _resolve_team(_winner_raw)
-                if _game_teams and _winner_abbr not in _game_teams:
-                    team_graded.append({"Prop": line, "Data": f"{_winner_abbr} not in this game",
+                _loser_abbr  = _resolve_team(_loser_raw)
+                # Validate BOTH teams are in this game
+                _ot_not_found = [n for t, n in [(_winner_abbr, _winner_raw), (_loser_abbr, _loser_raw)]
+                                  if _game_teams and t not in _game_teams]
+                if _ot_not_found:
+                    team_graded.append({"Prop": line,
+                        "Data": f"{_ot_not_found[0]} not in this game",
                         "Result": "❗ Error"})
                     continue
                 _sdf_ot = data.get("scoring", pd.DataFrame())
@@ -2721,8 +2811,7 @@ elif st.session_state.view == "boxscore":
 - `Both [Player] and [Player] to Each Record N+ [stat] in Each Half`
 
 *Two or more players — combined total*
-- `[Player] and [Player] to Combine for N+ [stat]`
-- `[Player], [Player] and [Player] to Combine for N+ [stat]` (up to 5 players)
+- `[Player] and [Player] to Combine for N+ [stat]` (up to 5 players)
 
 *First TD scorer*
 - `[Player] to Score the First TD`
@@ -2754,13 +2843,13 @@ elif st.session_state.view == "boxscore":
 
 *Other*
 - `[Team] to Beat the [Team] in Overtime`
-- `Successful 2pt Conversion` / `Successful 2 point Conversion` / `Successful two point Conversion` / `Successful two pt Conversion`
+- `Successful 2pt Conversion` / `Successful 2 point Conversion` / `Successful two point Conversion` / `Successful two pt Conversion` / `Succesful 2pt Conversion` *(typo-tolerant)*
 
 ---
 
 ⚠️ **Notes**
 - Player names are **not case-sensitive** — `andrew billings` and `Andrew Billings` both work
-- Player names must be from this game or result will be ❗ Error
+- Player names must be in this game or result will be ❗ Error
 - Team names accept abbreviations (DAL), city (Dallas), nickname (Cowboys) or full name (Dallas Cowboys)
 - N+ means any positive number e.g. 1+, 2+, 25+
         """)
@@ -2769,7 +2858,7 @@ elif st.session_state.view == "boxscore":
         st.markdown("""
 **🏃 Rushing**
 
-| Input | Resolves to |
+| You can write | Resolves to |
 |---|---|
 | `Rushing Yards` | Rushing Yards |
 | `Rush Yards` | Rushing Yards |
@@ -2783,9 +2872,9 @@ elif st.session_state.view == "boxscore":
 
 ---
 
-**🏈 Passing**
+**✈️ Passing**
 
-| Input | Resolves to |
+| You can write | Resolves to |
 |---|---|
 | `Passing Yards` | Passing Yards |
 | `Pass Yards` | Passing Yards |
@@ -2806,7 +2895,7 @@ elif st.session_state.view == "boxscore":
 
 **🙌 Receiving**
 
-| Input | Resolves to |
+| You can write | Resolves to |
 |---|---|
 | `Receiving Yards` | Receiving Yards |
 | `Receive Yards` | Receiving Yards |
