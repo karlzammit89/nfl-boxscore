@@ -579,10 +579,24 @@ def get_player_stats_by_period(game_id: str) -> dict:
         Handles compound plays (fumble+pass, etc.)
         Returns list of (event_type, player1, player2, yds, is_td, is_int) tuples.
         """
-        # Two-point conversions: NEVER count towards any regular stats
-        # (passing ATT/CMP/YDS, receiving REC/YDS, rushing CAR/YDS, TDs)
-        is_two_pt  = bool(_re.search(r'TWO.POINT\s+CONVERSION', text, _re.I))
-        if is_two_pt:
+        # Two-point conversions may be appended to a TD play in one text block.
+        # e.g. "S.Darnold pass to A.Barner for 26 yards, TOUCHDOWN.
+        #        TWO-POINT CONVERSION ATTEMPT. Z.Charbonnet rushes... SUCCEEDS."
+        # Truncate FIRST so that a REVERSED in the 2pt portion doesn't kill the TD.
+        _two_pt_m = _re.search(r'TWO.POINT\s+CONVERSION', text, _re.I)
+        if _two_pt_m:
+            # Keep only the portion before the 2pt attempt
+            text = text[:_two_pt_m.start()].strip()
+            if not text:
+                return []
+
+        # REVERSED plays: officiating overturned the call — stats don't count.
+        # Check AFTER 2pt truncation so a REVERSED inside the 2pt block
+        # (e.g. "play was REVERSED...TWO-POINT ATTEMPT...SUCCEEDS") doesn't
+        # accidentally kill a valid TD play that preceded the 2pt attempt.
+        # e.g. "M.Stafford pass...intercepted...The play was REVERSED."
+        is_reversed = bool(_re.search(r'\bREVERSED\b', text, _re.I))
+        if is_reversed:
             return []
 
         # No Play = down wiped out, don't count any stats
@@ -968,18 +982,35 @@ def _last_period(result, cat, player, periods):
 def _match_player(df, player):
     """Match player row handling full-name vs ESPN-abbr mismatch.
     e.g. 'Amon-Ra St. Brown' matches 'A.St. Brown' in PBP df.
+    e.g. 'Kenneth Walker III' → strip suffix → 'Kenneth Walker' → 'K.Walker'
     """
+    import re as _re_mp
+    _SUFFIX_RE = _re_mp.compile(r'\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$', _re_mp.I)
+
     if "Player" not in df.columns:
         return df.iloc[0:0]
+    # 1. Exact match (abbreviated name already)
     row = df[df["Player"] == player]
     if not row.empty:
         return row
-    parts = player.strip().split()
+    # 2. Strip name suffix (Jr/Sr/II/III/IV) then build ESPN abbreviation
+    #    "Kenneth Walker III" → "Kenneth Walker" → "K.Walker"
+    clean = _SUFFIX_RE.sub("", player.strip()).strip()
+    parts = clean.split()
     if len(parts) >= 2:
         abbr = f"{parts[0][0].upper()}.{chr(32).join(parts[1:])}"
         row = df[df["Player"] == abbr]
         if not row.empty:
             return row
+    # 3. Also try without suffix on the original (catches "AJ Barner" → "A.Barner")
+    orig_parts = player.strip().split()
+    if len(orig_parts) >= 2:
+        orig_abbr = f"{orig_parts[0][0].upper()}.{chr(32).join(orig_parts[1:])}"
+        if orig_abbr != abbr:
+            row = df[df["Player"] == orig_abbr]
+            if not row.empty:
+                return row
+    # 4. Last-name + first-initial fallback (handles remaining edge cases)
     last = parts[-1] if parts else ""
     first_init = parts[0][0].upper() if parts else ""
     candidates = df[df["Player"].str.endswith(last, na=False)]
