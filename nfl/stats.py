@@ -512,18 +512,32 @@ def get_player_stats_by_period(game_id: str) -> dict:
         return {}
 
     # ── Option 4: Build abbr->fullname map from boxscore athletes ────────────
-    # summary.boxscore.players[].statistics[].athletes[].{displayName, shortName}
-    # displayName = "Matthew Stafford", shortName = "M. Stafford"
-    # We build: "M.Stafford" -> "Matthew Stafford" (normalise shortName spaces)
+    # summary.boxscore.players[].statistics[].athletes[].athlete.displayName
+    # shortName does NOT exist in this structure; displayName always does.
+    # We derive abbreviation from displayName (no shortName needed).
+    # Build abbr→fullname map from boxscore athletes.
+    # ESPN's boxscore.players athletes have displayName ("Matthew Stafford") but
+    # NOT shortName — so we derive the abbreviation from displayName directly:
+    #   "Matthew Stafford"   → "M.Stafford"
+    #   "Kenneth Walker III" → strip suffix "III" → "K.Walker"
+    #   "AJ Barner"          → "A.Barner"
+    _SUFFIX_PAT = _re.compile(r'\s+(?:jr\.?|sr\.?|ii|iii|iv)\.?\s*$', _re.I)
+
+    def _displayname_to_abbr(full):
+        clean = _SUFFIX_PAT.sub("", full.strip()).strip()
+        parts = clean.split()
+        if len(parts) < 2:
+            return full
+        return f"{parts[0][0].upper()}.{' '.join(parts[1:])}"
+
     _abbr_to_full = {}
     for _team_block in summary.get("boxscore", {}).get("players", []):
         for _cat in _team_block.get("statistics", []):
             for _ath_entry in _cat.get("athletes", []):
                 _ath = _ath_entry.get("athlete", {})
-                _full  = _ath.get("displayName", "")
-                _short = _ath.get("shortName", "")
-                if _full and _short:
-                    _abbr = _re.sub(r'\.\s+', '.', _short.strip())
+                _full = _ath.get("displayName", "")
+                if _full:
+                    _abbr = _displayname_to_abbr(_full)
                     if _abbr not in _abbr_to_full:
                         _abbr_to_full[_abbr] = _full
 
@@ -565,8 +579,8 @@ def get_player_stats_by_period(game_id: str) -> dict:
     # ── Player name extraction (text only, 4 patterns) ────────────────────────
     _N = r"[A-Z][a-z]?\.[A-Z][A-Za-z'\-]+(?:\.\s*[A-Z][A-Za-z'\-]+)*"
     _STRIP_RE    = _re.compile(r"^(?:\([^)]+\)\s*)*(?:" + _N + r"(?:\s+[A-Za-z'\-]+)*\s+reported\s+[^.]+\.\s*)*", _re.I)
-    _PASSER_RE   = _re.compile(r"^(" + _N + r")\s+pass\b", _re.I)
-    _RECEIVER_RE = _re.compile(r"\bto\s+(" + _N + r")(?:\s+(?:pushed|to|for|at|in)\b)", _re.I)
+    _PASSER_RE   = _re.compile(r"^(" + _N + r")\s+(?:pass|spike[sd]?)\b", _re.I)
+    _RECEIVER_RE = _re.compile(r"\bto\s+(" + _N + r")(?:\s+(?:pushed|to|for|at|in|ran)\b)", _re.I)
     _RUSHER_RE   = _re.compile(r"^(" + _N + r")\s+", _re.I)
     _SACKER_RE   = _re.compile(r"^(" + _N + r")\s+sacked\b", _re.I)
 
@@ -581,7 +595,15 @@ def get_player_stats_by_period(game_id: str) -> dict:
         m = _RECEIVER_RE.search(text)
         return _resolve_name(m.group(1)) if m else None
 
+    _DIRECT_SNAP_RE = _re.compile(
+        r"Direct\s+snap\s+to\s+(" + _N + r")", _re.I
+    )
+
     def _rusher(text):
+        # Direct snap plays: "Direct snap to A.Barner.  A.Barner up the middle..."
+        ds = _DIRECT_SNAP_RE.search(text)
+        if ds:
+            return _resolve_name(ds.group(1))
         m = _RUSHER_RE.match(_clean(text))
         return _resolve_name(m.group(1)) if m else None
 
@@ -730,19 +752,27 @@ def get_player_stats_by_period(game_id: str) -> dict:
                         d["td"] += 1
 
             elif ptype in {"fumble recovery (own)", "fumble recovery (opponent)"}:
+                # ESPN sets statYardage=0 for fumble plays where a reversal occurred,
+                # but the official boxscore still credits yards gained before the fumble.
+                # Parse yards from "for N yards" in the play text as a fallback.
+                _fum_yds = stat_yds
+                if _fum_yds == 0:
+                    _yd_m = _re.search(r"\bfor\s+(-?\d+)\s+yards?", text, _re.I)
+                    if _yd_m:
+                        _fum_yds = _safe_int(_yd_m.group(1))
                 if "pass" in text.lower():
                     psr = _passer(text); rcv = _receiver(text)
                     if psr:
                         d = passing[period][psr]; d["Team"] = team
-                        d["att"] += 1; d["comp"] += 1; d["yds"] += stat_yds
+                        d["att"] += 1; d["comp"] += 1; d["yds"] += _fum_yds
                         if rcv:
                             rd = receiving[period][rcv]; rd["Team"] = team
-                            rd["rec"] += 1; rd["yds"] += stat_yds
+                            rd["rec"] += 1; rd["yds"] += _fum_yds
                 else:
                     rsh = _rusher(text)
                     if rsh:
                         d = rushing[period][rsh]; d["Team"] = team
-                        d["car"] += 1; d["yds"] += stat_yds
+                        d["car"] += 1; d["yds"] += _fum_yds
 
     # ── DataFrame builders ────────────────────────────────────────────────────
     def to_sack_df(acc):
