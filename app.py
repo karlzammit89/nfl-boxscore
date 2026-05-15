@@ -605,7 +605,7 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
-    # ── TEMPORARY DEBUG: ESPN Core API plays + roster endpoints ─────────────────
+    # ── TEMPORARY DEBUG: v3 athletes batch endpoint ───────────────────────────
     if game_id == "401772949":
         import json as _json
         import re as _dre
@@ -613,63 +613,64 @@ elif st.session_state.view == "boxscore":
 
         def _fetch_url(url):
             _req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
-            with _ur.urlopen(_req, timeout=10) as _r:
+            with _ur.urlopen(_req, timeout=15) as _r:
                 return _json.loads(_r.read())
 
-        _BASE = "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
-
-        with st.expander("DEBUG 1: Pass play participants (passer/receiver roles)", expanded=True):
+        with st.expander("DEBUG 3: v3 athletes batch endpoint", expanded=True):
+            _v3_url = "https://sports.core.api.espn.com/v3/sports/football/nfl/athletes?limit=50&active=true"
+            st.code("URL (sample, limit=50): " + _v3_url)
             try:
-                _plays_data = _fetch_url(_BASE + "/events/" + game_id + "/competitions/" + game_id + "/plays?limit=300")
-                st.markdown("**Total plays:** " + str(_plays_data.get("count", "?")))
-                _pass_play = None
-                for _pl in _plays_data.get("items", []):
-                    _pt = _pl.get("type", {}).get("text", "")
-                    if "Pass Reception" in _pt or "Passing Touchdown" in _pt:
-                        _pts = _pl.get("participants", [])
-                        if len(_pts) >= 2:
-                            _roles = [p.get("type","") for p in _pts]
-                            if "passer" in _roles and "receiver" in _roles:
-                                _pass_play = _pl
-                                break
-                if _pass_play:
-                    st.markdown("**Found pass play:** " + str(_pass_play.get("type", {}).get("text", "")) +
-                                "  yds=" + str(_pass_play.get("statYardage", "?")))
-                    st.code(_pass_play.get("text", "")[:120])
-                    st.code(_json.dumps(_pass_play.get("participants", []), indent=2)[:3000])
-                else:
-                    st.warning("No pass play with passer+receiver found in 300 plays")
-            except Exception as _e:
-                st.error("Error: " + str(_e))
+                _v3 = _fetch_url(_v3_url)
+                st.markdown("**Top-level keys:** " + str(list(_v3.keys())))
+                st.markdown("**Total active athletes:** " + str(_v3.get("count", "?")))
+                st.markdown("**Items returned (limit=50):** " + str(len(_v3.get("items", []))))
 
-        with st.expander("DEBUG 2: Roster endpoint — athlete IDs and displayNames", expanded=True):
-            for _team_id in ["14", "26"]:
-                st.markdown("**Team " + _team_id + " roster:**")
-                try:
-                    _roster_url = (_BASE + "/events/" + game_id + "/competitions/" + game_id +
-                                   "/competitors/" + _team_id + "/roster")
-                    _roster_data = _fetch_url(_roster_url)
-                    _entries = _roster_data.get("entries", [])
-                    st.markdown("Roster entries: " + str(len(_entries)))
-                    _lines = []
-                    for _ent in _entries[:8]:
-                        _ath = _ent.get("athlete", {})
-                        _aid  = str(_ath.get("id", "?"))
-                        _aref = _ath.get("$ref", "")
-                        if _aid == "?" and _aref:
-                            _m = _dre.search(r"/athletes/(\d+)", _aref)
-                            if _m:
-                                _aid = _m.group(1)
-                        _adn = _ath.get("displayName", "MISSING")
-                        _asn = _ath.get("shortName", "MISSING")
-                        _lines.append("id=" + _aid + "  displayName=" + str(_adn) + "  shortName=" + str(_asn))
-                    st.code("\n".join(_lines))
-                    if _entries:
-                        st.markdown("**Raw first entry athlete field:**")
-                        st.code(_json.dumps(_entries[0].get("athlete", {}), indent=2)[:800])
-                except Exception as _e:
-                    st.error("Team " + _team_id + " error: " + str(_e))
+                _lines = []
+                for _ath in _v3.get("items", [])[:10]:
+                    _aid = str(_ath.get("id", "?"))
+                    _dn  = _ath.get("displayName", "MISSING")
+                    _sn  = _ath.get("shortName", "MISSING")
+                    _pos = ""
+                    _p = _ath.get("position")
+                    if isinstance(_p, dict):
+                        _pos = _p.get("abbreviation", "?")
+                    _lines.append("id=" + _aid + "  displayName=" + str(_dn) + "  shortName=" + str(_sn) + "  pos=" + _pos)
+                st.code("\n".join(_lines))
+
+                if _v3.get("items"):
+                    st.markdown("**Raw first athlete (all fields):**")
+                    st.code(_json.dumps(_v3["items"][0], indent=2)[:1000])
+
+                st.markdown("---")
+                st.markdown("**Now fetching limit=2000 to check game players...**")
+                _v3_full = _fetch_url(
+                    "https://sports.core.api.espn.com/v3/sports/football/nfl/athletes?limit=2000&active=true"
+                )
+                _id_map = {}
+                for _a in _v3_full.get("items", []):
+                    _id_map[str(_a.get("id",""))] = _a.get("displayName","")
+                st.markdown("**Total in id map:** " + str(len(_id_map)))
+
+                _check = {
+                    "12483":   "Matthew Stafford",
+                    "3054220": "Sam Darnold",
+                    "4430737": "Kyren Williams (rusher Play 2)",
+                    "4570037": "Terrance Ferguson (receiver pass play)",
+                    "2473037": "Jason Myers (kicker Play 1)",
+                    "4685831": "AJ Barner",
+                }
+                st.markdown("**Game player lookup:**")
+                _res = []
+                for _id, _exp in _check.items():
+                    _got = _id_map.get(_id, "NOT FOUND")
+                    _ok = "OK" if _got and _got != "NOT FOUND" else "MISSING"
+                    _res.append(_ok + "  id=" + _id + " -> " + str(_got) + "  (expected: " + _exp + ")")
+                st.code("\n".join(_res))
+
+            except Exception as _e:
+                st.error("v3 athletes error: " + str(_e))
     # ── END TEMPORARY DEBUG ───────────────────────────────────────────────────
+
 
 
 
