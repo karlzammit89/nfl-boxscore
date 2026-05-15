@@ -630,12 +630,14 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
     # ── Main drive loop ───────────────────────────────────────────────────────
 
+    _global_last_valid_period = 0  # persists across ALL drives — final fallback for period=0 plays
+
     for drive in all_drives:
         if not drive:
             continue
         team = drive.get("team", {}).get("abbreviation", "")
         _drive_period = _safe_int(drive.get("start", {}).get("period", {}).get("number", 0))
-        _last_valid_period = _drive_period
+        _last_valid_period = _drive_period if _drive_period > 0 else _global_last_valid_period
 
         for play in drive.get("plays", []):
             _p_raw = play.get("period", {})
@@ -644,7 +646,10 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 _raw_period = _safe_int(play.get("start", {}).get("period", {}).get("number", 0))
             if _raw_period > 0:
                 _last_valid_period = _raw_period
-            period = _last_valid_period if _last_valid_period > 0 else _drive_period
+                _global_last_valid_period = _raw_period
+            # Fallback chain: play period → drive period → last valid in drive → global last valid
+            period = _last_valid_period if _last_valid_period > 0 else (
+                     _drive_period      if _drive_period      > 0 else _global_last_valid_period)
 
             text     = play.get("text", "") or play.get("description", "") or ""
             ptype    = play.get("type", {}).get("text", "").lower().strip()
