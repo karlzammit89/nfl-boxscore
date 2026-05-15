@@ -609,34 +609,38 @@ elif st.session_state.view == "boxscore":
     if game_id == "401772949":
         import json as _json
         from nfl.api import get_game_summary as _dbg_sum
-        with st.expander("🔍 DEBUG: Raw ESPN Period Fields", expanded=True):
+        with st.expander("🔍 DEBUG: Drive Period Numbers (all drives)", expanded=True):
             _dbg = _dbg_sum(game_id)
             if _dbg:
                 _dbg_drives = _dbg.get("drives", {})
                 _dbg_all = _dbg_drives.get("previous", []) + (
                     [_dbg_drives.get("current")] if _dbg_drives.get("current") else [])
                 st.markdown(f"**Total drives: {len(_dbg_all)}**")
-                for _di, _drv in enumerate(_dbg_all[:5]):
+                st.markdown("**All drives — start/end period numbers:**")
+                _lines = []
+                for _di, _drv in enumerate(_dbg_all):
+                    if not _drv: continue
+                    _sn = _drv.get("start",{}).get("period",{}).get("number","?")
+                    _en = _drv.get("end",{}).get("period",{}).get("number","?")
+                    _np = len(_drv.get("plays",[]))
+                    # Check first play period number
+                    _pls = _drv.get("plays",[])
+                    _p0 = _pls[0].get("period",{}).get("number","?") if _pls else "?"
+                    _lines.append(f"Drive {_di:2d}: start={_sn} end={_en} play[0].period={_p0} ({_np} plays)")
+                st.code("\n".join(_lines))
+                st.markdown("**Last 5 drives — full play detail:**")
+                for _di, _drv in enumerate(_dbg_all[-5:], len(_dbg_all)-5):
                     if not _drv: continue
                     _d_start = _drv.get("start", {})
                     _d_end   = _drv.get("end", {})
                     st.markdown(f"**Drive {_di}**")
                     st.code(f"start.period = {_json.dumps(_d_start.get('period','MISSING'))}")
                     st.code(f"end.period   = {_json.dumps(_d_end.get('period','MISSING'))}")
-                    for _pi, _pl in enumerate(_drv.get("plays", [])[:3]):
+                    for _pi, _pl in enumerate(_drv.get("plays", [])[:4]):
                         _clock = _pl.get("clock",{}).get("displayValue","")
                         _desc = (_pl.get("text","") or _pl.get("description",""))[:60]
                         st.markdown(f"&nbsp;&nbsp;**Play {_pi}** ({_clock}): `{_desc}`")
-                        st.code(f"  play.period       = {_json.dumps(_pl.get('period','MISSING'))}")
-                        st.code(f"  play.start.period = {_json.dumps(_pl.get('start',{}).get('period','MISSING'))}")
-                        st.code(f"  play.end.period   = {_json.dumps(_pl.get('end',{}).get('period','MISSING'))}")
-                # Show all top-level play keys from first play
-                for _drv in _dbg_all:
-                    _pls = _drv.get("plays",[]) if _drv else []
-                    if _pls:
-                        st.markdown("**First play — all top-level keys:**")
-                        st.code(_json.dumps(list(_pls[0].keys()), indent=2))
-                        break
+                        st.code(f"  play.period = {_json.dumps(_pl.get('period','MISSING'))}")
             else:
                 st.error("Could not fetch game data for debug")
     # ── END TEMPORARY DEBUG ───────────────────────────────────────────────────
