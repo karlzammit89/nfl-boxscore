@@ -603,8 +603,10 @@ def get_player_stats_by_period(game_id: str) -> dict:
         if ptype in _SKIP_TYPES:
             continue
 
-        if play.get("isPenalty") and not play.get("scoringPlay"):
-            continue
+        # isPenalty guard removed: plays with type='Penalty' are already caught
+        # by _SKIP_TYPES above. Real offensive plays (Rush, Pass Reception) that
+        # have isPenalty=True simply had a declined/offset penalty on the play —
+        # the yards still count and the play must be classified normally.
 
         period = _safe_int((play.get("period") or {}).get("number", 0))
         if period == 0:
