@@ -632,22 +632,64 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
     _global_last_valid_period = 0  # persists across ALL drives — final fallback for period=0 plays
 
+    def _resolve_drive_period(drive):
+        """
+        Extract best period estimate for a drive using all available ESPN fields.
+        Tries (in order): start.period → end.period → first valid period in plays.
+        """
+        p = _safe_int(drive.get("start", {}).get("period", {}).get("number", 0))
+        if p > 0:
+            return p
+        p = _safe_int(drive.get("end", {}).get("period", {}).get("number", 0))
+        if p > 0:
+            return p
+        # Pre-scan plays for first valid period
+        for _play in drive.get("plays", []):
+            _pr = _play.get("period", {})
+            p = _safe_int(_pr.get("number", 0) if isinstance(_pr, dict) else _pr)
+            if p > 0:
+                return p
+            p = _safe_int(_play.get("start", {}).get("period", {}).get("number", 0))
+            if p > 0:
+                return p
+            p = _safe_int(_play.get("end", {}).get("period", {}).get("number", 0))
+            if p > 0:
+                return p
+        return 0
+
+    def _resolve_play_period(play):
+        """
+        Extract best period estimate for a play using all available ESPN fields.
+        Tries (in order): play.period → play.start.period → play.end.period.
+        """
+        _p_raw = play.get("period", {})
+        p = _safe_int(_p_raw.get("number", 0) if isinstance(_p_raw, dict) else _p_raw)
+        if p > 0:
+            return p
+        p = _safe_int(play.get("start", {}).get("period", {}).get("number", 0))
+        if p > 0:
+            return p
+        p = _safe_int(play.get("end", {}).get("period", {}).get("number", 0))
+        if p > 0:
+            return p
+        return 0
+
     for drive in all_drives:
         if not drive:
             continue
         team = drive.get("team", {}).get("abbreviation", "")
-        _drive_period = _safe_int(drive.get("start", {}).get("period", {}).get("number", 0))
+
+        # Drive-level period: start → end → first play scan → global fallback
+        _drive_period = _resolve_drive_period(drive)
         _last_valid_period = _drive_period if _drive_period > 0 else _global_last_valid_period
 
         for play in drive.get("plays", []):
-            _p_raw = play.get("period", {})
-            _raw_period = _safe_int(_p_raw.get("number", 0) if isinstance(_p_raw, dict) else _p_raw)
-            if _raw_period == 0:
-                _raw_period = _safe_int(play.get("start", {}).get("period", {}).get("number", 0))
+            # Play-level period: play.period → start.period → end.period
+            _raw_period = _resolve_play_period(play)
             if _raw_period > 0:
                 _last_valid_period = _raw_period
                 _global_last_valid_period = _raw_period
-            # Fallback chain: play period → drive period → last valid in drive → global last valid
+            # Final fallback chain: play → drive → last valid in drive → global
             period = _last_valid_period if _last_valid_period > 0 else (
                      _drive_period      if _drive_period      > 0 else _global_last_valid_period)
 
@@ -907,9 +949,10 @@ def _adjust_att(df, player, diff):
 
 def _build_reconciliation_report(result: dict, game_id: str) -> list:
     """
-    Compare Full Game PBP totals against official boxscore.
-    Returns list of (player, cat, col, pbp_val, official_val, suspected_quarter) tuples
-    for any mismatches.
+    Compare per-period PBP totals (Q1+Q2+Q3+Q4+OT) against official boxscore.
+    Uses summed quarter/OT buckets — NOT Full Game PBP — so period=0 plays
+    that leaked into Full Game but weren't assigned to any quarter are caught.
+    Returns list of (player, cat, col, pbp_val, official_val, suspected_quarter) tuples.
     """
     try:
         official = {
@@ -920,8 +963,32 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
     except Exception:
         return []
 
-    periods = ["Q1","Q2","Q3","Q4"]
+    # Sum across all valid period buckets — excludes period=0 "—" bucket
+    valid_periods = ["Q1","Q2","Q3","Q4","OT"]
+    # Also include any OT1/OT2 keys that get_pbp_by_quarter might add
+    extra_ot = [k for k in result if k.startswith("OT") and k not in valid_periods]
+    check_periods = ["Q1","Q2","Q3","Q4"] + extra_ot + (["OT"] if "OT" in result else [])
     mismatches = []
+
+    def _sum_col_across_periods(cat, player, col):
+        """Sum a stat column for a player across all valid period buckets."""
+        total = 0
+        for p in check_periods:
+            df = result.get(p, {}).get(cat)
+            if df is None or df.empty:
+                continue
+            total += _get_col(df, player, col)
+        return total
+
+    def _sum_att_across_periods(cat, player):
+        """Sum passing attempts for a player across all valid period buckets."""
+        total = 0
+        for p in check_periods:
+            df = result.get(p, {}).get(cat)
+            if df is None or df.empty:
+                continue
+            total += _get_att(df, player)
+        return total
 
     for cat, cols in [
         ("passing",   ["YDS","TD","INT"]),
@@ -929,8 +996,7 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
         ("receiving", ["YDS","TD","REC"]),
     ]:
         off_df = official.get(cat)
-        fg_df  = result.get("Full Game", {}).get(cat)
-        if off_df is None or off_df.empty or fg_df is None or fg_df.empty:
+        if off_df is None or off_df.empty:
             continue
 
         for _, off_row in off_df.iterrows():
@@ -938,14 +1004,14 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
             if not player:
                 continue
 
-            # ATT check for passing
+            # ATT check for passing — sum across quarters
             if cat == "passing" and "C/ATT" in off_df.columns:
                 ca = str(off_row.get("C/ATT","0/0"))
                 try:
                     off_att = int(ca.split("/")[1])
-                    pbp_att = _get_att(fg_df, player)
+                    pbp_att = _sum_att_across_periods(cat, player)
                     if off_att != pbp_att:
-                        last_p = _last_period(result, cat, player, periods)
+                        last_p = _last_period(result, cat, player, ["Q1","Q2","Q3","Q4"])
                         mismatches.append((player, cat, "ATT", pbp_att, off_att, last_p or "unknown"))
                 except Exception:
                     pass
@@ -955,9 +1021,9 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
                     continue
                 try:
                     off_val = int(pd.to_numeric(off_row.get(col, 0), errors="coerce") or 0)
-                    pbp_val = _get_col(fg_df, player, col)
+                    pbp_val = _sum_col_across_periods(cat, player, col)
                     if off_val != pbp_val:
-                        last_p = _last_period(result, cat, player, periods)
+                        last_p = _last_period(result, cat, player, ["Q1","Q2","Q3","Q4"])
                         mismatches.append((player, cat, col, pbp_val, off_val, last_p or "unknown"))
                 except Exception:
                     pass
