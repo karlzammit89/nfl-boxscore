@@ -769,6 +769,7 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
     h1 = [p for p in all_periods if p in (1, 2)]
     h2 = [p for p in all_periods if p in (3, 4)]
+    ot = [p for p in all_periods if p > 4]   # OT periods: 5, 6, ...
     if h1:
         result["1H"] = {"passing":   to_pass_df(merge(passing,  h1, new_pass)),
                         "rushing":   to_rush_df(merge(rushing,  h1, new_rush)),
@@ -779,6 +780,11 @@ def get_player_stats_by_period(game_id: str) -> dict:
                         "rushing":   to_rush_df(merge(rushing,  h2, new_rush)),
                         "receiving": to_recv_df(merge(receiving,h2, new_recv)),
                         "defense":   to_sack_df(merge(sacking,  h2, new_sack))}
+    if ot:
+        result["OT"] = {"passing":   to_pass_df(merge(passing,  ot, new_pass)),
+                        "rushing":   to_rush_df(merge(rushing,  ot, new_rush)),
+                        "receiving": to_recv_df(merge(receiving,ot, new_recv)),
+                        "defense":   to_sack_df(merge(sacking,  ot, new_sack))}
 
     result["Full Game"] = {
         "passing":   to_pass_df(merge(passing,   all_periods, new_pass)),
