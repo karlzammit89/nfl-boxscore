@@ -605,11 +605,10 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
-    # ── TEMPORARY DEBUG: athlete ID resolution approach ─────────────────────
+    # ── TEMPORARY DEBUG: sack play participant roles ─────────────────────────
     if game_id == "401772949":
         import json as _json
         import re as _dre
-        import time as _time
         import urllib.request as _ur
         from nfl.api import get_game_summary as _dbg_sum
 
@@ -620,56 +619,46 @@ elif st.session_state.view == "boxscore":
 
         _BASE = "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
 
-        with st.expander("DEBUG 5: Extract athlete IDs from plays, resolve to names", expanded=True):
+        with st.expander("DEBUG 6: Sack play — all participant roles", expanded=True):
             try:
-                # Step 1: get all plays from core API
-                _t0 = _time.time()
-                _plays_raw = _fetch_url(_BASE + "/events/" + game_id + "/competitions/" + game_id + "/plays?limit=300")
-                _t1 = _time.time()
-                st.markdown("**Plays fetched:** " + str(len(_plays_raw.get("items",[]))) +
-                            "  (took " + str(round(_t1-_t0,2)) + "s)")
+                _plays_raw = _fetch_url(
+                    _BASE + "/events/" + game_id + "/competitions/" + game_id + "/plays?limit=300"
+                )
+                # Find all sack plays
+                _sack_plays = []
+                _id_re = _dre.compile(r"/athletes/([0-9]+)")
+                for _pl in _plays_raw.get("items", []):
+                    if _pl.get("type", {}).get("text", "") == "Sack":
+                        _sack_plays.append(_pl)
 
-                # Step 2: extract unique passer/receiver/rusher athlete IDs
-                _ROLES = {"passer", "receiver", "rusher"}
-                _id_to_roles = {}  # athlete_id -> set of roles
-                _id_from_ref = _dre.compile(r"/athletes/([0-9]+)")
+                st.markdown("**Sack plays found:** " + str(len(_sack_plays)))
+
+                # Show first 2 sack plays in full detail
+                for _si, _sp in enumerate(_sack_plays[:2]):
+                    st.markdown("---")
+                    st.markdown("**Sack play " + str(_si+1) + ":** " + str(_sp.get("text",""))[:100])
+                    st.markdown("period=" + str(_sp.get("period",{}).get("number","?")) +
+                                "  yds=" + str(_sp.get("statYardage","?")))
+                    _pts = _sp.get("participants", [])
+                    st.markdown("**Participants (" + str(len(_pts)) + "):**")
+                    _lines = []
+                    for _pt in _pts:
+                        _role = _pt.get("type", "?")
+                        _ref  = _pt.get("athlete", {}).get("$ref", "")
+                        _m = _id_re.search(_ref)
+                        _aid = _m.group(1) if _m else "?"
+                        _lines.append("role=" + _role + "  athlete_id=" + _aid)
+                    st.code("\n".join(_lines))
+
+                # Collect ALL unique participant role names across entire game
+                st.markdown("---")
+                st.markdown("**ALL unique participant role names in this game:**")
+                _all_roles = set()
                 for _pl in _plays_raw.get("items", []):
                     for _pt in _pl.get("participants", []):
-                        _role = _pt.get("type", "")
-                        if _role in _ROLES:
-                            _ref = _pt.get("athlete", {}).get("$ref", "")
-                            _m = _id_from_ref.search(_ref)
-                            if _m:
-                                _aid = _m.group(1)
-                                _id_to_roles.setdefault(_aid, set()).add(_role)
-
-                st.markdown("**Unique offensive player IDs found:** " + str(len(_id_to_roles)))
-                _id_list = sorted(_id_to_roles.keys())
-                st.code("IDs: " + str(_id_list))
-
-                # Step 3: resolve first 8 IDs to displayName (with timing)
-                st.markdown("**Resolving first 8 IDs to displayName...**")
-                _resolve_results = []
-                _t_start = _time.time()
-                for _aid in _id_list[:8]:
-                    try:
-                        _t2 = _time.time()
-                        _ath = _fetch_url(_BASE + "/seasons/2025/athletes/" + _aid)
-                        _t3 = _time.time()
-                        _dn = _ath.get("displayName", "MISSING")
-                        _roles_str = str(_id_to_roles.get(_aid, set()))
-                        _resolve_results.append(
-                            "id=" + _aid + " -> " + str(_dn) +
-                            "  roles=" + _roles_str +
-                            "  (" + str(round(_t3-_t2,2)) + "s)"
-                        )
-                    except Exception as _ex:
-                        _resolve_results.append("id=" + _aid + " -> ERROR: " + str(_ex))
-                _t_end = _time.time()
-                st.code("\n".join(_resolve_results))
-                st.markdown("**Total time for 8 lookups:** " + str(round(_t_end-_t_start,2)) + "s")
-                st.caption("Extrapolated for 25 players: ~" + str(round((_t_end-_t_start)/8*25,1)) + "s on cold cache")
-                st.caption("With Streamlit cache(ttl=30days): 0s for repeat visits")
+                        _all_roles.add(_pt.get("type", "unknown"))
+                st.code(str(sorted(_all_roles)))
+                st.caption("This is the complete role vocabulary — tells us exactly which roles exist")
 
             except Exception as _e:
                 st.error("Error: " + str(_e))
