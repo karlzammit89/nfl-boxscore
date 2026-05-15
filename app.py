@@ -605,6 +605,60 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
+    # ── TEMPORARY DEBUG: ESPN Core API plays endpoint ─────────────────────────
+    if game_id == "401772949":
+        import json as _json
+        import urllib.request as _ur
+        with st.expander("DEBUG: ESPN Core API plays endpoint", expanded=True):
+            _core_url = (
+                "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
+                "/events/" + game_id + "/competitions/" + game_id + "/plays?limit=5"
+            )
+            st.code("URL: " + _core_url)
+            try:
+                _req = _ur.Request(_core_url, headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json",
+                })
+                with _ur.urlopen(_req, timeout=10) as _r:
+                    _raw = _json.loads(_r.read())
+
+                st.markdown("**Top-level keys:** `" + str(list(_raw.keys())) + "`")
+                st.markdown("**Total plays in game:** `" + str(_raw.get("count", "?")) + "`")
+
+                _items = _raw.get("items", [])
+                st.markdown("**Plays returned:** `" + str(len(_items)) + "`")
+
+                for _i, _play in enumerate(_items[:3]):
+                    st.markdown("---")
+                    st.markdown("**Play " + str(_i) + "**")
+                    _period = _play.get("period", {})
+                    _type   = _play.get("type", {})
+                    _text   = _play.get("text", "") or _play.get("description", "")
+                    _yds    = _play.get("statYardage", "?")
+                    _pts    = _play.get("participants", [])
+
+                    st.code(
+                        "period = " + str(_period) + "\n" +
+                        "type   = " + str(_type) + "\n" +
+                        "yds    = " + str(_yds) + "\n" +
+                        "text   = " + str(_text[:100])
+                    )
+                    st.markdown("**participants** (" + str(len(_pts)) + " entries):")
+                    if _pts:
+                        st.code(_json.dumps(_pts, indent=2)[:3000])
+                    else:
+                        st.warning("No participants — full play keys:")
+                        st.code(_json.dumps(list(_play.keys()), indent=2))
+                        st.code(_json.dumps(_play, indent=2)[:2000])
+
+            except Exception as _e:
+                st.error("Request failed: " + str(_e))
+                st.info("The endpoint may be blocked or structure may differ.")
+    # ── END TEMPORARY DEBUG ───────────────────────────────────────────────────
+
+
+
 
 
 
