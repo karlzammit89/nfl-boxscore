@@ -2884,8 +2884,8 @@ elif st.session_state.view == "boxscore":
 
 *Other*
 - `[Team] to Beat the [Team] in Overtime`
-- `Successful 2pt Conversion` / `Successful 2 point Conversion` / `Successful two point Conversion` / `Successful two pt Conversion` / `Succesful 2pt Conversion`
-- `[Team] to Record a Successful 2pt Conversion` / `[Team] to Have a Successful 2pt Conversion`
+- `[Team] to record/have Successful 2pt Conversion`
+- `Successful 2pt Conversion` / `Successful 2 point Conversion` / `Successful two point Conversion` / `Successful two pt Conversion` / `Succesful 2pt Conversion` *(typo-tolerant)*
 
 ---
 
