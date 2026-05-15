@@ -605,6 +605,80 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
+    # ── TEMPORARY DEBUG: investigate missing plays ────────────────────────────
+    if game_id == "401772949":
+        import json as _json, re as _dre
+        from nfl.api import get_game_summary as _dbg_sum
+        with st.expander("🔍 DEBUG: Missing Plays Investigation", expanded=True):
+            _dbg = _dbg_sum(game_id)
+            if _dbg:
+                # 1. Show abbr→fullname map for key players
+                _abbr_map = {}
+                for _tb in _dbg.get("boxscore",{}).get("players",[]):
+                    for _cat in _tb.get("statistics",[]):
+                        for _ae in _cat.get("athletes",[]):
+                            _ath = _ae.get("athlete",{})
+                            _full = _ath.get("displayName","")
+                            _short = _ath.get("shortName","")
+                            if _full and _short:
+                                _abbr = _dre.sub(r"\. +", ".", _short.strip())
+                                _abbr_map[_abbr] = _full
+
+                _targets = ["A.Barner","C.Kupp","S.Darnold","M.Stafford"]
+                st.markdown("**abbr→fullname map for key players:**")
+                st.code("\n".join(f"{a:20s} → {_abbr_map.get(a,'NOT IN MAP ❌')}" for a in _targets))
+
+                # 2. Find ALL Barner, Kupp, and Darnold plays
+                _dbg_drives = _dbg.get("drives",{})
+                _dbg_all = _dbg_drives.get("previous",[]) + (
+                    [_dbg_drives.get("current")] if _dbg_drives.get("current") else [])
+
+                st.markdown("---")
+                st.markdown("**All Barner plays (rush/recv):**")
+                _barner_lines = []
+                for _di, _drv in enumerate(_dbg_all):
+                    if not _drv: continue
+                    for _pi, _pl in enumerate(_drv.get("plays",[])):
+                        _txt = _pl.get("text","") or ""
+                        _pt  = _pl.get("type",{}).get("text","")
+                        _yds = _pl.get("statYardage",0)
+                        _per = _pl.get("period",{}).get("number","?")
+                        if "barner" in _txt.lower():
+                            _barner_lines.append(f"D{_di}P{_pi} Q{_per} [{_pt}] yds={_yds}: {_txt[:100]}")
+                st.code("\n".join(_barner_lines) or "None found")
+
+                st.markdown("---")
+                st.markdown("**All Kupp plays (recv only):**")
+                _kupp_lines = []
+                for _di, _drv in enumerate(_dbg_all):
+                    if not _drv: continue
+                    for _pi, _pl in enumerate(_drv.get("plays",[])):
+                        _txt = _pl.get("text","") or ""
+                        _pt  = _pl.get("type",{}).get("text","")
+                        _yds = _pl.get("statYardage",0)
+                        _per = _pl.get("period",{}).get("number","?")
+                        if "kupp" in _txt.lower() and "pass" in _pt.lower():
+                            _kupp_lines.append(f"D{_di}P{_pi} Q{_per} [{_pt}] yds={_yds}: {_txt[:100]}")
+                st.code("\n".join(_kupp_lines) or "None found")
+
+                st.markdown("---")
+                st.markdown("**Darnold plays — check for missing ATT (look for unclassified):**")
+                _darn_lines = []
+                for _di, _drv in enumerate(_dbg_all):
+                    if not _drv: continue
+                    for _pi, _pl in enumerate(_drv.get("plays",[])):
+                        _txt = _pl.get("text","") or ""
+                        _pt  = _pl.get("type",{}).get("text","")
+                        _yds = _pl.get("statYardage",0)
+                        _per = _pl.get("period",{}).get("number","?")
+                        _is_pen = _pl.get("isPenalty",False)
+                        if "darnold" in _txt.lower() and any(t in _pt.lower() for t in ["pass","sack","inter"]):
+                            _darn_lines.append(f"D{_di}P{_pi} Q{_per} pen={_is_pen} [{_pt}] yds={_yds}: {_txt[:90]}")
+                st.code("\n".join(_darn_lines) or "None found")
+            else:
+                st.error("Could not fetch")
+    # ── END TEMPORARY DEBUG ───────────────────────────────────────────────────
+
 
 
     # Build linescore from scoring_df (cumulative score diffs per team per quarter)
