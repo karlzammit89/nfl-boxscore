@@ -605,70 +605,65 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
-    # ── TEMPORARY DEBUG: v3 athletes batch endpoint ───────────────────────────
+    # ── TEMPORARY DEBUG: summary.rosters + individual athlete lookup ─────────
     if game_id == "401772949":
         import json as _json
         import re as _dre
         import urllib.request as _ur
+        from nfl.api import get_game_summary as _dbg_sum
 
         def _fetch_url(url):
             _req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
-            with _ur.urlopen(_req, timeout=15) as _r:
+            with _ur.urlopen(_req, timeout=10) as _r:
                 return _json.loads(_r.read())
 
-        with st.expander("DEBUG 3: v3 athletes batch endpoint", expanded=True):
-            _v3_url = "https://sports.core.api.espn.com/v3/sports/football/nfl/athletes?limit=50&active=true"
-            st.code("URL (sample, limit=50): " + _v3_url)
+        _BASE_V2 = "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
+
+        # ── Check 1: summary.rosters ─────────────────────────────────────────
+        with st.expander("DEBUG 4a: summary.rosters — does it have athlete IDs + names?", expanded=True):
             try:
-                _v3 = _fetch_url(_v3_url)
-                st.markdown("**Top-level keys:** " + str(list(_v3.keys())))
-                st.markdown("**Total active athletes:** " + str(_v3.get("count", "?")))
-                st.markdown("**Items returned (limit=50):** " + str(len(_v3.get("items", []))))
-
-                _lines = []
-                for _ath in _v3.get("items", [])[:10]:
-                    _aid = str(_ath.get("id", "?"))
-                    _dn  = _ath.get("displayName", "MISSING")
-                    _sn  = _ath.get("shortName", "MISSING")
-                    _pos = ""
-                    _p = _ath.get("position")
-                    if isinstance(_p, dict):
-                        _pos = _p.get("abbreviation", "?")
-                    _lines.append("id=" + _aid + "  displayName=" + str(_dn) + "  shortName=" + str(_sn) + "  pos=" + _pos)
-                st.code("\n".join(_lines))
-
-                if _v3.get("items"):
-                    st.markdown("**Raw first athlete (all fields):**")
-                    st.code(_json.dumps(_v3["items"][0], indent=2)[:1000])
-
-                st.markdown("---")
-                st.markdown("**Now fetching limit=2000 to check game players...**")
-                _v3_full = _fetch_url(
-                    "https://sports.core.api.espn.com/v3/sports/football/nfl/athletes?limit=2000&active=true"
-                )
-                _id_map = {}
-                for _a in _v3_full.get("items", []):
-                    _id_map[str(_a.get("id",""))] = _a.get("displayName","")
-                st.markdown("**Total in id map:** " + str(len(_id_map)))
-
-                _check = {
-                    "12483":   "Matthew Stafford",
-                    "3054220": "Sam Darnold",
-                    "4430737": "Kyren Williams (rusher Play 2)",
-                    "4570037": "Terrance Ferguson (receiver pass play)",
-                    "2473037": "Jason Myers (kicker Play 1)",
-                    "4685831": "AJ Barner",
-                }
-                st.markdown("**Game player lookup:**")
-                _res = []
-                for _id, _exp in _check.items():
-                    _got = _id_map.get(_id, "NOT FOUND")
-                    _ok = "OK" if _got and _got != "NOT FOUND" else "MISSING"
-                    _res.append(_ok + "  id=" + _id + " -> " + str(_got) + "  (expected: " + _exp + ")")
-                st.code("\n".join(_res))
-
+                _summ = _dbg_sum(game_id)
+                _rosters = _summ.get("rosters", [])
+                st.markdown("**summary keys:** " + str([k for k in _summ.keys() if k not in ("drives","plays")]))
+                st.markdown("**rosters entries:** " + str(len(_rosters)))
+                if _rosters:
+                    _first = _rosters[0]
+                    st.markdown("**First roster keys:** " + str(list(_first.keys())))
+                    _entries = _first.get("entries", [])
+                    st.markdown("**Entries in first roster:** " + str(len(_entries)))
+                    if _entries:
+                        st.markdown("**First entry:**")
+                        st.code(_json.dumps(_entries[0], indent=2)[:1000])
+                        # Show first 8 entries
+                        _lines = []
+                        for _ent in _entries[:8]:
+                            _ath = _ent.get("athlete", {})
+                            _aid = str(_ath.get("id", "NO_ID"))
+                            _dn  = _ath.get("displayName", "NO_NAME")
+                            _sn  = _ath.get("shortName", "?")
+                            _lines.append("id=" + _aid + "  displayName=" + str(_dn) + "  shortName=" + str(_sn))
+                        st.code("\n".join(_lines))
+                else:
+                    st.warning("summary.rosters is empty or missing")
+                    st.markdown("Available summary keys: " + str(list(_summ.keys())))
             except Exception as _e:
-                st.error("v3 athletes error: " + str(_e))
+                st.error("Error: " + str(_e))
+
+        # ── Check 2: individual athlete endpoint ─────────────────────────────
+        with st.expander("DEBUG 4b: individual athlete endpoint — cost per player", expanded=True):
+            st.markdown("Testing: `GET .../athletes/{id}` for 3 known players from this game")
+            _test_ids = {"12483": "Matthew Stafford", "3054220": "Sam Darnold", "4430737": "Kyren Williams"}
+            for _id, _expected in _test_ids.items():
+                try:
+                    _url = _BASE_V2 + "/seasons/2025/athletes/" + _id
+                    _ath = _fetch_url(_url)
+                    _dn = _ath.get("displayName", "MISSING")
+                    _sn = _ath.get("shortName", "MISSING")
+                    _ok = "OK" if _dn != "MISSING" else "MISSING"
+                    st.code(_ok + "  id=" + _id + " -> displayName=" + str(_dn) + "  shortName=" + str(_sn) + "  (expected: " + _expected + ")")
+                except Exception as _e:
+                    st.error("id=" + _id + " error: " + str(_e))
+            st.caption("If this works: cache per athlete_id for 30 days. ~20-30 calls on first game visit.")
     # ── END TEMPORARY DEBUG ───────────────────────────────────────────────────
 
 
