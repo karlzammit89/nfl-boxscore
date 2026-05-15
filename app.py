@@ -216,6 +216,25 @@ st.divider()
 
 # ── Data loaders ──────────────────────────────────────────────────────────────
 
+@st.cache_data(ttl=60*60*24*30, show_spinner=False)  # 30-day cache per athlete
+def _cached_athlete_name(athlete_id: str, season: str) -> str:
+    """Resolve ESPN athlete ID to displayName, cached 30 days."""
+    from nfl.api import get_athlete_displayname
+    return get_athlete_displayname(athlete_id, season)
+
+
+def _patch_athlete_resolver():
+    """
+    Monkey-patch nfl.api.get_athlete_displayname to use Streamlit's 30-day cache.
+    Called once at startup so all stats computations benefit from caching.
+    """
+    import nfl.api as _nfl_api
+    _nfl_api.get_athlete_displayname = _cached_athlete_name
+
+
+_patch_athlete_resolver()
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _fetch_week(week: int, season_type: int) -> list:
     try:
@@ -605,78 +624,7 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
-    # ── TEMPORARY DEBUG: edge case verification ──────────────────────────────
-    if game_id == "401772949":
-        import json as _json
-        import re as _dre
-        import urllib.request as _ur
 
-        def _fetch_url(url):
-            _req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
-            with _ur.urlopen(_req, timeout=10) as _r:
-                return _json.loads(_r.read())
-
-        _BASE  = "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
-        _id_re = _dre.compile(r"/athletes/([0-9]+)")
-
-        def _show_play(pl):
-            pts = pl.get("participants", [])
-            lines = [
-                "type        = " + str(pl.get("type", {}).get("text", "?")),
-                "period      = " + str(pl.get("period", {}).get("number", "?")),
-                "statYardage = " + str(pl.get("statYardage", "?")),
-                "scoringPlay = " + str(pl.get("scoringPlay", "?")),
-                "isTurnover  = " + str(pl.get("isTurnover", "?")),
-                "isPenalty   = " + str(pl.get("isPenalty", "?")),
-                "text        = " + str(pl.get("text", ""))[:100],
-                "participants (" + str(len(pts)) + "):",
-            ]
-            for p in pts:
-                m = _id_re.search(p.get("athlete", {}).get("$ref", ""))
-                aid = m.group(1) if m else "?"
-                lines.append("  role=" + p.get("type","?") + "  athlete_id=" + aid)
-            return "\n".join(lines)
-
-        _plays_raw = _fetch_url(
-            _BASE + "/events/" + game_id + "/competitions/" + game_id + "/plays?limit=300"
-        )
-        _all_plays = _plays_raw.get("items", [])
-
-        # ── Edge case 1: Reversed / overturned play ───────────────────────────
-        with st.expander("DEBUG 7a: Reversed / overturned plays", expanded=True):
-            _reversed = [p for p in _all_plays if "REVERSED" in (p.get("text","") or "").upper()]
-            st.markdown("**Plays containing REVERSED:** " + str(len(_reversed)))
-            for pl in _reversed[:3]:
-                st.code(_show_play(pl))
-
-        # ── Edge case 2: Fumble recovery plays ────────────────────────────────
-        with st.expander("DEBUG 7b: Fumble recovery plays", expanded=True):
-            _fumbles = [p for p in _all_plays
-                        if "fumble" in (p.get("type",{}).get("text","") or "").lower()]
-            st.markdown("**Fumble recovery plays:** " + str(len(_fumbles)))
-            for pl in _fumbles[:3]:
-                st.code(_show_play(pl))
-
-        # ── Edge case 3: 2pt conversion plays ────────────────────────────────
-        with st.expander("DEBUG 7c: Two-point conversion plays", expanded=True):
-            _twopts = [p for p in _all_plays
-                       if "two" in (p.get("type",{}).get("text","") or "").lower()
-                       or "2pt" in (p.get("type",{}).get("text","") or "").lower()
-                       or "point" in (p.get("type",{}).get("text","") or "").lower()]
-            st.markdown("**Two-point plays:** " + str(len(_twopts)))
-            for pl in _twopts[:4]:
-                st.code(_show_play(pl))
-
-        # ── Edge case 4: Athlete ID 404 fallback ─────────────────────────────
-        with st.expander("DEBUG 7d: Athlete 404 fallback — what happens with bad ID?", expanded=True):
-            st.markdown("Testing a non-existent athlete ID (999999999):")
-            try:
-                _bad = _fetch_url(_BASE + "/seasons/2025/athletes/999999999")
-                st.code(_json.dumps(_bad, indent=2)[:400])
-            except Exception as _e:
-                st.code("Exception type: " + type(_e).__name__ + "\nMessage: " + str(_e))
-                st.success("Good — raises exception cleanly, easy to catch and fall back")
-    # ── END TEMPORARY DEBUG ───────────────────────────────────────────────────
 
 
 
