@@ -624,6 +624,89 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
+    # ── TEMPORARY DEBUG: investigate missing plays ─────────────────────────────
+    with st.expander("🔍 DEBUG: Missing plays investigation", expanded=True):
+        import json as _json, re as _dre, urllib.request as _ur
+        st.markdown("**Game ID:** `" + game_id + "`")
+
+        def _fetch_core(url):
+            _req = _ur.Request(url, headers={"User-Agent":"Mozilla/5.0","Accept":"application/json"})
+            with _ur.urlopen(_req, timeout=15) as _r:
+                return _json.loads(_r.read())
+
+        _BASE = "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
+        _ID_RE = _dre.compile(r"/athletes/([0-9]+)")
+
+        try:
+            _plays_raw = _fetch_core(
+                _BASE + "/events/" + game_id + "/competitions/" + game_id + "/plays?limit=400"
+            )
+            _all_plays = _plays_raw.get("items", [])
+            st.markdown("**Total plays fetched:** " + str(len(_all_plays)) +
+                        " / " + str(_plays_raw.get("count","?")) + " total in game")
+
+            # Show ALL unique play type.text values
+            _all_types = sorted(set(
+                (p.get("type",{}).get("text","") or "").lower()
+                for p in _all_plays
+            ))
+            st.markdown("**All play type.text values in this game:**")
+            st.code(str(_all_types))
+
+            # Show plays with Darnold rushing (athlete ID 3912547)
+            st.markdown("---")
+            st.markdown("**Darnold rushing plays (role=rusher, athlete_id=3912547):**")
+            _darn_rush = []
+            for _pl in _all_plays:
+                for _pt in _pl.get("participants", []):
+                    if _pt.get("type") == "rusher":
+                        _ref = _pt.get("athlete",{}).get("$ref","")
+                        _m = _ID_RE.search(_ref)
+                        if _m and _m.group(1) == "3912547":
+                            _darn_rush.append(
+                                "Q" + str(_pl.get("period",{}).get("number","?")) +
+                                " [" + str(_pl.get("type",{}).get("text","")) + "]" +
+                                " yds=" + str(_pl.get("statYardage","?")) +
+                                " | " + str(_pl.get("text",""))[:80]
+                            )
+            st.code("\n".join(_darn_rush) if _darn_rush else "None found")
+
+            # Show plays where Ferguson (4570037) is receiver
+            st.markdown("---")
+            st.markdown("**Ferguson receiving plays (role=receiver, athlete_id=4570037):**")
+            _ferg_recv = []
+            for _pl in _all_plays:
+                for _pt in _pl.get("participants", []):
+                    if _pt.get("type") == "receiver":
+                        _ref = _pt.get("athlete",{}).get("$ref","")
+                        _m = _ID_RE.search(_ref)
+                        if _m and _m.group(1) == "4570037":
+                            _ferg_recv.append(
+                                "Q" + str(_pl.get("period",{}).get("number","?")) +
+                                " [" + str(_pl.get("type",{}).get("text","")) + "]" +
+                                " yds=" + str(_pl.get("statYardage","?")) +
+                                " | " + str(_pl.get("text",""))[:80]
+                            )
+            st.code("\n".join(_ferg_recv) if _ferg_recv else "None found")
+
+            # Show any plays where period.number = 0 or missing
+            st.markdown("---")
+            st.markdown("**Plays with period=0 or missing (would be skipped):**")
+            _bad_period = []
+            for _pl in _all_plays:
+                _per = (_pl.get("period") or {}).get("number", 0)
+                if not _per:
+                    _ptype = _pl.get("type",{}).get("text","")
+                    _txt   = str(_pl.get("text",""))[:60]
+                    _bad_period.append("[" + str(_ptype) + "] " + _txt)
+            st.markdown("**Count:** " + str(len(_bad_period)))
+            if _bad_period:
+                st.code("\n".join(_bad_period[:10]))
+
+        except Exception as _e:
+            st.error("Debug error: " + str(_e))
+    # ── END TEMPORARY DEBUG ───────────────────────────────────────────────────
+
 
 
 
