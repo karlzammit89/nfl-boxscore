@@ -1046,17 +1046,20 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
         return []
 
     # Sum across all valid period buckets — excludes period=0 "—" bucket
+    # result may be the full data dict (with "by_period" key) or by_period directly
+    by_period = result.get("by_period", result)
+
     valid_periods = ["Q1","Q2","Q3","Q4","OT"]
     # Also include any OT1/OT2 keys that get_pbp_by_quarter might add
-    extra_ot = [k for k in result if k.startswith("OT") and k not in valid_periods]
-    check_periods = ["Q1","Q2","Q3","Q4"] + extra_ot + (["OT"] if "OT" in result else [])
+    extra_ot = [k for k in by_period if k.startswith("OT") and k not in valid_periods]
+    check_periods = ["Q1","Q2","Q3","Q4"] + extra_ot + (["OT"] if "OT" in by_period else [])
     mismatches = []
 
     def _sum_col_across_periods(cat, player, col):
         """Sum a stat column for a player across all valid period buckets."""
         total = 0
         for p in check_periods:
-            df = result.get(p, {}).get(cat)
+            df = by_period.get(p, {}).get(cat)
             if df is None or df.empty:
                 continue
             total += _get_col(df, player, col)
@@ -1066,7 +1069,7 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
         """Sum passing attempts for a player across all valid period buckets."""
         total = 0
         for p in check_periods:
-            df = result.get(p, {}).get(cat)
+            df = by_period.get(p, {}).get(cat)
             if df is None or df.empty:
                 continue
             total += _get_att(df, player)
@@ -1093,7 +1096,7 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
                     off_att = int(ca.split("/")[1])
                     pbp_att = _sum_att_across_periods(cat, player)
                     if off_att != pbp_att:
-                        last_p = _last_period(result, cat, player, ["Q1","Q2","Q3","Q4"])
+                        last_p = _last_period(by_period, cat, player, ["Q1","Q2","Q3","Q4"])
                         mismatches.append((player, cat, "ATT", pbp_att, off_att, last_p or "unknown"))
                 except Exception:
                     pass
@@ -1105,7 +1108,7 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
                     off_val = int(pd.to_numeric(off_row.get(col, 0), errors="coerce") or 0)
                     pbp_val = _sum_col_across_periods(cat, player, col)
                     if off_val != pbp_val:
-                        last_p = _last_period(result, cat, player, ["Q1","Q2","Q3","Q4"])
+                        last_p = _last_period(by_period, cat, player, ["Q1","Q2","Q3","Q4"])
                         mismatches.append((player, cat, col, pbp_val, off_val, last_p or "unknown"))
                 except Exception:
                     pass
