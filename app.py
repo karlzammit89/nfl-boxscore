@@ -605,69 +605,106 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
-    # ── TEMPORARY DEBUG: teamParticipants structured stats ────────────────────
+    # ── TEMPORARY DEBUG: all play types + edge cases ────────────────────────
     if game_id == "401772949":
         import json as _json
         from nfl.api import get_game_summary as _dbg_sum
-        with st.expander("🔍 DEBUG: teamParticipants per play", expanded=True):
+        with st.expander("🔍 DEBUG: All Play Types", expanded=True):
             _dbg = _dbg_sum(game_id)
             if _dbg:
                 _dbg_drives = _dbg.get("drives", {})
                 _dbg_all = _dbg_drives.get("previous", []) + (
                     [_dbg_drives.get("current")] if _dbg_drives.get("current") else [])
 
-                # Specific plays to inspect:
-                # 1. Normal pass (Drive 1, early play)
-                # 2. Barner TD+2pt play (Drive 21/22 area, Q4)
-                # 3. A reversed play (look for REVERSED in text)
-                # 4. A rushing play
-                # 5. OT JSN TD play
-
-                _targets = {
-                    "normal_pass": None,
-                    "barner_td": None,
-                    "reversed": None,
-                    "rush": None,
-                    "jsn_ot_td": None,
+                # Collect one example of every unique type.text
+                _seen_types = {}
+                # Also capture specific edge cases by keyword
+                _edge_cases = {
+                    "penalty_play":     None,  # isPenalty=True
+                    "interception":     None,  # type=Interception
+                    "sack":             None,  # type=Sack
+                    "scramble":         None,  # type=Scramble
+                    "fumble_own":       None,  # Fumble Recovery (Own)
+                    "fumble_opp":       None,  # Fumble Recovery (Opponent)
+                    "rushing_td":       None,  # type=Rushing Touchdown
+                    "two_pt_attempt":   None,  # type=Two Point...
+                    "no_play":          None,  # No Play in text
+                    "extra_point":      None,  # type=Extra Point Good
+                    "field_goal":       None,  # type=Field Goal Good
                 }
 
                 for _di, _drv in enumerate(_dbg_all):
                     if not _drv: continue
                     for _pi, _pl in enumerate(_drv.get("plays", [])):
                         _txt = (_pl.get("text","") or "").lower()
-                        _ptype = _pl.get("type",{}).get("text","").lower()
+                        _ptype = (_pl.get("type",{}).get("text","") or "").strip()
+                        _ptype_l = _ptype.lower()
+                        _is_pen = _pl.get("isPenalty", False)
+                        _is_turn = _pl.get("isTurnover", False)
+                        _scoring = _pl.get("scoringPlay", False)
+                        _yds = _pl.get("statYardage", 0)
 
-                        if _targets["barner_td"] is None and "barner" in _txt and "touchdown" in _txt:
-                            _targets["barner_td"] = (_di, _pi, _pl)
-                        if _targets["jsn_ot_td"] is None and "smith-njigba" in _txt and "touchdown" in _txt:
-                            _targets["jsn_ot_td"] = (_di, _pi, _pl)
-                        if _targets["reversed"] is None and "reversed" in _txt and "pass" in _txt:
-                            _targets["reversed"] = (_di, _pi, _pl)
-                        if _targets["rush"] is None and _ptype == "rush" and "walker" in _txt:
-                            _targets["rush"] = (_di, _pi, _pl)
-                        if _targets["normal_pass"] is None and _ptype == "pass reception" and "stafford" in _txt and "nacua" in _txt:
-                            _targets["normal_pass"] = (_di, _pi, _pl)
+                        # Collect unique types
+                        if _ptype and _ptype not in _seen_types:
+                            _seen_types[_ptype] = (_di, _pi, _pl)
 
-                for _label, _val in _targets.items():
+                        # Edge cases
+                        if _edge_cases["penalty_play"] is None and _is_pen:
+                            _edge_cases["penalty_play"] = (_di, _pi, _pl)
+                        if _edge_cases["interception"] is None and "interception" in _ptype_l:
+                            _edge_cases["interception"] = (_di, _pi, _pl)
+                        if _edge_cases["sack"] is None and _ptype_l == "sack":
+                            _edge_cases["sack"] = (_di, _pi, _pl)
+                        if _edge_cases["scramble"] is None and "scramble" in _ptype_l:
+                            _edge_cases["scramble"] = (_di, _pi, _pl)
+                        if _edge_cases["fumble_own"] is None and "fumble" in _ptype_l and "own" in _ptype_l:
+                            _edge_cases["fumble_own"] = (_di, _pi, _pl)
+                        if _edge_cases["fumble_opp"] is None and "fumble" in _ptype_l and "opponent" in _ptype_l:
+                            _edge_cases["fumble_opp"] = (_di, _pi, _pl)
+                        if _edge_cases["rushing_td"] is None and _ptype_l == "rushing touchdown":
+                            _edge_cases["rushing_td"] = (_di, _pi, _pl)
+                        if _edge_cases["two_pt_attempt"] is None and "two" in _ptype_l and "point" in _ptype_l:
+                            _edge_cases["two_pt_attempt"] = (_di, _pi, _pl)
+                        if _edge_cases["no_play"] is None and "no play" in _txt:
+                            _edge_cases["no_play"] = (_di, _pi, _pl)
+                        if _edge_cases["extra_point"] is None and "extra point" in _ptype_l:
+                            _edge_cases["extra_point"] = (_di, _pi, _pl)
+                        if _edge_cases["field_goal"] is None and "field goal" in _ptype_l:
+                            _edge_cases["field_goal"] = (_di, _pi, _pl)
+
+                # Show all unique types seen
+                st.markdown("### All unique play types in this game:")
+                _type_lines = []
+                for _t, (_di, _pi, _pl) in sorted(_seen_types.items()):
+                    _is_pen = _pl.get("isPenalty", False)
+                    _is_turn = _pl.get("isTurnover", False)
+                    _scoring = _pl.get("scoringPlay", False)
+                    _yds = _pl.get("statYardage", 0)
+                    _flags = " ".join(f for f, v in [("SCORING",_scoring),("TURNOVER",_is_turn),("PENALTY",_is_pen)] if v)
+                    _type_lines.append(f"{_t:35s}  yds={_yds:4}  {_flags}")
+                st.code("\n".join(_type_lines))
+
+                # Show edge case details
+                st.markdown("### Edge case play details:")
+                for _label, _val in _edge_cases.items():
                     st.markdown(f"---")
-                    st.markdown(f"### {_label.replace('_',' ').title()}")
+                    st.markdown(f"**{_label.replace('_',' ').title()}**")
                     if _val is None:
-                        st.warning("Play not found")
+                        st.warning("No example found in this game")
                         continue
                     _di, _pi, _pl = _val
-                    _txt = _pl.get("text","") or _pl.get("description","")
-                    _period = _pl.get("period",{})
+                    _txt_raw = _pl.get("text","") or _pl.get("description","")
+                    _period = _pl.get("period",{}).get("number","?")
                     _ptype = _pl.get("type",{}).get("text","")
                     _yds = _pl.get("statYardage","")
-                    _participants = _pl.get("teamParticipants", [])
-
-                    st.markdown(f"**Drive {_di}, Play {_pi}** | period={_period} | type={_ptype!r} | statYardage={_yds}")
-                    st.code(_txt[:200])
-                    st.markdown(f"**teamParticipants** ({len(_participants)} entries):")
-                    if _participants:
-                        st.code(_json.dumps(_participants, indent=2)[:3000])
-                    else:
-                        st.error("teamParticipants is EMPTY []")
+                    _is_pen = _pl.get("isPenalty", False)
+                    _is_turn = _pl.get("isTurnover", False)
+                    _scoring = _pl.get("scoringPlay", False)
+                    st.code(
+                        f"period={_period} | type={_ptype!r} | yds={_yds}\n"
+                        f"isPenalty={_is_pen} | isTurnover={_is_turn} | scoringPlay={_scoring}\n"
+                        f"text: {_txt_raw[:200]}"
+                    )
             else:
                 st.error("Could not fetch game data")
     # ── END TEMPORARY DEBUG ───────────────────────────────────────────────────
