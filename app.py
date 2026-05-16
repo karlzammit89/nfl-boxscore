@@ -196,6 +196,9 @@ st.markdown("""
 
 for k, v in {
     "view":                "calendar",
+    "recon_game_ids":      "",
+    "recon_results":       None,
+    "recon_mode":          "Paste IDs",
     "selected_game_id":    None,
     "selected_game":       None,
     "selected_date":       None,
@@ -211,7 +214,14 @@ MONTH_NAMES = ["January","February","March","April","May","June",
 
 # ── Header ────────────────────────────────────────────────────────────────────
 
-st.markdown("## 🏈 NFL Box Scores")
+_hdr1, _hdr2 = st.columns([8, 1.5])
+with _hdr1:
+    st.markdown("## 🏈 NFL Box Scores")
+with _hdr2:
+    st.markdown("<div style='margin-top:14px'>", unsafe_allow_html=True)
+    if st.button("🔍 Reconcile", use_container_width=True, key="btn_reconcile_nav"):
+        st.session_state.view = "reconcile"
+        st.rerun()
 st.divider()
 
 # ── Data loaders ──────────────────────────────────────────────────────────────
@@ -3006,3 +3016,415 @@ elif st.session_state.view == "boxscore":
 - `Rec Yards` is **not supported** — use `Receiving Yards` instead
 - Stat names are not case-sensitive
         """)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VIEW — RECONCILE  (remove: this block + header button + 3 session state keys)
+# ══════════════════════════════════════════════════════════════════════════════
+elif st.session_state.view == "reconcile":
+
+    # ── Back button ───────────────────────────────────────────────────────────
+    _rb1, _ = st.columns([1.5, 8])
+    with _rb1:
+        if st.button("← Calendar", use_container_width=True, key="recon_back"):
+            st.session_state.view = "calendar"
+            st.rerun()
+
+    st.markdown("<div class='sec-div' style='margin-top:12px'>🔍 Multi-Game Reconciliation</div>",
+                unsafe_allow_html=True)
+
+    # ── Mode selector ─────────────────────────────────────────────────────────
+    _mode = st.radio(
+        "Mode", ["Paste IDs", "Single Day", "Full Week", "Full Month"],
+        horizontal=True, label_visibility="collapsed", key="recon_mode",
+    )
+    import re as _re_rc
+    _now = et_now()
+
+    _rc1, _rc2 = st.columns([4, 1])
+    with _rc1:
+        if _mode == "Paste IDs":
+            st.caption("Game IDs (one per line or comma-separated) or YYYY-MM-DD dates.")
+            _recon_input = st.text_area(
+                "IDs", value=st.session_state.recon_game_ids,
+                placeholder="401772984\n401772949\n2025-12-14",
+                height=100, key="recon_input_box", label_visibility="collapsed",
+            )
+        elif _mode == "Single Day":
+            st.caption("All games on a specific date.")
+            _day_date   = st.date_input("Date", value=_now.date(), key="recon_day_date", label_visibility="collapsed")
+            _recon_input = str(_day_date)
+        elif _mode == "Full Week":
+            st.caption("7-day window starting from the selected date (covers Thu–Wed).")
+            _week_start  = st.date_input("Week starts", value=_now.date(), key="recon_week_start", label_visibility="collapsed")
+            _recon_input = ",".join(str(_week_start + timedelta(days=i)) for i in range(7))
+        else:
+            st.caption("All games in a calendar month (~64 games, ~90 s first run).")
+            _mc1, _mc2 = st.columns(2)
+            with _mc1:
+                _sel_year  = st.selectbox("Year", [_now.year-1, _now.year, _now.year+1], index=1, key="recon_year", label_visibility="collapsed")
+            with _mc2:
+                _sel_month = st.selectbox("Month", list(range(1,13)), format_func=lambda m: MONTH_NAMES[m-1], index=_now.month-1, key="recon_month", label_visibility="collapsed")
+            _recon_input = f"MONTH:{_sel_year}:{_sel_month}"
+
+    with _rc2:
+        st.markdown("<div style='margin-top:4px'>", unsafe_allow_html=True)
+        _run_recon = st.button("▶ Run",   use_container_width=True, key="recon_run")
+        _clear_btn = st.button("✕ Clear", use_container_width=True, key="recon_clear")
+        if _clear_btn:
+            st.session_state.recon_results   = None
+            st.session_state.recon_game_ids  = ""
+            st.rerun()
+
+    # ── Build game ID list ────────────────────────────────────────────────────
+    if _run_recon and _recon_input:
+        if _mode == "Paste IDs":
+            st.session_state.recon_game_ids = _recon_input
+        _game_ids = []
+        _date_re  = _re_rc.compile(r'^\d{4}-\d{2}-\d{2}$')
+
+        if _recon_input.startswith("MONTH:"):
+            _, _yr, _mo = _recon_input.split(":")
+            with st.spinner(f"Loading {MONTH_NAMES[int(_mo)-1]} {_yr} schedule…"):
+                _month_games = fetch_games_for_month(int(_yr), int(_mo))
+            _game_ids = list(dict.fromkeys(g["id"] for g in _month_games))
+            st.caption(f"Found **{len(_game_ids)} games** in {MONTH_NAMES[int(_mo)-1]} {_yr}")
+        else:
+            for _tok in [t.strip() for t in _re_rc.split(r'[\n,]+', _recon_input) if t.strip()]:
+                if _date_re.match(_tok):
+                    try:
+                        _d = date.fromisoformat(_tok)
+                        _mg = fetch_games_for_month(_d.year, _d.month)
+                        _day_ids = [g["id"] for g in _mg if et_date_str(g["date"]) == _tok]
+                        _game_ids.extend(_day_ids)
+                        if not _day_ids and _mode == "Single Day":
+                            st.warning(f"No games found for {_tok}")
+                    except Exception as _de:
+                        st.warning(f"Could not expand date {_tok}: {_de}")
+                elif _tok.isdigit():
+                    _game_ids.append(_tok)
+            _game_ids = list(dict.fromkeys(_game_ids))
+
+        # ── Process games ─────────────────────────────────────────────────────
+        if not _game_ids:
+            st.error("No valid game IDs found.")
+        else:
+            _results = []
+            _prog    = st.progress(0, text=f"Processing 0 / {len(_game_ids)} games…")
+            for _gi, _gid in enumerate(_game_ids):
+                _prog.progress(_gi / len(_game_ids),
+                               text=f"Processing game {_gi+1} / {len(_game_ids)}: {_gid}")
+                try:
+                    _gdata = load_all_stats(_gid)
+                    _recon = get_reconciliation_status(_gdata, _gid)
+                    _ls    = _gdata.get("linescore", pd.DataFrame())
+                    _label = (f"{_ls.iloc[0]['Team']} @ {_ls.iloc[1]['Team']}"
+                              if _ls is not None and not _ls.empty and "Team" in _ls.columns and len(_ls) >= 2
+                              else _gid)
+                    if _recon["passed"]:
+                        _results.append({"game_id":_gid,"label":_label,"passed":True,"rows":[]})
+                    else:
+                        _mrows = []
+                        for _player, _cat, _col, _pbp, _official, _ in _recon["mismatches"]:
+                            _mrows.append({
+                                "Game": _label, "Player": _player,
+                                "Stat": _cat.capitalize(), "Col": _col,
+                                "Q/H Total": _pbp, "Official": _official,
+                                "Missing": str(_pbp - _official),
+                            })
+                        _results.append({"game_id":_gid,"label":_label,"passed":False,"rows":_mrows})
+                except Exception as _ge:
+                    _results.append({"game_id":_gid,"label":_gid,"passed":None,
+                                     "rows":[{"Game":_gid,"Player":f"Error: {str(_ge)[:60]}",
+                                              "Stat":"","Col":"","Q/H Total":"","Official":"","Missing":""}]})
+            _prog.progress(1.0, text=f"Done — {len(_game_ids)} games processed.")
+            st.session_state.recon_results = _results
+
+    # ── Display results ───────────────────────────────────────────────────────
+    if st.session_state.recon_results:
+        _results  = st.session_state.recon_results
+        _n_pass   = sum(1 for r in _results if r["passed"] is True)
+        _n_fail   = sum(1 for r in _results if r["passed"] is False)
+        _n_err    = sum(1 for r in _results if r["passed"] is None)
+        _n_miss   = sum(len(r["rows"]) for r in _results if not r["passed"])
+
+        if _n_fail == 0 and _n_err == 0:
+            st.success(f"✅ All {len(_results)} games passed — stats match official totals.")
+        else:
+            st.error(f"❌ {_n_fail} / {len(_results)} games have gaps · "
+                     f"{_n_miss} total mismatches · ✅ {_n_pass} passed"
+                     + (f" · ⚠️ {_n_err} errors" if _n_err else ""))
+
+        # ── Per-game results (collapsed by default) ───────────────────────────
+        for _r in _results:
+            if _r["passed"] is True:
+                with st.expander(f"✅ {_r['label']}  ({_r['game_id']})", expanded=False):
+                    st.success("All stats match official totals.")
+
+            elif _r["passed"] is None:
+                with st.expander(f"⚠️ {_r['label']}  ({_r['game_id']})", expanded=False):
+                    st.warning(_r["rows"][0]["Player"])
+
+            else:
+                with st.expander(
+                    f"❌ {_r['label']}  ({_r['game_id']}) — {len(_r['rows'])} mismatch{'es' if len(_r['rows'])>1 else ''}",
+                    expanded=False,
+                ):
+                    _mdf = pd.DataFrame(_r["rows"])
+                    st.dataframe(
+                        _mdf.style.map(
+                            lambda v: "color:#f59e0b;font-weight:700"
+                            if isinstance(v, str) and v.startswith("-") else "",
+                            subset=["Missing"],
+                        ),
+                        use_container_width=True, hide_index=True,
+                    )
+
+                    # ── Per-game debug panel ──────────────────────────────────
+                    with st.expander("🔍 Debug this game", expanded=False):
+                        import json as _dj, urllib.request as _dur
+                        import re as _dre2
+
+                        def _dfetch(url):
+                            _req = _dur.Request(url, headers={"User-Agent":"Mozilla/5.0","Accept":"application/json"})
+                            with _dur.urlopen(_req, timeout=15) as _rr:
+                                return _dj.loads(_rr.read())
+
+                        _DBASE = "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
+                        _D_ID  = _dre2.compile(r"/athletes/([0-9]+)")
+                        _D_TM  = _dre2.compile(r"/teams/([0-9]+)")
+                        _dgid  = _r["game_id"]
+
+                        try:
+                            _draw  = _dfetch(_DBASE + f"/events/{_dgid}/competitions/{_dgid}/plays?limit=400")
+                            _dplays = _draw.get("items", [])
+                            _dcount = _draw.get("count", 0)
+                        except Exception as _de2:
+                            st.error(f"Could not fetch plays: {_de2}")
+                            _dplays = []; _dcount = 0
+
+                        from nfl.api import get_game_summary as _dgs3, get_athlete_displayname as _dgadn
+                        from nfl.stats import get_passing_stats as _dgps
+
+                        _dsum  = _dgs3(_dgid) or {}
+                        _dbox  = _dsum.get("boxscore", {})
+
+                        # Roster + team maps
+                        _d_roster = set()
+                        _d_tid    = {}
+                        for _dtb in _dbox.get("players", []):
+                            for _dcat in _dtb.get("statistics", []):
+                                for _dathl in _dcat.get("athletes", []):
+                                    _dn = _dathl.get("athlete", {}).get("displayName", "")
+                                    if _dn: _d_roster.add(_dn)
+                        for _dtb in _dsum.get("boxscore", {}).get("teams", []):
+                            _dt = str(_dtb.get("team", {}).get("id", ""))
+                            _da = _dtb.get("team", {}).get("abbreviation", "")
+                            if _dt and _da: _d_tid[_dt] = _da
+
+                        def _d_team(ref):
+                            _m = _D_TM.search(ref or "")
+                            return _d_tid.get(_m.group(1), "") if _m else ""
+
+                        # Build name cache for this game
+                        _d_names = {}
+                        for _dp in _dplays:
+                            for _dpt in _dp.get("participants", []):
+                                _dref = _dpt.get("athlete", {}).get("$ref", "")
+                                _daid = (_D_ID.search(_dref) or type("",(),{"group":lambda s,n:""})()).group(1)
+                                if _daid and _daid not in _d_names:
+                                    _d_names[_daid] = _dgadn(_daid, "2025") or _dgadn(_daid, "") or ""
+
+                        st.markdown(f"**Plays fetched:** {len(_dplays)} / {_dcount}"
+                                    + (" ⚠️ limit hit — plays missing!" if _dcount > len(_dplays) else " ✅"))
+
+                        # C1: wrong name check
+                        st.markdown("**C1 — Athlete names not in game roster:**")
+                        _c1_rows = [{"athlete_id":aid,"resolved_name":name,
+                                     "in_roster":"✅ YES" if name in _d_roster else "❌ NO — stale/wrong",
+                                     "role": next((p.get("type","") for pl in _dplays
+                                                   for p in pl.get("participants",[])
+                                                   if (_D_ID.search(p.get("athlete",{}).get("$ref","")) or
+                                                       type("",(),{"group":lambda s,n:""})()).group(1)==aid), "?")}
+                                    for aid, name in _d_names.items() if name and name not in _d_roster]
+                        if _c1_rows:
+                            st.dataframe(pd.DataFrame(_c1_rows), use_container_width=True, hide_index=True)
+                        else:
+                            st.success("All athlete IDs resolve to valid roster names.")
+
+                        # C2: RC-TRICK official passers check
+                        st.markdown("**C2 — Official passers set vs passer-role plays:**")
+                        try:
+                            _doff = _dgps(_dgid)
+                            if _doff is not None and not _doff.empty and "Player" in _doff.columns:
+                                _dop = set(_doff["Player"].str.split().str[-1].str.lower())
+                                st.code(f"_official_passers = {sorted(_dop)}")
+                                _c2_rows = []
+                                for _dp in _dplays:
+                                    for _dpt in _dp.get("participants", []):
+                                        if _dpt.get("type") != "passer": continue
+                                        _dref = _dpt.get("athlete", {}).get("$ref", "")
+                                        _daid = (_D_ID.search(_dref) or type("",(),{"group":lambda s,n:""})()).group(1)
+                                        _dn   = _d_names.get(_daid, "")
+                                        _dl   = _dn.split(".")[-1].strip().lower() if "." in _dn else _dn.split()[-1].lower() if _dn else ""
+                                        if _dl and _dl not in _dop:
+                                            _c2_rows.append({"play_type":(_dp.get("type",{}).get("text","") or "").lower(),
+                                                             "psr_name":_dn,"psr_last":_dl,
+                                                             "in_official_passers":"❌ NOT IN SET",
+                                                             "text":str(_dp.get("text",""))[:80]})
+                                if _c2_rows:
+                                    st.dataframe(pd.DataFrame(_c2_rows), use_container_width=True, hide_index=True)
+                                else:
+                                    st.success("All passer-role plays match official passers.")
+                            else:
+                                st.warning("Official passing stats empty — RC-TRICK check disabled.")
+                        except Exception as _ce2: st.error(f"C2 error: {_ce2}")
+
+                        # C3: INT plays passer role check
+                        st.markdown("**C3 — Interception plays (passer role present?):**")
+                        _c3_rows = []
+                        for _dp in _dplays:
+                            if (_dp.get("type",{}).get("text","") or "").lower() != "pass interception return": continue
+                            _droles = {_dpt.get("type","") for _dpt in _dp.get("participants",[])}
+                            _dtxt   = str(_dp.get("text",""))
+                            _dim    = _dre2.search(r"(?:\([^)]*\)\s*)?([A-Z]\.[A-Za-z\-']+(?:\s+(?:Jr|Sr|II|III|IV)\.?)?)\s+pass", _dtxt)
+                            _dpsr_id = ""
+                            for _dpt in _dp.get("participants",[]):
+                                if _dpt.get("type")=="passer":
+                                    _dpsr_id = (_D_ID.search(_dpt.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1)
+                            _c3_rows.append({
+                                "Q": f"Q{(_dp.get('period') or {}).get('number','?')}",
+                                "passer role?": "✅ YES → athlete_id" if "passer" in _droles else "❌ NO → text parse",
+                                "psr_athlete_id": _dpsr_id or "N/A",
+                                "text_parse": _dim.group(1) if _dim else "❌ REGEX MISS",
+                                "key_mismatch?": "⚠️ MISMATCH" if "passer" not in _droles and _dim else ("✅ OK" if "passer" in _droles else "❌ MISS"),
+                                "text": _dtxt[:90],
+                            })
+                        if _c3_rows:
+                            st.dataframe(pd.DataFrame(_c3_rows), use_container_width=True, hide_index=True)
+                        else:
+                            st.info("No interception plays in this game.")
+
+                        # C4: isPenalty plays pos_team resolution
+                        st.markdown("**C4 — isPenalty offensive plays (pos_team resolution):**")
+                        _c4_rows = []
+                        for _dp in _dplays:
+                            if not _dp.get("isPenalty") or _dp.get("scoringPlay"): continue
+                            _droles = {_dpt.get("type","") for _dpt in _dp.get("participants",[])}
+                            if not (_droles & {"passer","receiver","rusher"}): continue
+                            _dtxt  = (str(_dp.get("text","")) or "").upper()
+                            _dyds  = _dp.get("statYardage",0)
+                            _dptype= (_dp.get("type",{}).get("text","") or "").lower()
+                            _dper  = (_dp.get("period") or {}).get("number","?")
+                            _dpos1 = _d_team(_dp.get("team",{}).get("$ref",""))
+                            _dpos2 = ""
+                            for _dpt in _dp.get("participants",[]):
+                                if _dpt.get("type") in ("passer","rusher","receiver"):
+                                    _dtm = _D_TM.search(_dpt.get("athlete",{}).get("$ref",""))
+                                    if _dtm:
+                                        _dpos2 = _d_tid.get(_dtm.group(1),"")
+                                        if _dpos2: break
+                            _dpos_used = _dpos1 or _dpos2
+                            _dpen_m    = _dre2.search(r"PENALTY ON ([A-Z]{2,3})[^A-Z]", _dtxt)
+                            _dpen_team = _dpen_m.group(1) if _dpen_m else "❌ REGEX MISS"
+                            _dmatch    = _dpen_team == _dpos_used if (_dpos_used and _dpen_team != "❌ REGEX MISS") else None
+                            _c4_rows.append({
+                                "Q": f"Q{_dper}", "type": _dptype, "yds": _dyds,
+                                "pos_primary": _dpos1 or "❌ EMPTY",
+                                "pos_fallback": _dpos2 or "❌ EMPTY",
+                                "pos_used": _dpos_used or "❌ EMPTY",
+                                "penalty_team": _dpen_team,
+                                "would_skip?": ("✅ SKIPPED" if _dmatch else
+                                               ("❌ NOT skipped" if _dmatch is False else
+                                                "⚠️ pos_team empty")),
+                                "text": str(_dp.get("text",""))[:80],
+                            })
+                        if _c4_rows:
+                            st.dataframe(pd.DataFrame(_c4_rows), use_container_width=True, hide_index=True)
+                            _not_skip = sum(1 for r in _c4_rows if "NOT" in r["would_skip?"])
+                            _empty    = sum(1 for r in _c4_rows if "empty" in r["would_skip?"])
+                            st.caption(f"Not skipped: {_not_skip} | pos_team empty: {_empty}")
+                        else:
+                            st.success("No isPenalty offensive plays.")
+
+                        # C5: missing carry finder
+                        st.markdown("**C5 — Rusher-role plays (find missing carry):**")
+                        _c5_filter = st.text_input("Filter by last name", key=f"c5_{_dgid}")
+                        _c5_rows = []
+                        for _dp in _dplays:
+                            for _dpt in _dp.get("participants",[]):
+                                if _dpt.get("type") != "rusher": continue
+                                _dref = _dpt.get("athlete",{}).get("$ref","")
+                                _daid = (_D_ID.search(_dref) or type("",(),{"group":lambda s,n:""})()).group(1)
+                                _dn   = _d_names.get(_daid,"?")
+                                if _c5_filter and _c5_filter.lower() not in _dn.lower(): continue
+                                _dptype = (_dp.get("type",{}).get("text","") or "").lower()
+                                _dskip  = _dptype in {"end period","end of half","end of game",
+                                                       "timeout","coin toss","kickoff","punt",
+                                                       "penalty","uncategorized","field goal good",
+                                                       "field goal missed","extra point good","safety",""}
+                                _c5_rows.append({
+                                    "Q": f"Q{(_dp.get('period') or {}).get('number','?')}",
+                                    "rusher": _dn, "play_type": _dptype,
+                                    "yds": _dp.get("statYardage",0),
+                                    "isPenalty": _dp.get("isPenalty",False),
+                                    "would_count?": ("❌ SKIPPED (skip_types)" if _dskip else
+                                                     ("✅ rush handler" if _dptype in {"rush","scramble","rushing touchdown"} else "✅ catch-all")),
+                                    "text": str(_dp.get("text",""))[:80],
+                                })
+                        if _c5_rows:
+                            from collections import Counter as _Ctr
+                            _summary = {}
+                            for _row in _c5_rows:
+                                _n = _row["rusher"]
+                                if _n not in _summary: _summary[_n] = {"counted":0,"skipped":0}
+                                if "SKIPPED" in _row["would_count?"]: _summary[_n]["skipped"]+=1
+                                else: _summary[_n]["counted"]+=1
+                            st.dataframe(pd.DataFrame([{"rusher":n,"our_CAR":d["counted"],"skipped":d["skipped"]} for n,d in sorted(_summary.items())]),
+                                         use_container_width=True, hide_index=True)
+                            with st.expander("All rusher plays"):
+                                st.dataframe(pd.DataFrame(_c5_rows), use_container_width=True, hide_index=True)
+                        else:
+                            st.info("No rusher-role plays (or no match for filter).")
+
+                        # C6: negative receiving plays
+                        st.markdown("**C6 — Negative-yard receiving plays:**")
+                        _c6_rows = []
+                        for _dp in _dplays:
+                            if _dp.get("statYardage",0) >= 0: continue
+                            _droles = {_dpt.get("type","") for _dpt in _dp.get("participants",[])}
+                            if "receiver" not in _droles: continue
+                            _dyds = _dp.get("statYardage",0)
+                            _dpen = _dp.get("isPenalty",False)
+                            _dsc  = _dp.get("scoringPlay",False)
+                            _dn   = ""
+                            for _dpt in _dp.get("participants",[]):
+                                if _dpt.get("type")=="receiver":
+                                    _daid = (_D_ID.search(_dpt.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1)
+                                    _dn   = _d_names.get(_daid,"?")
+                            _c6_rows.append({
+                                "Q": f"Q{(_dp.get('period') or {}).get('number','?')}",
+                                "receiver": _dn, "yds": _dyds,
+                                "isPenalty": _dpen, "scoringPlay": _dsc,
+                                "current_guard?": ("✅ SKIPPED" if _dpen and not _dsc else "❌ not skipped"),
+                                "extended_guard?": ("✅ SKIPPED" if _dyds < -10 and not _dsc else "❌ not skipped"),
+                                "text": str(_dp.get("text",""))[:80],
+                            })
+                        if _c6_rows:
+                            st.dataframe(pd.DataFrame(_c6_rows), use_container_width=True, hide_index=True)
+                        else:
+                            st.success("No negative-yard receiving plays.")
+
+        # ── CSV download ──────────────────────────────────────────────────────
+        _all_rows = []
+        for _r in _results:
+            if _r["rows"]:
+                _all_rows.extend(_r["rows"])
+            elif _r["passed"]:
+                _all_rows.append({"Game":_r["label"],"Player":"✅ Passed",
+                                  "Stat":"","Col":"","Q/H Total":"","Official":"","Missing":""})
+        if _all_rows:
+            st.divider()
+            st.download_button("⬇ Download CSV", data=pd.DataFrame(_all_rows).to_csv(index=False),
+                               file_name="reconciliation_results.csv", mime="text/csv", key="recon_dl")
+# ══ END RECONCILE ══════════════════════════════════════════════════════════════
