@@ -624,124 +624,6 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
-    # ── DEBUG: Multi-game TypeID discovery ───────────────────────────────────
-    with st.expander("🔍 DEBUG — ESPN TypeID & scoringType.name discovery", expanded=True):
-
-        st.markdown("""
-**Instructions:** Enter up to 5 game IDs below (comma-separated) to map all scoring type IDs
-across multiple games. Pick games you know had Rush TDs, FGs, Defensive TDs etc.
-
-*Get game IDs from the ESPN URL: `espn.com/nfl/game/_/gameId/`**`401772984`*
-        """)
-
-        _test_ids_input = st.text_input(
-            "Game IDs (comma-separated)",
-            value=game_id,
-            key="debug_game_ids",
-        )
-        _run_discovery = st.button("🔎 Run Discovery", key="debug_run")
-
-        if _run_discovery:
-            _test_ids = [g.strip() for g in _test_ids_input.split(",") if g.strip()]
-
-            # Aggregate across all games
-            _id_map   = {}   # type.id → set of type.text values seen
-            _sct_map  = {}   # scoringType.name → set of type.id values seen
-            _all_rows = []   # flat list for the full table
-
-            for _gid in _test_ids:
-                try:
-                    from nfl.api import get_game_summary as _dgs2
-                    _s2 = _dgs2(_gid)
-                    _sps2 = _s2.get("scoringPlays", []) if _s2 else []
-                    for _sp in _sps2:
-                        _per  = _sp.get("period", {}).get("number", "?")
-                        _team = _sp.get("team", {}).get("abbreviation", "?")
-                        _sv   = _sp.get("scoreValue", "?")
-                        _t    = _sp.get("type", {})
-                        _st   = _sp.get("scoringType", {})
-                        _tid  = str(_t.get("id", ""))
-                        _ttxt = _t.get("text", "")
-                        _stn  = _st.get("name", "")
-                        _std  = _st.get("displayName", "")
-                        _desc = str(_sp.get("text", ""))[:60]
-
-                        # Aggregate
-                        if _tid:
-                            _id_map.setdefault(_tid, set()).add(_ttxt)
-                        if _stn:
-                            _sct_map.setdefault(_stn, set()).add(_tid)
-
-                        _all_rows.append({
-                            "game_id":            _gid,
-                            "Q":                  f"Q{_per}",
-                            "Team":               _team,
-                            "scoreValue":         _sv,
-                            "type.id":            _tid,
-                            "type.text":          _ttxt,
-                            "scoringType.name":   _stn,
-                            "scoringType.display":_std,
-                            "Description":        _desc,
-                        })
-                except Exception as _ge:
-                    st.warning(f"Game {_gid}: {_ge}")
-
-            if _all_rows:
-                import pandas as _pdf
-
-                st.markdown("---")
-                st.markdown("### 📋 Complete type.id → type.text map (all games combined)")
-                _id_rows = [{"type.id": k, "type.text (all seen)": " / ".join(sorted(v))}
-                            for k, v in sorted(_id_map.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 999)]
-                st.dataframe(_pdf.DataFrame(_id_rows), use_container_width=True, hide_index=True)
-
-                st.markdown("### 📋 scoringType.name → type.id values seen")
-                _sct_rows = [{"scoringType.name": k, "type.ids seen": ", ".join(sorted(v))}
-                             for k, v in sorted(_sct_map.items())]
-                st.dataframe(_pdf.DataFrame(_sct_rows), use_container_width=True, hide_index=True)
-
-                st.markdown("### 📋 Full play-by-play across all games")
-                st.dataframe(_pdf.DataFrame(_all_rows), use_container_width=True, hide_index=True)
-
-                # ── Part 2: Core API plays — find XP and 2PT type IDs ─────────
-                st.markdown("---")
-                st.markdown("""
-### 📋 Core API plays — XP & 2PT type IDs
-
-XP and 2PT don't appear in `scoringPlays` — they're only in the Core API full plays list.
-Scanning all plays for keywords: `extra point`, `two point`, `two-point`, `pat`, `conversion`.
-                """)
-                try:
-                    from nfl.api import get_core_plays as _gcp3
-                    _xp2pt_rows = []
-                    _xp2pt_ids  = {}  # type.id → type.text
-                    for _gid2 in _test_ids:
-                        _cplays = _gcp3(_gid2)
-                        for _pl in _cplays:
-                            _ptxt = (_pl.get("type", {}).get("text", "") or "").lower()
-                            _pdesc = (str(_pl.get("text", "")) or "").lower()
-                            _keywords = {"extra point", "two point", "two-point",
-                                         "pat ", "conversion", "point after"}
-                            if any(kw in _ptxt or kw in _pdesc for kw in _keywords):
-                                _pid  = str(_pl.get("type", {}).get("id", ""))
-                                _ptxt2 = _pl.get("type", {}).get("text", "")
-                                _xp2pt_ids[_pid] = _ptxt2
-                                _xp2pt_rows.append({
-                                    "game_id":  _gid2,
-                                    "type.id":  _pid,
-                                    "type.text": _ptxt2,
-                                    "period":   (_pl.get("period") or {}).get("number", "?"),
-                                    "text":     str(_pl.get("text", ""))[:80],
-                                })
-                    if _xp2pt_rows:
-                        st.markdown("**Unique XP / 2PT type IDs found:**")
-                        st.json(_xp2pt_ids)
-                        st.dataframe(_pdf.DataFrame(_xp2pt_rows), use_container_width=True, hide_index=True)
-                    else:
-                        st.warning("No XP/2PT plays found — try a game ID where both occurred.")
-                except Exception as _e2:
-                    st.error(f"Core API scan error: {_e2}")
-    # ── END DEBUG ─────────────────────────────────────────────────────────────
 
 
 
@@ -2250,7 +2132,10 @@ Scanning all plays for keywords: `extra point`, `two point`, `two-point`, `pat`,
             if scoring_df is None or scoring_df.empty or "Quarter" not in scoring_df.columns:
                 return []
             rows = scoring_df[scoring_df["Quarter"] == period_label]
-            return rows["TypeID"].astype(str).tolist() if "TypeID" in rows.columns else []
+            # Return list of (type_id, scoring_type_name) tuples for structured matching
+            if "TypeID" in rows.columns and "ScoringTypeName" in rows.columns:
+                return list(zip(rows["TypeID"].astype(str), rows["ScoringTypeName"].astype(str)))
+            return []
 
         def _pts_in(period_label):
             if linescore is None or linescore.empty or period_label not in linescore.columns:
@@ -2318,27 +2203,28 @@ Scanning all plays for keywords: `extra point`, `two point`, `two-point`, `pat`,
             return False, f"No {label}2pt Conversion"
 
         def _check_reqs(reqs, period_label, each_team):
+            # plays = list of (type_id, scoring_type_name) tuples
             plays = _plays_in(period_label) if period_label else (
-                scoring_df["TypeID"].astype(str).tolist() if scoring_df is not None and not scoring_df.empty and "TypeID" in scoring_df.columns else [])
-            pts   = _pts_in(period_label) if period_label else 0
-            _RUSH_TD = {"57"}
-            _PASS_TD = {"67"}
-            _ALL_TD  = {"57","67","59","62","60","63","64","65"}
-            _FG      = {"58"}
+                list(zip(
+                    scoring_df["TypeID"].astype(str),
+                    scoring_df["ScoringTypeName"].astype(str)
+                )) if scoring_df is not None and not scoring_df.empty
+                   and "TypeID" in scoring_df.columns and "ScoringTypeName" in scoring_df.columns
+                else [])
+            pts = _pts_in(period_label) if period_label else 0
             for req_type, req_n in reqs:
                 if req_type == "rushing_td":
-                    ok = sum(1 for p in plays if p in _RUSH_TD) >= req_n
+                    ok = sum(1 for tid, _ in plays if tid == "68") >= req_n
                 elif req_type == "passing_td":
-                    ok = sum(1 for p in plays if p in _PASS_TD) >= req_n
+                    ok = sum(1 for tid, _ in plays if tid == "67") >= req_n
                 elif req_type == "any_td":
-                    ok = sum(1 for p in plays if p in _ALL_TD) >= req_n
+                    ok = sum(1 for _, stn in plays if stn == "touchdown") >= req_n
                 elif req_type == "fg":
-                    ok = sum(1 for p in plays if p in _FG) >= req_n
+                    ok = sum(1 for _, stn in plays if stn == "field-goal") >= req_n
                 else:  # score / points
                     if scoring_df is not None and not scoring_df.empty and "Quarter" in scoring_df.columns:
                         q_rows = scoring_df[scoring_df["Quarter"] == period_label]
                         if each_team and "Team" in scoring_df.columns:
-                            # Each team must have scored in this period
                             teams_scored = set(q_rows["Team"].dropna().unique())
                             ok = len(teams_scored) >= 2
                         else:
@@ -2364,11 +2250,12 @@ Scanning all plays for keywords: `extra point`, `two point`, `two-point`, `pat`,
         )
         _KICK_TD_RE    = _re_t.compile(r'^opening kick(?:off)?.*(?:return|returned).*td|opening kickoff.*touchdown', _re_t.I)
 
-        # Special teams TD types from ESPN scoring summary
-        # Excludes interception return (defensive) and fumble return (defensive)
-        _ST_TYPES = {"punt return touchdown", "kickoff return touchdown",
-                     "blocked punt touchdown", "blocked field goal touchdown",
-                     "blocked kick touchdown"}
+        # ── Verified ESPN TypeID sets (from live data, 100% confirmed) ─────────
+        # scoringType.name='touchdown' covers all TD types — use for any_td/no_td
+        # TypeID used for subtype grading (rush vs pass) and ST identification
+        _ST_TD_IDS  = {"18","32","34","37"}   # Blocked FG(18), KR TD(32), PR TD(34), Blocked Punt TD(37)
+        _ALL_TD_IDS = {"18","32","34","36","37","39","67","68"}  # all TD type IDs
+        # Legacy text sets kept for _FIRST_TD_RE scoring description parsing only
         _ALL_TD_TYPES = {"rushing touchdown", "passing touchdown", "receiving touchdown",
                          "punt return touchdown", "kickoff return touchdown",
                          "fumble return touchdown", "blocked punt touchdown",
@@ -2455,10 +2342,9 @@ Scanning all plays for keywords: `extra point`, `two point`, `two-point`, `pat`,
             # ── No Touchdown in Game ──────────────────────────────────────────
             if _NO_TD_RE.match(line):
                 _sdf_n = data.get("scoring", pd.DataFrame())
-                _TD_IDS = {"57","67","59","62","60","63","64","65"}
-                if _sdf_n is not None and not _sdf_n.empty and "TypeID" in _sdf_n.columns:
-                    _has_td   = _sdf_n["TypeID"].astype(str).isin(_TD_IDS).any()
-                    _td_count = int(_sdf_n["TypeID"].astype(str).isin(_TD_IDS).sum())
+                if _sdf_n is not None and not _sdf_n.empty and "ScoringTypeName" in _sdf_n.columns:
+                    _has_td   = _sdf_n["ScoringTypeName"].eq("touchdown").any()
+                    _td_count = int(_sdf_n["ScoringTypeName"].eq("touchdown").sum())
                 else:
                     _has_td   = False
                     _td_count = 0
@@ -2553,12 +2439,12 @@ Scanning all plays for keywords: `extra point`, `two point`, `two-point`, `pat`,
                 _sdf_stf = data.get("scoring", pd.DataFrame())
                 won = False
                 _first_desc = "No TDs"
-                if _sdf_stf is not None and not _sdf_stf.empty and "Type" in _sdf_stf.columns:
-                    _td_rows = _sdf_stf[_sdf_stf["Type"].str.lower().isin(_ALL_TD_TYPES)]
+                if _sdf_stf is not None and not _sdf_stf.empty and "ScoringTypeName" in _sdf_stf.columns:
+                    _td_rows = _sdf_stf[_sdf_stf["ScoringTypeName"] == "touchdown"]
                     if not _td_rows.empty:
-                        _first_td = _td_rows.iloc[0]
+                        _first_td   = _td_rows.iloc[0]
                         _first_desc = f"{_first_td.get('Team','')} {_first_td.get('Type','')}"
-                        _is_st = _first_td["Type"].lower() in _ST_TYPES
+                        _is_st      = str(_first_td.get("TypeID","")) in _ST_TD_IDS
                         _right_team = _first_td.get("Team","").upper() == _st_team
                         won = _is_st and _right_team
                 team_graded.append({"Prop": line, "Data": f"First TD: {_first_desc}",
@@ -2576,9 +2462,9 @@ Scanning all plays for keywords: `extra point`, `two point`, `two-point`, `pat`,
                 _sdf_st = data.get("scoring", pd.DataFrame())
                 won = False
                 _st_detail = "No ST TD"
-                if _sdf_st is not None and not _sdf_st.empty and "Type" in _sdf_st.columns:
+                if _sdf_st is not None and not _sdf_st.empty and "TypeID" in _sdf_st.columns:
                     _st_plays = _sdf_st[
-                        (_sdf_st["Type"].str.lower().isin(_ST_TYPES)) &
+                        (_sdf_st["TypeID"].astype(str).isin(_ST_TD_IDS)) &
                         (_sdf_st["Team"].str.upper() == _st_team2)
                     ] if "Team" in _sdf_st.columns else pd.DataFrame()
                     won = not _st_plays.empty
@@ -2743,17 +2629,22 @@ Scanning all plays for keywords: `extra point`, `two point`, `two-point`, `pat`,
                 try:
                     from nfl.api import get_core_plays as _gcp
                     _core_plays = _gcp(game_id)
-                    if _core_plays:
-                        _first_play    = _core_plays[0]
-                        _first_type_id = str(_first_play.get("type", {}).get("id", ""))
-                        _first_desc    = str(_first_play.get("text", ""))[:60]
-                        won = _first_type_id == "62"   # 62 = kickoff return touchdown
+                    # Skip non-play entries — Coin Toss = type.id 70
+                    _first_real = next(
+                        (p for p in _core_plays
+                         if str(p.get("type", {}).get("id", "")) != "70"),
+                        None
+                    )
+                    if _first_real:
+                        _first_type_id = str(_first_real.get("type", {}).get("id", ""))
+                        _first_desc    = str(_first_real.get("text", ""))[:60]
+                        won = _first_type_id == "32"   # 32 = Kickoff Return Touchdown (verified)
                         _kr_detail = f"First play: {_first_desc}"
                 except Exception:
-                    # Fallback to scoring_df with TypeID
+                    # Fallback: first scoring play with verified type.id 32
                     _sdf_kr = data.get("scoring", pd.DataFrame())
                     if _sdf_kr is not None and not _sdf_kr.empty and "TypeID" in _sdf_kr.columns:
-                        won = str(_sdf_kr.iloc[0].get("TypeID", "")) == "62"
+                        won = str(_sdf_kr.iloc[0].get("TypeID", "")) == "32"
                         _kr_detail = f"First score: {str(_sdf_kr.iloc[0].get('Description',''))[:60]}"
                 team_graded.append({"Prop": line, "Data": _kr_detail,
                     "Result": "✅ Won" if won else "❌ Lost"})
@@ -2816,52 +2707,63 @@ Scanning all plays for keywords: `extra point`, `two point`, `two-point`, `pat`,
 
             req_lbls = {"rushing_td":"Rush","passing_td":"Pass","any_td":"TD","fg":"FG","score":""}
 
-            # ESPN type ID sets — structured grading, no text parsing
-            _RUSH_TD_IDS = {"57"}
-            _PASS_TD_IDS = {"67"}
-            _ALL_TD_IDS  = {"57","67","59","62","60","63","64","65"}
-            _FG_IDS      = {"58"}
+            # Verified ESPN TypeID / ScoringTypeName constants
+            _RUSH_TD_ID = "68"    # Rushing Touchdown
+            _PASS_TD_ID = "67"    # Passing Touchdown (covers receiving TD too)
 
             def _sdf_types(team=None, period=None):
-                """Get TypeID list from scoring_df filtered by team and/or period."""
+                """Return list of (type_id, scoring_type_name) tuples from scoring_df,
+                filtered by team and/or period."""
                 if scoring_df is None or scoring_df.empty: return []
                 df = scoring_df.copy()
                 if period:
                     if period == "1H":
-                        # First half: Q1 + Q2
                         if "Half" in df.columns:
                             df = df[df["Half"] == "1st Half"]
                         elif "Quarter" in df.columns:
                             df = df[df["Quarter"].isin(["Q1","Q2"])]
                     elif period == "2H":
-                        # Second half: Q3 + Q4
                         if "Half" in df.columns:
                             df = df[df["Half"] == "2nd Half"]
                         elif "Quarter" in df.columns:
                             df = df[df["Quarter"].isin(["Q3","Q4"])]
                     elif period in ("Q1","Q2","Q3","Q4") and "Quarter" in df.columns:
                         df = df[df["Quarter"] == period]
-                    # "game total" or None → no filter
                 if team and "Team" in df.columns:
                     df = df[df["Team"].str.upper() == team.upper()]
-                return df["TypeID"].astype(str).tolist() if "TypeID" in df.columns else []
+                if "TypeID" in df.columns and "ScoringTypeName" in df.columns:
+                    return list(zip(df["TypeID"].astype(str), df["ScoringTypeName"].astype(str)))
+                return []
 
-            def _count_from_types(ids_list, req_type):
-                if req_type == "rushing_td": return sum(1 for i in ids_list if i in _RUSH_TD_IDS)
-                if req_type == "passing_td": return sum(1 for i in ids_list if i in _PASS_TD_IDS)
-                if req_type == "any_td":     return sum(1 for i in ids_list if i in _ALL_TD_IDS)
-                if req_type == "fg":         return sum(1 for i in ids_list if i in _FG_IDS)
+            def _count_from_types(plays_list, req_type):
+                """Count plays matching req_type from list of (type_id, scoring_type_name) tuples."""
+                if req_type == "rushing_td": return sum(1 for tid, _ in plays_list if tid == _RUSH_TD_ID)
+                if req_type == "passing_td": return sum(1 for tid, _ in plays_list if tid == _PASS_TD_ID)
+                if req_type == "any_td":     return sum(1 for _, stn in plays_list if stn == "touchdown")
+                if req_type == "fg":         return sum(1 for _, stn in plays_list if stn == "field-goal")
                 return 0
 
-            def _pts_from_types(ids_list):
-                """Estimate points from scoring play TypeIDs."""
-                total = 0
-                for i in ids_list:
-                    if i in _ALL_TD_IDS:  total += 6
-                    elif i in _FG_IDS:    total += 3
-                    elif i == "53":       total += 1   # extra point good
-                    elif i in ("104","105"): total += 2  # two-point conversion
-                return total
+            def _pts_from_sdf(df_slice):
+                """Exact per-quarter points from Away+Home Score cumulative diffs.
+                Uses ESPN's reported scores directly — accurate including XP and 2PT."""
+                if df_slice is None or df_slice.empty: return 0
+                if "Away Score" not in df_slice.columns or "Home Score" not in df_slice.columns:
+                    return 0
+                # Sum all scoring play deltas in this slice
+                # Each row has cumulative scores; we want points scored IN this period
+                # which equals last row - score before first row
+                try:
+                    last = df_slice.iloc[-1]
+                    # Score before this slice started
+                    all_idx = scoring_df.index if scoring_df is not None else df_slice.index
+                    first_idx = df_slice.index[0]
+                    prior = scoring_df.loc[:first_idx].iloc[:-1] if scoring_df is not None and len(scoring_df.loc[:first_idx]) > 1 else None
+                    prev_away = int(prior.iloc[-1]["Away Score"]) if prior is not None and not prior.empty else 0
+                    prev_home = int(prior.iloc[-1]["Home Score"]) if prior is not None and not prior.empty else 0
+                    pts = (int(last["Away Score"]) - prev_away) + (int(last["Home Score"]) - prev_home)
+                    return max(0, pts)
+                except Exception:
+                    return 0
 
             if is_each and reqs[0][0] == "score":
                 # Each Team to Score in All Four Quarters
@@ -2878,9 +2780,9 @@ Scanning all plays for keywords: `extra point`, `two point`, `two-point`, `pat`,
                                 for p in periods)
                             team_data_parts.append(f"{team} {q_parts}")
                             continue
-                    # Fallback: use scoring_df cumulative diffs
+                    # Fallback: use score column diffs from scoring_df (exact, includes XP/2PT)
                     q_parts = ", ".join(
-                        f"{p}: {_pts_from_types(_sdf_types(team=team, period=p))}"
+                        f"{p}: {_pts_from_sdf(_sdf_types(team=team, period=p) and scoring_df[scoring_df['Quarter']==p] if scoring_df is not None and not scoring_df.empty and 'Quarter' in scoring_df.columns else None)}"
                         for p in periods)
                     team_data_parts.append(f"{team} {q_parts}")
                 data_str = " | ".join(team_data_parts)
@@ -2921,7 +2823,15 @@ Scanning all plays for keywords: `extra point`, `two point`, `two-point`, `pat`,
                 # Game-level non-each prop — combined totals
                 types_all = _sdf_types()
                 if reqs[0][0] == "score":
-                    data_str = f"Pts: {_pts_from_types(types_all)}"
+                    # Use exact score diffs: sum of all Away+Home score changes
+                    _all_pts = 0
+                    if scoring_df is not None and not scoring_df.empty:
+                        try:
+                            _last = scoring_df.iloc[-1]
+                            _all_pts = int(_last.get("Away Score",0)) + int(_last.get("Home Score",0))
+                        except Exception:
+                            pass
+                    data_str = f"Pts: {_all_pts}"
                 else:
                     req_strs = [f"{req_lbls.get(rt,rt)}: {_count_from_types(types_all, rt)}" for rt, rn in reqs]
                     data_str = " & ".join(req_strs)
@@ -2932,7 +2842,9 @@ Scanning all plays for keywords: `extra point`, `two point`, `two-point`, `pat`,
                 for p in periods:
                     types_p = _sdf_types(period=p)
                     if reqs[0][0] == "score":
-                        req_strs_p = [str(_pts_from_types(types_p))]
+                        # Exact quarter points from score column diffs
+                        _qdf = scoring_df[scoring_df["Quarter"] == p] if scoring_df is not None and not scoring_df.empty and "Quarter" in scoring_df.columns else None
+                        req_strs_p = [str(_pts_from_sdf(_qdf))]
                     else:
                         req_strs_p = []
                         for rt, rn in reqs:
