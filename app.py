@@ -702,6 +702,45 @@ across multiple games. Pick games you know had Rush TDs, FGs, Defensive TDs etc.
 
                 st.markdown("### 📋 Full play-by-play across all games")
                 st.dataframe(_pdf.DataFrame(_all_rows), use_container_width=True, hide_index=True)
+
+                # ── Part 2: Core API plays — find XP and 2PT type IDs ─────────
+                st.markdown("---")
+                st.markdown("""
+### 📋 Core API plays — XP & 2PT type IDs
+
+XP and 2PT don't appear in `scoringPlays` — they're only in the Core API full plays list.
+Scanning all plays for keywords: `extra point`, `two point`, `two-point`, `pat`, `conversion`.
+                """)
+                try:
+                    from nfl.api import get_core_plays as _gcp3
+                    _xp2pt_rows = []
+                    _xp2pt_ids  = {}  # type.id → type.text
+                    for _gid2 in _test_ids:
+                        _cplays = _gcp3(_gid2)
+                        for _pl in _cplays:
+                            _ptxt = (_pl.get("type", {}).get("text", "") or "").lower()
+                            _pdesc = (str(_pl.get("text", "")) or "").lower()
+                            _keywords = {"extra point", "two point", "two-point",
+                                         "pat ", "conversion", "point after"}
+                            if any(kw in _ptxt or kw in _pdesc for kw in _keywords):
+                                _pid  = str(_pl.get("type", {}).get("id", ""))
+                                _ptxt2 = _pl.get("type", {}).get("text", "")
+                                _xp2pt_ids[_pid] = _ptxt2
+                                _xp2pt_rows.append({
+                                    "game_id":  _gid2,
+                                    "type.id":  _pid,
+                                    "type.text": _ptxt2,
+                                    "period":   (_pl.get("period") or {}).get("number", "?"),
+                                    "text":     str(_pl.get("text", ""))[:80],
+                                })
+                    if _xp2pt_rows:
+                        st.markdown("**Unique XP / 2PT type IDs found:**")
+                        st.json(_xp2pt_ids)
+                        st.dataframe(_pdf.DataFrame(_xp2pt_rows), use_container_width=True, hide_index=True)
+                    else:
+                        st.warning("No XP/2PT plays found — try a game ID where both occurred.")
+                except Exception as _e2:
+                    st.error(f"Core API scan error: {_e2}")
     # ── END DEBUG ─────────────────────────────────────────────────────────────
 
 
