@@ -3210,7 +3210,7 @@ elif st.session_state.view == "reconcile":
                                 st.error(f"Could not fetch plays: {_de2}")
                                 _dplays = []; _dcount = 0
 
-                        from nfl.api import get_game_summary as _dgs3, get_athlete_displayname as _dgadn
+                        from nfl.api import get_game_summary as _dgs3
                         from nfl.stats import get_passing_stats as _dgps
 
                         with st.spinner("Loading game summary…"):
@@ -3232,14 +3232,30 @@ elif st.session_state.view == "reconcile":
                             _m = _D_TM.search(ref or "")
                             return _d_tid.get(_m.group(1), "") if _m else ""
 
+                        # Build athlete_id → name from boxscore (0 extra API calls)
                         _d_names = {}
-                        with st.spinner("Resolving athlete names…"):
-                            for _dp in _dplays:
-                                for _dpt in _dp.get("participants", []):
-                                    _dref = _dpt.get("athlete", {}).get("$ref", "")
-                                    _daid = (_D_ID.search(_dref) or type("",(),{"group":lambda s,n:""})()).group(1)
-                                    if _daid and _daid not in _d_names:
-                                        _d_names[_daid] = _dgadn(_daid, "2025") or _dgadn(_daid, "") or ""
+                        for _dtb in _dbox.get("players", []):
+                            for _dcat in _dtb.get("statistics", []):
+                                for _da in _dcat.get("athletes", []):
+                                    _da_info = _da.get("athlete", {})
+                                    _da_ref  = _da_info.get("$ref", "")
+                                    _da_aid  = (_D_ID.search(_da_ref) or type("",(),{"group":lambda s,n:""})()).group(1)
+                                    _da_name = _da_info.get("displayName", "")
+                                    if _da_aid and _da_name:
+                                        _d_names[_da_aid] = _da_name
+                        # Fill any remaining IDs from play refs using cached name lookup
+                        _missing_ids = set()
+                        for _dp in _dplays:
+                            for _dpt in _dp.get("participants", []):
+                                _dref = _dpt.get("athlete", {}).get("$ref", "")
+                                _daid = (_D_ID.search(_dref) or type("",(),{"group":lambda s,n:""})()).group(1)
+                                if _daid and _daid not in _d_names:
+                                    _missing_ids.add(_daid)
+                        if _missing_ids:
+                            from nfl.api import get_athlete_displayname as _dgadn
+                            with st.spinner(f"Resolving {len(_missing_ids)} unlisted athletes…"):
+                                for _daid in _missing_ids:
+                                    _d_names[_daid] = _dgadn(_daid, "2025") or _dgadn(_daid, "") or _daid
 
                         st.caption(f"Plays: {len(_dplays)}/{_dcount}" + (" ⚠️ limit hit" if _dcount > len(_dplays) else " ✅"))
 
