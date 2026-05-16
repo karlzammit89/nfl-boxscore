@@ -3185,10 +3185,21 @@ elif st.session_state.view == "reconcile":
                         import json as _dj, urllib.request as _dur
                         import re as _dre2
 
-                        def _dfetch(url):
-                            _req = _dur.Request(url, headers={"User-Agent":"Mozilla/5.0","Accept":"application/json"})
-                            with _dur.urlopen(_req, timeout=15) as _rr:
-                                return _dj.loads(_rr.read())
+                        _dbtn_key = f"debug_load_{_r['game_id']}"
+                        _ddata_key = f"debug_data_{_r['game_id']}"
+
+                        if _ddata_key not in st.session_state:
+                            st.info("Click below to fetch live play data for this game.")
+                            if st.button("▶ Load debug data", key=_dbtn_key):
+                                st.session_state[_ddata_key] = True
+                                st.rerun()
+
+                        if st.session_state.get(_ddata_key):
+
+                            def _dfetch(url):
+                                _req = _dur.Request(url, headers={"User-Agent":"Mozilla/5.0","Accept":"application/json"})
+                                with _dur.urlopen(_req, timeout=15) as _rr:
+                                    return _dj.loads(_rr.read())
 
                         _DBASE = "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
                         _D_ID  = _dre2.compile(r"/athletes/([0-9]+)")
