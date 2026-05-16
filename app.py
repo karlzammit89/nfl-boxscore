@@ -198,7 +198,7 @@ for k, v in {
     "view":                "calendar",
     "recon_game_ids":      "",
     "recon_results":       None,
-    "recon_mode":          "Paste IDs",
+
     "selected_game_id":    None,
     "selected_game":       None,
     "selected_date":       None,
@@ -219,7 +219,7 @@ with _hdr1:
     st.markdown("## 🏈 NFL Box Scores")
 with _hdr2:
     st.markdown("<div style='margin-top:14px'>", unsafe_allow_html=True)
-    if st.button("🔍 Reconcile", use_container_width=True, key="btn_reconcile_nav"):
+    if st.button("📊 Multi-Game Reconciliation", use_container_width=True, key="btn_reconcile_nav"):
         st.session_state.view = "reconcile"
         st.rerun()
 st.divider()
@@ -3033,112 +3033,89 @@ elif st.session_state.view == "reconcile":
     st.markdown("<div class='sec-div' style='margin-top:12px'>🔍 Multi-Game Reconciliation</div>",
                 unsafe_allow_html=True)
 
-    # ── Mode selector ─────────────────────────────────────────────────────────
-    _mode = st.radio(
-        "Mode", ["Paste IDs", "Single Day", "Full Week", "Full Month"],
-        horizontal=True, label_visibility="collapsed", key="recon_mode",
-    )
+    # ── Date range picker ────────────────────────────────────────────────────
     import re as _re_rc
     _now = et_now()
-
     _rc1, _rc2 = st.columns([4, 1])
     with _rc1:
-        if _mode == "Paste IDs":
-            st.caption("Game IDs (one per line or comma-separated) or YYYY-MM-DD dates.")
-            _recon_input = st.text_area(
-                "IDs", value=st.session_state.recon_game_ids,
-                placeholder="401772984\n401772949\n2025-12-14",
-                height=100, key="recon_input_box", label_visibility="collapsed",
-            )
-        elif _mode == "Single Day":
-            st.caption("All games on a specific date.")
-            _day_date   = st.date_input("Date", value=_now.date(), key="recon_day_date", label_visibility="collapsed")
-            _recon_input = str(_day_date)
-        elif _mode == "Full Week":
-            st.caption("7-day window starting from the selected date (covers Thu–Wed).")
-            _week_start  = st.date_input("Week starts", value=_now.date(), key="recon_week_start", label_visibility="collapsed")
-            _recon_input = ",".join(str(_week_start + timedelta(days=i)) for i in range(7))
-        else:
-            st.caption("All games in a calendar month (~64 games, ~90 s first run).")
-            _mc1, _mc2 = st.columns(2)
-            with _mc1:
-                _sel_year  = st.selectbox("Year", [_now.year-1, _now.year, _now.year+1], index=1, key="recon_year", label_visibility="collapsed")
-            with _mc2:
-                _sel_month = st.selectbox("Month", list(range(1,13)), format_func=lambda m: MONTH_NAMES[m-1], index=_now.month-1, key="recon_month", label_visibility="collapsed")
-            _recon_input = f"MONTH:{_sel_year}:{_sel_month}"
-
+        st.caption("Select a start and end date to reconcile all games in that range.")
+        _dr_col1, _dr_col2 = st.columns(2)
+        with _dr_col1:
+            _date_start = st.date_input("Start date", value=_now.date().replace(day=1),
+                                         key="recon_date_start", label_visibility="visible")
+        with _dr_col2:
+            _date_end   = st.date_input("End date", value=_now.date(),
+                                         key="recon_date_end", label_visibility="visible")
     with _rc2:
-        st.markdown("<div style='margin-top:4px'>", unsafe_allow_html=True)
-        _run_recon = st.button("▶ Run",   use_container_width=True, key="recon_run")
-        _clear_btn = st.button("✕ Clear", use_container_width=True, key="recon_clear")
+        st.markdown("<div style='margin-top:28px'>", unsafe_allow_html=True)
+        _run_recon = st.button("▶️ Run",   use_container_width=True, key="recon_run")
+        _clear_btn = st.button("🗑️ Clear", use_container_width=True, key="recon_clear")
         if _clear_btn:
             st.session_state.recon_results   = None
             st.session_state.recon_game_ids  = ""
             st.rerun()
 
-    # ── Build game ID list ────────────────────────────────────────────────────
-    if _run_recon and _recon_input:
-        if _mode == "Paste IDs":
-            st.session_state.recon_game_ids = _recon_input
-        _game_ids = []
-        _date_re  = _re_rc.compile(r'^\d{4}-\d{2}-\d{2}$')
-
-        if _recon_input.startswith("MONTH:"):
-            _, _yr, _mo = _recon_input.split(":")
-            with st.spinner(f"Loading {MONTH_NAMES[int(_mo)-1]} {_yr} schedule…"):
-                _month_games = fetch_games_for_month(int(_yr), int(_mo))
-            _game_ids = list(dict.fromkeys(g["id"] for g in _month_games))
-            st.caption(f"Found **{len(_game_ids)} games** in {MONTH_NAMES[int(_mo)-1]} {_yr}")
+    # ── Build game ID list from date range ───────────────────────────────────
+    if _run_recon:
+        if _date_start > _date_end:
+            st.error("Start date must be before end date.")
+            _run_recon = False
         else:
-            for _tok in [t.strip() for t in _re_rc.split(r'[\n,]+', _recon_input) if t.strip()]:
-                if _date_re.match(_tok):
+            _game_ids = []
+            # Collect all months spanned by the range
+            _months_needed = set()
+            _cur = _date_start.replace(day=1)
+            while _cur <= _date_end:
+                _months_needed.add((_cur.year, _cur.month))
+                _cur = (_cur.replace(day=28) + timedelta(days=4)).replace(day=1)
+            for _yr2, _mo2 in sorted(_months_needed):
+                with st.spinner(f"Loading {MONTH_NAMES[_mo2-1]} {_yr2} schedule…"):
+                    _mg2 = fetch_games_for_month(_yr2, _mo2)
+                for _g in _mg2:
+                    _gd = et_date_str(_g["date"])
                     try:
-                        _d = date.fromisoformat(_tok)
-                        _mg = fetch_games_for_month(_d.year, _d.month)
-                        _day_ids = [g["id"] for g in _mg if et_date_str(g["date"]) == _tok]
-                        _game_ids.extend(_day_ids)
-                        if not _day_ids and _mode == "Single Day":
-                            st.warning(f"No games found for {_tok}")
-                    except Exception as _de:
-                        st.warning(f"Could not expand date {_tok}: {_de}")
-                elif _tok.isdigit():
-                    _game_ids.append(_tok)
+                        if _date_start <= date.fromisoformat(_gd) <= _date_end:
+                            _game_ids.append(_g["id"])
+                    except Exception:
+                        pass
             _game_ids = list(dict.fromkeys(_game_ids))
+            if _game_ids:
+                st.caption(f"Found **{len(_game_ids)} games** from {_date_start} to {_date_end}")
 
-        # ── Process games ─────────────────────────────────────────────────────
-        if not _game_ids:
-            st.error("No valid game IDs found.")
-        else:
-            _results = []
-            _prog    = st.progress(0, text=f"Processing 0 / {len(_game_ids)} games…")
-            for _gi, _gid in enumerate(_game_ids):
-                _prog.progress(_gi / len(_game_ids),
-                               text=f"Processing game {_gi+1} / {len(_game_ids)}: {_gid}")
-                try:
-                    _gdata = load_all_stats(_gid)
-                    _recon = get_reconciliation_status(_gdata, _gid)
-                    _ls    = _gdata.get("linescore", pd.DataFrame())
-                    _label = (f"{_ls.iloc[0]['Team']} @ {_ls.iloc[1]['Team']}"
-                              if _ls is not None and not _ls.empty and "Team" in _ls.columns and len(_ls) >= 2
-                              else _gid)
-                    if _recon["passed"]:
-                        _results.append({"game_id":_gid,"label":_label,"passed":True,"rows":[]})
-                    else:
-                        _mrows = []
-                        for _player, _cat, _col, _pbp, _official, _ in _recon["mismatches"]:
-                            _mrows.append({
-                                "Game": _label, "Player": _player,
-                                "Stat": _cat.capitalize(), "Col": _col,
-                                "Q/H Total": _pbp, "Official": _official,
-                                "Missing": str(_pbp - _official),
-                            })
-                        _results.append({"game_id":_gid,"label":_label,"passed":False,"rows":_mrows})
-                except Exception as _ge:
-                    _results.append({"game_id":_gid,"label":_gid,"passed":None,
-                                     "rows":[{"Game":_gid,"Player":f"Error: {str(_ge)[:60]}",
-                                              "Stat":"","Col":"","Q/H Total":"","Official":"","Missing":""}]})
-            _prog.progress(1.0, text=f"Done — {len(_game_ids)} games processed.")
-            st.session_state.recon_results = _results
+            # ── Process games ─────────────────────────────────────────────────────
+            if not _game_ids:
+                st.error("No valid game IDs found.")
+            else:
+                _results = []
+                _prog    = st.progress(0, text=f"Processing 0 / {len(_game_ids)} games…")
+                for _gi, _gid in enumerate(_game_ids):
+                    _prog.progress(_gi / len(_game_ids),
+                                   text=f"Processing game {_gi+1} / {len(_game_ids)}: {_gid}")
+                    try:
+                        _gdata = load_all_stats(_gid)
+                        _recon = get_reconciliation_status(_gdata, _gid)
+                        _ls    = _gdata.get("linescore", pd.DataFrame())
+                        _label = (f"{_ls.iloc[0]['Team']} @ {_ls.iloc[1]['Team']}"
+                                  if _ls is not None and not _ls.empty and "Team" in _ls.columns and len(_ls) >= 2
+                                  else _gid)
+                        if _recon["passed"]:
+                            _results.append({"game_id":_gid,"label":_label,"passed":True,"rows":[]})
+                        else:
+                            _mrows = []
+                            for _player, _cat, _col, _pbp, _official, _ in _recon["mismatches"]:
+                                _mrows.append({
+                                    "Game": _label, "Player": _player,
+                                    "Stat": _cat.capitalize(), "Col": _col,
+                                    "Q/H Total": _pbp, "Official": _official,
+                                    "Missing": str(_pbp - _official),
+                                })
+                            _results.append({"game_id":_gid,"label":_label,"passed":False,"rows":_mrows})
+                    except Exception as _ge:
+                        _results.append({"game_id":_gid,"label":_gid,"passed":None,
+                                         "rows":[{"Game":_gid,"Player":f"Error: {str(_ge)[:60]}",
+                                                  "Stat":"","Col":"","Q/H Total":"","Official":"","Missing":""}]})
+                _prog.progress(1.0, text=f"Done — {len(_game_ids)} games processed.")
+                st.session_state.recon_results = _results
 
     # ── Display results ───────────────────────────────────────────────────────
     if st.session_state.recon_results:
@@ -3158,8 +3135,7 @@ elif st.session_state.view == "reconcile":
         # ── Per-game results (collapsed by default) ───────────────────────────
         for _r in _results:
             if _r["passed"] is True:
-                with st.expander(f"✅ {_r['label']}  ({_r['game_id']})", expanded=False):
-                    st.success("All stats match official totals.")
+                st.success(f"✅ {_r['label']}  ({_r['game_id']})")
 
             elif _r["passed"] is None:
                 with st.expander(f"⚠️ {_r['label']}  ({_r['game_id']})", expanded=False):
@@ -3180,18 +3156,10 @@ elif st.session_state.view == "reconcile":
                         use_container_width=True, hide_index=True,
                     )
 
-                    # ── Debug inline (no nested expander, no rerun) ───────────
+                    # ── Debug — loads automatically for mismatch games ────────
                     import json as _dj, urllib.request as _dur, re as _dre2
-                    _ddata_key = f"debug_data_{_r['game_id']}"
-                    _dgid      = _r["game_id"]
-
-                    if not st.session_state.get(_ddata_key):
-                        st.button(
-                            "🔍 Load debug data", key=f"dbtn_{_dgid}",
-                            on_click=lambda k=_ddata_key: st.session_state.update({k: True}),
-                        )
-                    else:
-                        # All fetch + display inside here — no rerun needed
+                    _dgid = _r["game_id"]
+                    if True:
                         def _dfetch(url):
                             _req = _dur.Request(url, headers={"User-Agent":"Mozilla/5.0","Accept":"application/json"})
                             with _dur.urlopen(_req, timeout=15) as _rr:
@@ -3380,6 +3348,6 @@ elif st.session_state.view == "reconcile":
                                   "Stat":"","Col":"","Q/H Total":"","Official":"","Missing":""})
         if _all_rows:
             st.divider()
-            st.download_button("⬇ Download CSV", data=pd.DataFrame(_all_rows).to_csv(index=False),
+            st.download_button("📥 Download CSV", data=pd.DataFrame(_all_rows).to_csv(index=False),
                                file_name="reconciliation_results.csv", mime="text/csv", key="recon_dl")
 # ══ END RECONCILE ══════════════════════════════════════════════════════════════
