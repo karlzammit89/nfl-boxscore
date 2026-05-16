@@ -102,16 +102,17 @@ def get_scoring_plays(game_id: str) -> list[dict]:
     plays = []
     for sp in summary.get("scoringPlays", []):
         plays.append({
-            "period":      sp.get("period", {}).get("number", 0),
-            "clock":       sp.get("clock", {}).get("displayValue", ""),
-            "team":        sp.get("team", {}).get("displayName", ""),
-            "team_abbr":   sp.get("team", {}).get("abbreviation", ""),
-            "type":        sp.get("type", {}).get("text", ""),
-            "type_id":     str(sp.get("type", {}).get("id", "")),
-            "score_value": sp.get("scoreValue", 0),
-            "description": sp.get("text", ""),
-            "away_score":  sp.get("awayScore", 0),
-            "home_score":  sp.get("homeScore", 0),
+            "period":            sp.get("period", {}).get("number", 0),
+            "clock":             sp.get("clock", {}).get("displayValue", ""),
+            "team":              sp.get("team", {}).get("displayName", ""),
+            "team_abbr":         sp.get("team", {}).get("abbreviation", ""),
+            "type":              sp.get("type", {}).get("text", ""),
+            "type_id":           str(sp.get("type", {}).get("id", "")),
+            "scoring_type_name": sp.get("scoringType", {}).get("name", ""),
+            "score_value":       sp.get("scoreValue", 0),
+            "description":       sp.get("text", ""),
+            "away_score":        sp.get("awayScore", 0),
+            "home_score":        sp.get("homeScore", 0),
         })
     return plays
 
