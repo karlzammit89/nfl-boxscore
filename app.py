@@ -227,24 +227,6 @@ st.divider()
 
 # ── Data loaders ──────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=60*60*24*7, show_spinner=False)   # 7-day cache per athlete (F1: shorter TTL prevents stale name swaps)
-def _cached_athlete_name(athlete_id: str, season: str) -> str:
-    """Resolve ESPN athlete ID to displayName, cached 30 days."""
-    from nfl.api import get_athlete_displayname
-    return get_athlete_displayname(athlete_id, season)
-
-
-def _patch_athlete_resolver():
-    """
-    Monkey-patch nfl.api.get_athlete_displayname to use Streamlit's 30-day cache.
-    Called once at startup so all stats computations benefit from caching.
-    """
-    import nfl.api as _nfl_api
-    _nfl_api.get_athlete_displayname = _cached_athlete_name
-
-
-_patch_athlete_resolver()
-
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _fetch_week(week: int, season_type: int) -> list:
@@ -3057,9 +3039,6 @@ elif st.session_state.view == "reconcile":
 
     # ── Build game ID list from date range ───────────────────────────────────
     if _run_recon:
-        # Auto-clear athlete name cache on every run — prevents stale name swaps
-        # (Bond/Corley, Evans duplicates) without requiring a manual button press.
-        st.cache_data.clear()
         if _date_start > _date_end:
             st.error("Start date must be before end date.")
             _run_recon = False
