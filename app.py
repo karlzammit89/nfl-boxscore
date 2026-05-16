@@ -655,7 +655,8 @@ elif st.session_state.view == "boxscore":
             _plays = []; _play_count = 0
 
         import pandas as _dpd
-        from nfl.api import get_game_summary as _dgs2, get_passing_stats as _dps2
+        from nfl.api import get_game_summary as _dgs2
+        from nfl.stats import get_passing_stats as _dps2
 
         _sum2 = _dgs2(game_id) or {}
         _box  = _sum2.get("boxscore", {})
