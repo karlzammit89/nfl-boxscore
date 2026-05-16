@@ -569,7 +569,7 @@ def get_player_stats_by_period(game_id: str) -> dict:
         "field goal good", "field goal missed",
         "missed field goal return", "missed field goal return touchdown",
         "extra point good", "extra point failed",
-        "safety", "interception return touchdown", "fumble return touchdown",
+        "safety", "fumble return touchdown",
         "two point rush", "two point pass", "two-point rush", "two-point pass",
         "two point conversion", "two-point conversion",
         "two point conversion attempt", "two-point conversion attempt",
@@ -666,10 +666,12 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
                 rd["rec"] += 1; rd["yds"] += stat_yds; rd["td"] += 1
 
-        elif ptype in {"pass interception return", "interception return", "interception"}:
-            # F4: ESPN uses variant play type strings for INTs across different games.
-            # All three strings mean the same event — a QB pass that was intercepted.
-            # "interception return touchdown" is already in _SKIP_TYPES so cannot reach here.
+        elif ptype in {"pass interception return", "interception return", "interception",
+                           "interception return touchdown"}:
+            # F4 + Fix A: ESPN uses variant play type strings for INTs.
+            # "interception return touchdown" removed from _SKIP_TYPES so QBs
+            # receive att+1 int+1 credit even when the INT is returned for a TD.
+            # Confirmed: psr participant always present on these plays.
             if psr:
                 d = passing[period][psr]; d["Team"] = team or d["Team"]
                 d["att"] += 1; d["int"] += 1
@@ -685,9 +687,31 @@ def get_player_stats_by_period(game_id: str) -> dict:
         elif ptype in {"rush", "scramble", "rushing touchdown"}:
             if rsh:
                 d = rushing[period][rsh]; d["Team"] = team or d["Team"]
-                d["car"] += 1; d["yds"] += stat_yds
-                if ptype == "rushing touchdown":
-                    d["td"] += 1
+                # Fix D: On offensive penalty rush plays (pos_team == pen_team),
+                # ESPN official counts the actual yards run even though the play is
+                # called back. statYardage is the penalty march-back distance (negative),
+                # not the yards run. Parse actual yards from play text.
+                # CAR is NOT counted (the play is officially nullified).
+                # Confirmed: Jeanty +19 text vs statYardage=-17, official counts 19.
+                _is_off_pen_rush = False
+                if play.get("isPenalty"):
+                    _pen_ref = (play.get("penaltyTeam") or play.get("penaltyPlayerTeam") or {})
+                    if isinstance(_pen_ref, dict):
+                        _pen_tid = _re.search(r"/teams/(\d+)", _pen_ref.get("$ref", ""))
+                        _play_tid = _re.search(r"/teams/(\d+)", (play.get("team") or {}).get("$ref", ""))
+                        if _pen_tid and _play_tid and _pen_tid.group(1) == _play_tid.group(1):
+                            _is_off_pen_rush = True
+                if _is_off_pen_rush:
+                    # Count yards but NOT the carry
+                    _pen_text = play.get("text", "") or ""
+                    _pen_yd_m = _re.search(r"for\s+(-?\d+)\s+yards?", _pen_text, _re.I)
+                    if _pen_yd_m:
+                        d["yds"] += _safe_int(_pen_yd_m.group(1))
+                    # else: no yards parseable, add nothing
+                else:
+                    d["car"] += 1; d["yds"] += stat_yds
+                    if ptype == "rushing touchdown":
+                        d["td"] += 1
 
         elif ptype in {"fumble recovery (own)", "fumble recovery (opponent)"}:
             # ESPN sets statYardage=0 when a reversal occurs; parse from text instead
@@ -697,51 +721,41 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 yd_m = _re.search(r"\bfor\s+(-?[0-9]+)\s+yards?", text, _re.I)
                 if yd_m:
                     fum_yds = _safe_int(yd_m.group(1))
-            # F6: Fumble recovery passer/receiver credit rules.
-            # A fumble recovery is NEVER a passing attempt in official stats.
-            # Confirmed across 3 data points: sack-fumble (Oladokun), direct-snap
-            # fumble (Taysom Hill), pass-fumble-opponent-recovery (Huntley).
-            #
-            # "fumble recovery (own)":
-            #   - NEVER credit psr (not a passing attempt)
-            #   - KEEP rcv credit — if receiver caught then fumbled and own team
-            #     recovered, the reception counts in official stats
-            #   - KEEP rsh credit if rsh and not psr (rusher recovered own fumble)
-            #
-            # "fumble recovery (opponent)":
-            #   - NEVER credit psr (turnover voids the attempt)
-            #   - NEVER credit rcv (turnover before receiver was downed = no reception)
+            # F6 (narrow): On "fumble recovery (own)", strip psr credit ONLY when
+            # the play is a sack-fumble or a non-QB direct-snap.
+            # Signal: "sacked" OR formation keywords in play text.
+            # - Sack-fumble: Oladokun "sacked at TEN 11" → no pass ATT ✅
+            # - Direct-snap: Bojorquez "Field Goal formation", Mapu "Punt formation" → no pass ATT ✅
+            # - Genuine QB pass → Ewers→Waddle "pass deep left" has none of these → keep psr+rcv ✅
+            # On "fumble recovery (opponent)": always keep psr+rcv.
+            # Confirmed from 4 opponent recovery plays: all are genuine completions
+            # where receiver gained yards before fumbling. ESPN official counts all.
+            _fum_text = (play.get("text", "") or "").lower()
+            _fum_is_sack_or_snap = (
+                "sacked" in _fum_text
+                or "direct snap" in _fum_text
+                or "field goal formation" in _fum_text
+                or "punt formation" in _fum_text
+            )
             if ptype == "fumble recovery (own)":
+                if psr and not _fum_is_sack_or_snap:
+                    # Genuine QB pass, receiver fumbled, offense recovered → completion counts
+                    d = passing[period][psr]; d["Team"] = team or d["Team"]
+                    d["att"] += 1; d["comp"] += 1; d["yds"] += fum_yds
+                if rcv and not _fum_is_sack_or_snap:
+                    rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
+                    rd["rec"] += 1; rd["yds"] += fum_yds
+                if rsh and not psr:   # rushing fumble recovery (no pass involved)
+                    d = rushing[period][rsh]; d["Team"] = team or d["Team"]
+                    d["car"] += 1; d["yds"] += fum_yds
+            else:  # fumble recovery (opponent)
+                # Receiver gained yards then fumbled — completion counts officially
+                if psr:
+                    d = passing[period][psr]; d["Team"] = team or d["Team"]
+                    d["att"] += 1; d["comp"] += 1; d["yds"] += fum_yds
                 if rcv:
                     rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
                     rd["rec"] += 1; rd["yds"] += fum_yds
-                if rsh and not psr:   # rushing fumble recovery
-                    d = rushing[period][rsh]; d["Team"] = team or d["Team"]
-                    d["car"] += 1; d["yds"] += fum_yds
-            # fumble recovery (opponent): no stat credits (turnover)
-
-    # ── F3: Non-official passer/rusher filter ────────────────────────────────
-    # Remove accumulated stats for players who are NOT in the official boxscore.
-    # This catches: punters/backups tagged as passer by ESPN (Bojorquez, Josh Johnson),
-    # QBs accumulating sack yards as rushing (Stroud), and similar RC-TRICK cases.
-    # Guard: only apply when official DFs are non-empty (feed failure protection).
-    _off_pass_df = get_passing_stats(game_id)
-    _off_rush_df = get_rushing_stats(game_id)
-    if _off_pass_df is not None and not _off_pass_df.empty and "Player" in _off_pass_df.columns:
-        _official_passers = set(_off_pass_df["Player"].dropna())
-        for _period_key in list(passing.keys()):
-            for _pname in list(passing[_period_key].keys()):
-                # Check if player matches any official passer (exact or abbreviated)
-                if not _match_player(_off_pass_df, _pname).empty:
-                    continue  # player is in official — keep
-                # Player not found in official passing → remove
-                del passing[_period_key][_pname]
-    if _off_rush_df is not None and not _off_rush_df.empty and "Player" in _off_rush_df.columns:
-        for _period_key in list(rushing.keys()):
-            for _pname in list(rushing[_period_key].keys()):
-                if not _match_player(_off_rush_df, _pname).empty:
-                    continue  # player is in official — keep
-                del rushing[_period_key][_pname]
 
     # ── DataFrame builders ────────────────────────────────────────────────────
     def to_sack_df(acc):
