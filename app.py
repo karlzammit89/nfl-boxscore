@@ -3037,24 +3037,23 @@ elif st.session_state.view == "reconcile":
     # ── Date range picker ────────────────────────────────────────────────────
     import re as _re_rc
     _now = et_now()
-    _rc1, _rc2 = st.columns([4, 1])
-    with _rc1:
-        st.caption("Select a start and end date to reconcile all games in that range.")
-        _dr_col1, _dr_col2 = st.columns(2)
-        with _dr_col1:
-            _date_start = st.date_input("Start date", value=_now.date().replace(day=1),
-                                         key="recon_date_start", label_visibility="visible")
-        with _dr_col2:
-            _date_end   = st.date_input("End date", value=_now.date(),
-                                         key="recon_date_end", label_visibility="visible")
-    with _rc2:
-        st.markdown("<div style='margin-top:28px'>", unsafe_allow_html=True)
-        _run_recon = st.button("▶️ Run",  use_container_width=True, key="recon_run")
+    st.caption("Select a start and end date to reconcile all games in that range.")
+    _dr_col1, _dr_col2 = st.columns(2)
+    with _dr_col1:
+        _date_start = st.date_input("Start date", value=_now.date().replace(day=1),
+                                     key="recon_date_start", label_visibility="visible")
+    with _dr_col2:
+        _date_end   = st.date_input("End date", value=_now.date(),
+                                     key="recon_date_end", label_visibility="visible")
+    _btn_col1, _btn_col2 = st.columns(2)
+    with _btn_col1:
+        _run_recon = st.button("▶️ Run",   use_container_width=True, key="recon_run")
+    with _btn_col2:
         _clear_btn = st.button("🗑️ Clear", use_container_width=True, key="recon_clear")
-        if _clear_btn:
-            st.session_state.recon_results  = None
-            st.session_state.recon_game_ids = ""
-            st.rerun()
+    if _clear_btn:
+        st.session_state.recon_results  = None
+        st.session_state.recon_game_ids = ""
+        st.rerun()
 
     # ── Build game ID list from date range ───────────────────────────────────
     if _run_recon:
@@ -3115,7 +3114,7 @@ elif st.session_state.view == "reconcile":
                                 elif _count_col and _abs == 1:
                                     _cause = "🔍 Investigate"
                                 elif not _count_col and _abs <= 2:
-                                    _cause = "📊 ESPN gap"
+                                    _cause = "🟡 ESPN gap"
                                 else:  # YDS/AVG gap > 2
                                     _cause = "🔍 Investigate"
                                 _mrows.append({
@@ -3147,11 +3146,11 @@ elif st.session_state.view == "reconcile":
             _all_mrows = [row for r in _results if not r["passed"] for row in r["rows"]]
             _n_logic   = sum(1 for row in _all_mrows if row.get("Cause","") == "❌ Logic")
             _n_invest  = sum(1 for row in _all_mrows if row.get("Cause","") == "🔍 Investigate")
-            _n_espngap = sum(1 for row in _all_mrows if row.get("Cause","") == "📊 ESPN gap")
+            _n_espngap = sum(1 for row in _all_mrows if row.get("Cause","") == "🟡 ESPN gap")
             _parts = []
             if _n_logic:  _parts.append(f"❌ {_n_logic} logic bug{'s' if _n_logic!=1 else ''}")
             if _n_invest: _parts.append(f"🔍 {_n_invest} to investigate")
-            if _n_espngap:_parts.append(f"📊 {_n_espngap} ESPN gap{'s' if _n_espngap!=1 else ''}")
+            if _n_espngap:_parts.append(f"🟡 {_n_espngap} ESPN gap{'s' if _n_espngap!=1 else ''}")
             _summary = " · ".join(_parts) if _parts else f"{_n_miss} mismatches"
             st.error(f"{_n_fail}/{len(_results)} games have gaps · {_summary} · ✅ {_n_pass} passed"
                      + (f" · ⚠️ {_n_err} errors" if _n_err else ""))
@@ -3166,14 +3165,24 @@ elif st.session_state.view == "reconcile":
                     st.warning(_r["rows"][0]["Player"])
 
             else:
+                # Build per-cause counts for expander label
+                _exp_rows  = _r["rows"]
+                _exp_logic = sum(1 for row in _exp_rows if row.get("Cause","") == "❌ Logic")
+                _exp_inv   = sum(1 for row in _exp_rows if row.get("Cause","") == "🔍 Investigate")
+                _exp_gap   = sum(1 for row in _exp_rows if row.get("Cause","") == "🟡 ESPN gap")
+                _exp_parts = []
+                if _exp_logic: _exp_parts.append(f"❌ {_exp_logic} logic")
+                if _exp_inv:   _exp_parts.append(f"🔍 {_exp_inv} investigate")
+                if _exp_gap:   _exp_parts.append(f"🟡 {_exp_gap} ESPN gap{'s' if _exp_gap!=1 else ''}")
+                _exp_label = " · ".join(_exp_parts) if _exp_parts else f"{len(_exp_rows)} mismatches"
                 with st.expander(
-                    f"❌ {_r['label']}  ({_r['game_id']}) — {len(_r['rows'])} mismatch{'es' if len(_r['rows'])>1 else ''}",
+                    f"{_r['label']}  ({_r['game_id']}) — {_exp_label}",
                     expanded=False,
                 ):
                     _mdf = pd.DataFrame(_r["rows"])
                     # Split rows by cause for separate display
                     _real_rows = _mdf[_mdf["Cause"].isin(["❌ Logic", "🔍 Investigate"])] if "Cause" in _mdf.columns else _mdf
-                    _gap_rows  = _mdf[_mdf["Cause"] == "📊 ESPN gap"] if "Cause" in _mdf.columns else pd.DataFrame()
+                    _gap_rows  = _mdf[_mdf["Cause"] == "🟡 ESPN gap"] if "Cause" in _mdf.columns else pd.DataFrame()
 
                     def _style_missing(df):
                         return df.style.map(
@@ -3187,7 +3196,7 @@ elif st.session_state.view == "reconcile":
                         st.dataframe(_style_missing(_real_rows), use_container_width=True, hide_index=True)
 
                     if not _gap_rows.empty:
-                        with st.expander(f"📊 ESPN data gaps — {len(_gap_rows)} row(s) (measurement noise, not logic bugs)", expanded=False):
+                        with st.expander(f"🟡 ESPN data gaps — {len(_gap_rows)} row(s) (measurement noise, not logic bugs)", expanded=False):
                             st.caption("These rows are ±1–2 YDS differences between ESPN's Core API play-by-play and their official boxscore. Structurally unfixable — two ESPN systems measuring the same plays differently.")
                             st.dataframe(_gap_rows, use_container_width=True, hide_index=True)
 
@@ -3426,7 +3435,7 @@ elif st.session_state.view == "reconcile":
             st.divider()
             _dl1, _dl2 = st.columns(2)
             with _dl1:
-                st.download_button("📥 Download mismatches CSV",
+                st.download_button("📥 Download Mismatches CSV",
                                    data=pd.DataFrame(_all_rows).to_csv(index=False),
                                    file_name="reconciliation_results.csv",
                                    mime="text/csv", key="recon_dl")
@@ -3438,7 +3447,7 @@ elif st.session_state.view == "reconcile":
                     if _dk in st.session_state:
                         _all_dbg.extend(st.session_state[_dk])
                 if _all_dbg:
-                    st.download_button("🔍 Download debug CSV",
+                    st.download_button("📥 Download Debug CSV",
                                        data=pd.DataFrame(_all_dbg).to_csv(index=False),
                                        file_name="reconciliation_debug.csv",
                                        mime="text/csv", key="debug_dl")
