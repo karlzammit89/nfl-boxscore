@@ -3184,247 +3184,217 @@ elif st.session_state.view == "reconcile":
                     with st.expander("🔍 Debug this game", expanded=False):
                         import json as _dj, urllib.request as _dur
                         import re as _dre2
-
-                        _dbtn_key = f"debug_load_{_r['game_id']}"
+                        _dbtn_key  = f"debug_load_{_r['game_id']}"
                         _ddata_key = f"debug_data_{_r['game_id']}"
+                        _dgid      = _r["game_id"]
 
-                        if _ddata_key not in st.session_state:
-                            st.info("Click below to fetch live play data for this game.")
+                        if not st.session_state.get(_ddata_key):
                             if st.button("▶ Load debug data", key=_dbtn_key):
                                 st.session_state[_ddata_key] = True
                                 st.rerun()
-
-                        if st.session_state.get(_ddata_key):
-
+                        else:
                             def _dfetch(url):
                                 _req = _dur.Request(url, headers={"User-Agent":"Mozilla/5.0","Accept":"application/json"})
                                 with _dur.urlopen(_req, timeout=15) as _rr:
                                     return _dj.loads(_rr.read())
-
-                        _DBASE = "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
-                        _D_ID  = _dre2.compile(r"/athletes/([0-9]+)")
-                        _D_TM  = _dre2.compile(r"/teams/([0-9]+)")
-                        _dgid  = _r["game_id"]
-
-                        try:
-                            _draw  = _dfetch(_DBASE + f"/events/{_dgid}/competitions/{_dgid}/plays?limit=400")
-                            _dplays = _draw.get("items", [])
-                            _dcount = _draw.get("count", 0)
-                        except Exception as _de2:
-                            st.error(f"Could not fetch plays: {_de2}")
-                            _dplays = []; _dcount = 0
-
-                        from nfl.api import get_game_summary as _dgs3, get_athlete_displayname as _dgadn
-                        from nfl.stats import get_passing_stats as _dgps
-
-                        _dsum  = _dgs3(_dgid) or {}
-                        _dbox  = _dsum.get("boxscore", {})
-
-                        # Roster + team maps
-                        _d_roster = set()
-                        _d_tid    = {}
-                        for _dtb in _dbox.get("players", []):
-                            for _dcat in _dtb.get("statistics", []):
-                                for _dathl in _dcat.get("athletes", []):
-                                    _dn = _dathl.get("athlete", {}).get("displayName", "")
-                                    if _dn: _d_roster.add(_dn)
-                        for _dtb in _dsum.get("boxscore", {}).get("teams", []):
-                            _dt = str(_dtb.get("team", {}).get("id", ""))
-                            _da = _dtb.get("team", {}).get("abbreviation", "")
-                            if _dt and _da: _d_tid[_dt] = _da
-
-                        def _d_team(ref):
-                            _m = _D_TM.search(ref or "")
-                            return _d_tid.get(_m.group(1), "") if _m else ""
-
-                        # Build name cache for this game
-                        _d_names = {}
-                        for _dp in _dplays:
-                            for _dpt in _dp.get("participants", []):
-                                _dref = _dpt.get("athlete", {}).get("$ref", "")
-                                _daid = (_D_ID.search(_dref) or type("",(),{"group":lambda s,n:""})()).group(1)
-                                if _daid and _daid not in _d_names:
-                                    _d_names[_daid] = _dgadn(_daid, "2025") or _dgadn(_daid, "") or ""
-
-                        st.markdown(f"**Plays fetched:** {len(_dplays)} / {_dcount}"
-                                    + (" ⚠️ limit hit — plays missing!" if _dcount > len(_dplays) else " ✅"))
-
-                        # C1: wrong name check
-                        st.markdown("**C1 — Athlete names not in game roster:**")
-                        _c1_rows = [{"athlete_id":aid,"resolved_name":name,
-                                     "in_roster":"✅ YES" if name in _d_roster else "❌ NO — stale/wrong",
-                                     "role": next((p.get("type","") for pl in _dplays
-                                                   for p in pl.get("participants",[])
-                                                   if (_D_ID.search(p.get("athlete",{}).get("$ref","")) or
-                                                       type("",(),{"group":lambda s,n:""})()).group(1)==aid), "?")}
-                                    for aid, name in _d_names.items() if name and name not in _d_roster]
-                        if _c1_rows:
-                            st.dataframe(pd.DataFrame(_c1_rows), use_container_width=True, hide_index=True)
-                        else:
-                            st.success("All athlete IDs resolve to valid roster names.")
-
-                        # C2: RC-TRICK official passers check
-                        st.markdown("**C2 — Official passers set vs passer-role plays:**")
-                        try:
-                            _doff = _dgps(_dgid)
-                            if _doff is not None and not _doff.empty and "Player" in _doff.columns:
-                                _dop = set(_doff["Player"].str.split().str[-1].str.lower())
-                                st.code(f"_official_passers = {sorted(_dop)}")
-                                _c2_rows = []
+                            _DBASE = "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
+                            _D_ID  = _dre2.compile(r"/athletes/([0-9]+)")
+                            _D_TM  = _dre2.compile(r"/teams/([0-9]+)")
+                            with st.spinner("Fetching plays…"):
+                                try:
+                                    _draw   = _dfetch(_DBASE + f"/events/{_dgid}/competitions/{_dgid}/plays?limit=400")
+                                    _dplays = _draw.get("items", [])
+                                    _dcount = _draw.get("count", 0)
+                                except Exception as _de2:
+                                    st.error(f"Could not fetch plays: {_de2}")
+                                    _dplays = []; _dcount = 0
+                            from nfl.api import get_game_summary as _dgs3, get_athlete_displayname as _dgadn
+                            from nfl.stats import get_passing_stats as _dgps
+                            with st.spinner("Loading game summary…"):
+                                _dsum = _dgs3(_dgid) or {}
+                            _dbox = _dsum.get("boxscore", {})
+                            _d_roster = set()
+                            _d_tid    = {}
+                            for _dtb in _dbox.get("players", []):
+                                for _dcat in _dtb.get("statistics", []):
+                                    for _dathl in _dcat.get("athletes", []):
+                                        _dn = _dathl.get("athlete", {}).get("displayName", "")
+                                        if _dn: _d_roster.add(_dn)
+                            for _dtb in _dsum.get("boxscore", {}).get("teams", []):
+                                _dt = str(_dtb.get("team", {}).get("id", ""))
+                                _da = _dtb.get("team", {}).get("abbreviation", "")
+                                if _dt and _da: _d_tid[_dt] = _da
+                            def _d_team(ref):
+                                _m = _D_TM.search(ref or "")
+                                return _d_tid.get(_m.group(1), "") if _m else ""
+                            _d_names = {}
+                            with st.spinner("Resolving athlete names…"):
                                 for _dp in _dplays:
                                     for _dpt in _dp.get("participants", []):
-                                        if _dpt.get("type") != "passer": continue
                                         _dref = _dpt.get("athlete", {}).get("$ref", "")
                                         _daid = (_D_ID.search(_dref) or type("",(),{"group":lambda s,n:""})()).group(1)
-                                        _dn   = _d_names.get(_daid, "")
-                                        _dl   = _dn.split(".")[-1].strip().lower() if "." in _dn else _dn.split()[-1].lower() if _dn else ""
-                                        if _dl and _dl not in _dop:
-                                            _c2_rows.append({"play_type":(_dp.get("type",{}).get("text","") or "").lower(),
-                                                             "psr_name":_dn,"psr_last":_dl,
-                                                             "in_official_passers":"❌ NOT IN SET",
-                                                             "text":str(_dp.get("text",""))[:80]})
-                                if _c2_rows:
-                                    st.dataframe(pd.DataFrame(_c2_rows), use_container_width=True, hide_index=True)
-                                else:
-                                    st.success("All passer-role plays match official passers.")
+                                        if _daid and _daid not in _d_names:
+                                            _d_names[_daid] = _dgadn(_daid, "2025") or _dgadn(_daid, "") or ""
+                            st.markdown(f"**Plays fetched:** {len(_dplays)} / {_dcount}"
+                                        + (" ⚠️ limit hit!" if _dcount > len(_dplays) else " ✅"))
+                            # C1: wrong name check
+                            st.markdown("**C1 — Athlete names not in game roster:**")
+                            _c1_rows = [{"athlete_id":aid,"resolved_name":name,
+                                         "in_roster":"✅ YES" if name in _d_roster else "❌ NO",
+                                         "role": next((p.get("type","") for pl in _dplays
+                                                       for p in pl.get("participants",[])
+                                                       if (_D_ID.search(p.get("athlete",{}).get("$ref","")) or
+                                                           type("",(),{"group":lambda s,n:""})()).group(1)==aid), "?")}
+                                        for aid, name in _d_names.items() if name and name not in _d_roster]
+                            if _c1_rows:
+                                st.dataframe(pd.DataFrame(_c1_rows), use_container_width=True, hide_index=True)
                             else:
-                                st.warning("Official passing stats empty — RC-TRICK check disabled.")
-                        except Exception as _ce2: st.error(f"C2 error: {_ce2}")
-
-                        # C3: INT plays passer role check
-                        st.markdown("**C3 — Interception plays (passer role present?):**")
-                        _c3_rows = []
-                        for _dp in _dplays:
-                            if (_dp.get("type",{}).get("text","") or "").lower() != "pass interception return": continue
-                            _droles = {_dpt.get("type","") for _dpt in _dp.get("participants",[])}
-                            _dtxt   = str(_dp.get("text",""))
-                            _dim    = _dre2.search(r"(?:\([^)]*\)\s*)?([A-Z]\.[A-Za-z\-']+(?:\s+(?:Jr|Sr|II|III|IV)\.?)?)\s+pass", _dtxt)
-                            _dpsr_id = ""
-                            for _dpt in _dp.get("participants",[]):
-                                if _dpt.get("type")=="passer":
-                                    _dpsr_id = (_D_ID.search(_dpt.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1)
-                            _c3_rows.append({
-                                "Q": f"Q{(_dp.get('period') or {}).get('number','?')}",
-                                "passer role?": "✅ YES → athlete_id" if "passer" in _droles else "❌ NO → text parse",
-                                "psr_athlete_id": _dpsr_id or "N/A",
-                                "text_parse": _dim.group(1) if _dim else "❌ REGEX MISS",
-                                "key_mismatch?": "⚠️ MISMATCH" if "passer" not in _droles and _dim else ("✅ OK" if "passer" in _droles else "❌ MISS"),
-                                "text": _dtxt[:90],
-                            })
-                        if _c3_rows:
-                            st.dataframe(pd.DataFrame(_c3_rows), use_container_width=True, hide_index=True)
-                        else:
-                            st.info("No interception plays in this game.")
-
-                        # C4: isPenalty plays pos_team resolution
-                        st.markdown("**C4 — isPenalty offensive plays (pos_team resolution):**")
-                        _c4_rows = []
-                        for _dp in _dplays:
-                            if not _dp.get("isPenalty") or _dp.get("scoringPlay"): continue
-                            _droles = {_dpt.get("type","") for _dpt in _dp.get("participants",[])}
-                            if not (_droles & {"passer","receiver","rusher"}): continue
-                            _dtxt  = (str(_dp.get("text","")) or "").upper()
-                            _dyds  = _dp.get("statYardage",0)
-                            _dptype= (_dp.get("type",{}).get("text","") or "").lower()
-                            _dper  = (_dp.get("period") or {}).get("number","?")
-                            _dpos1 = _d_team(_dp.get("team",{}).get("$ref",""))
-                            _dpos2 = ""
-                            for _dpt in _dp.get("participants",[]):
-                                if _dpt.get("type") in ("passer","rusher","receiver"):
-                                    _dtm = _D_TM.search(_dpt.get("athlete",{}).get("$ref",""))
-                                    if _dtm:
-                                        _dpos2 = _d_tid.get(_dtm.group(1),"")
-                                        if _dpos2: break
-                            _dpos_used = _dpos1 or _dpos2
-                            _dpen_m    = _dre2.search(r"PENALTY ON ([A-Z]{2,3})[^A-Z]", _dtxt)
-                            _dpen_team = _dpen_m.group(1) if _dpen_m else "❌ REGEX MISS"
-                            _dmatch    = _dpen_team == _dpos_used if (_dpos_used and _dpen_team != "❌ REGEX MISS") else None
-                            _c4_rows.append({
-                                "Q": f"Q{_dper}", "type": _dptype, "yds": _dyds,
-                                "pos_primary": _dpos1 or "❌ EMPTY",
-                                "pos_fallback": _dpos2 or "❌ EMPTY",
-                                "pos_used": _dpos_used or "❌ EMPTY",
-                                "penalty_team": _dpen_team,
-                                "would_skip?": ("✅ SKIPPED" if _dmatch else
-                                               ("❌ NOT skipped" if _dmatch is False else
-                                                "⚠️ pos_team empty")),
-                                "text": str(_dp.get("text",""))[:80],
-                            })
-                        if _c4_rows:
-                            st.dataframe(pd.DataFrame(_c4_rows), use_container_width=True, hide_index=True)
-                            _not_skip = sum(1 for r in _c4_rows if "NOT" in r["would_skip?"])
-                            _empty    = sum(1 for r in _c4_rows if "empty" in r["would_skip?"])
-                            st.caption(f"Not skipped: {_not_skip} | pos_team empty: {_empty}")
-                        else:
-                            st.success("No isPenalty offensive plays.")
-
-                        # C5: missing carry finder
-                        st.markdown("**C5 — Rusher-role plays (find missing carry):**")
-                        _c5_filter = st.text_input("Filter by last name", key=f"c5_{_dgid}")
-                        _c5_rows = []
-                        for _dp in _dplays:
-                            for _dpt in _dp.get("participants",[]):
-                                if _dpt.get("type") != "rusher": continue
-                                _dref = _dpt.get("athlete",{}).get("$ref","")
-                                _daid = (_D_ID.search(_dref) or type("",(),{"group":lambda s,n:""})()).group(1)
-                                _dn   = _d_names.get(_daid,"?")
-                                if _c5_filter and _c5_filter.lower() not in _dn.lower(): continue
-                                _dptype = (_dp.get("type",{}).get("text","") or "").lower()
-                                _dskip  = _dptype in {"end period","end of half","end of game",
-                                                       "timeout","coin toss","kickoff","punt",
-                                                       "penalty","uncategorized","field goal good",
-                                                       "field goal missed","extra point good","safety",""}
-                                _c5_rows.append({
+                                st.success("All athlete IDs resolve to valid roster names.")
+                            # C2: official passers check
+                            st.markdown("**C2 — Official passers set vs passer-role plays:**")
+                            try:
+                                _doff = _dgps(_dgid)
+                                if _doff is not None and not _doff.empty and "Player" in _doff.columns:
+                                    _dop = set(_doff["Player"].str.split().str[-1].str.lower())
+                                    st.code(f"_official_passers = {sorted(_dop)}")
+                                    _c2_rows = []
+                                    for _dp in _dplays:
+                                        for _dpt in _dp.get("participants", []):
+                                            if _dpt.get("type") != "passer": continue
+                                            _daid = (_D_ID.search(_dpt.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1)
+                                            _dn   = _d_names.get(_daid, "")
+                                            _dl   = _dn.split(".")[-1].strip().lower() if "." in _dn else _dn.split()[-1].lower() if _dn else ""
+                                            if _dl and _dl not in _dop:
+                                                _c2_rows.append({"play_type":(_dp.get("type",{}).get("text","") or "").lower(),
+                                                                 "psr_name":_dn,"psr_last":_dl,
+                                                                 "in_official_passers":"❌ NOT IN SET",
+                                                                 "text":str(_dp.get("text",""))[:80]})
+                                    if _c2_rows:
+                                        st.dataframe(pd.DataFrame(_c2_rows), use_container_width=True, hide_index=True)
+                                    else:
+                                        st.success("All passer-role plays match official passers.")
+                                else:
+                                    st.warning("Official passing stats empty.")
+                            except Exception as _ce2: st.error(f"C2 error: {_ce2}")
+                            # C3: INT plays
+                            st.markdown("**C3 — Interception plays (passer role present?):**")
+                            _c3_rows = []
+                            for _dp in _dplays:
+                                if (_dp.get("type",{}).get("text","") or "").lower() != "pass interception return": continue
+                                _droles = {_dpt.get("type","") for _dpt in _dp.get("participants",[])}
+                                _dtxt   = str(_dp.get("text",""))
+                                _dim    = _dre2.search(r"(?:\([^)]*\)\s*)?([A-Z]\.[A-Za-z\-']+(?:\s+(?:Jr|Sr|II|III|IV)\.?)?)\s+pass", _dtxt)
+                                _dpsr_id = ""
+                                for _dpt in _dp.get("participants",[]):
+                                    if _dpt.get("type")=="passer":
+                                        _dpsr_id = (_D_ID.search(_dpt.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1)
+                                _c3_rows.append({
                                     "Q": f"Q{(_dp.get('period') or {}).get('number','?')}",
-                                    "rusher": _dn, "play_type": _dptype,
-                                    "yds": _dp.get("statYardage",0),
-                                    "isPenalty": _dp.get("isPenalty",False),
-                                    "would_count?": ("❌ SKIPPED (skip_types)" if _dskip else
-                                                     ("✅ rush handler" if _dptype in {"rush","scramble","rushing touchdown"} else "✅ catch-all")),
+                                    "passer role?": "✅ YES" if "passer" in _droles else "❌ NO",
+                                    "psr_id": _dpsr_id or "N/A",
+                                    "text_parse": _dim.group(2) if _dim else "❌ MISS",
+                                    "key_mismatch?": "⚠️ MISMATCH" if "passer" not in _droles and _dim else ("✅ OK" if "passer" in _droles else "❌ MISS"),
+                                    "text": _dtxt[:90],
+                                })
+                            if _c3_rows:
+                                st.dataframe(pd.DataFrame(_c3_rows), use_container_width=True, hide_index=True)
+                            else:
+                                st.info("No interception plays in this game.")
+                            # C4: isPenalty pos_team
+                            st.markdown("**C4 — isPenalty offensive plays (pos_team resolution):**")
+                            _c4_rows = []
+                            for _dp in _dplays:
+                                if not _dp.get("isPenalty") or _dp.get("scoringPlay"): continue
+                                _droles = {_dpt.get("type","") for _dpt in _dp.get("participants",[])}
+                                if not (_droles & {"passer","receiver","rusher"}): continue
+                                _dtxt  = (str(_dp.get("text","")) or "").upper()
+                                _dptype= (_dp.get("type",{}).get("text","") or "").lower()
+                                _dper  = (_dp.get("period") or {}).get("number","?")
+                                _dpos1 = _d_team(_dp.get("team",{}).get("$ref",""))
+                                _dpos2 = ""
+                                for _dpt in _dp.get("participants",[]):
+                                    if _dpt.get("type") in ("passer","rusher","receiver"):
+                                        _dtm = _D_TM.search(_dpt.get("athlete",{}).get("$ref",""))
+                                        if _dtm:
+                                            _dpos2 = _d_tid.get(_dtm.group(1),"")
+                                            if _dpos2: break
+                                _dpos_used = _dpos1 or _dpos2
+                                _dpen_m    = _dre2.search(r"PENALTY ON ([A-Z]{2,3})[^A-Z]", _dtxt)
+                                _dpen_team = _dpen_m.group(1) if _dpen_m else "❌ REGEX MISS"
+                                _dmatch    = _dpen_team == _dpos_used if (_dpos_used and _dpen_team != "❌ REGEX MISS") else None
+                                _c4_rows.append({
+                                    "Q": f"Q{_dper}", "type": _dptype, "yds": _dp.get("statYardage",0),
+                                    "pos_primary": _dpos1 or "❌ EMPTY",
+                                    "pos_fallback": _dpos2 or "❌ EMPTY",
+                                    "pos_used": _dpos_used or "❌ EMPTY",
+                                    "penalty_team": _dpen_team,
+                                    "would_skip?": ("✅ SKIPPED" if _dmatch else ("❌ NOT skipped" if _dmatch is False else "⚠️ pos_team empty")),
                                     "text": str(_dp.get("text",""))[:80],
                                 })
-                        if _c5_rows:
-                            from collections import Counter as _Ctr
-                            _summary = {}
-                            for _row in _c5_rows:
-                                _n = _row["rusher"]
-                                if _n not in _summary: _summary[_n] = {"counted":0,"skipped":0}
-                                if "SKIPPED" in _row["would_count?"]: _summary[_n]["skipped"]+=1
-                                else: _summary[_n]["counted"]+=1
-                            st.dataframe(pd.DataFrame([{"rusher":n,"our_CAR":d["counted"],"skipped":d["skipped"]} for n,d in sorted(_summary.items())]),
-                                         use_container_width=True, hide_index=True)
-                            with st.expander("All rusher plays"):
-                                st.dataframe(pd.DataFrame(_c5_rows), use_container_width=True, hide_index=True)
-                        else:
-                            st.info("No rusher-role plays (or no match for filter).")
-
-                        # C6: negative receiving plays
-                        st.markdown("**C6 — Negative-yard receiving plays:**")
-                        _c6_rows = []
-                        for _dp in _dplays:
-                            if _dp.get("statYardage",0) >= 0: continue
-                            _droles = {_dpt.get("type","") for _dpt in _dp.get("participants",[])}
-                            if "receiver" not in _droles: continue
-                            _dyds = _dp.get("statYardage",0)
-                            _dpen = _dp.get("isPenalty",False)
-                            _dsc  = _dp.get("scoringPlay",False)
-                            _dn   = ""
-                            for _dpt in _dp.get("participants",[]):
-                                if _dpt.get("type")=="receiver":
+                            if _c4_rows:
+                                st.dataframe(pd.DataFrame(_c4_rows), use_container_width=True, hide_index=True)
+                                st.caption(f"Not skipped: {sum(1 for r in _c4_rows if 'NOT' in r['would_skip?'])} | pos_team empty: {sum(1 for r in _c4_rows if 'empty' in r['would_skip?'])}")
+                            else:
+                                st.success("No isPenalty offensive plays.")
+                            # C5: missing carry
+                            st.markdown("**C5 — Rusher-role plays (find missing carry):**")
+                            _c5_filter = st.text_input("Filter by last name", key=f"c5_{_dgid}")
+                            _c5_rows = []
+                            for _dp in _dplays:
+                                for _dpt in _dp.get("participants",[]):
+                                    if _dpt.get("type") != "rusher": continue
                                     _daid = (_D_ID.search(_dpt.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1)
                                     _dn   = _d_names.get(_daid,"?")
-                            _c6_rows.append({
-                                "Q": f"Q{(_dp.get('period') or {}).get('number','?')}",
-                                "receiver": _dn, "yds": _dyds,
-                                "isPenalty": _dpen, "scoringPlay": _dsc,
-                                "current_guard?": ("✅ SKIPPED" if _dpen and not _dsc else "❌ not skipped"),
-                                "extended_guard?": ("✅ SKIPPED" if _dyds < -10 and not _dsc else "❌ not skipped"),
-                                "text": str(_dp.get("text",""))[:80],
-                            })
-                        if _c6_rows:
-                            st.dataframe(pd.DataFrame(_c6_rows), use_container_width=True, hide_index=True)
-                        else:
-                            st.success("No negative-yard receiving plays.")
+                                    if _c5_filter and _c5_filter.lower() not in _dn.lower(): continue
+                                    _dptype = (_dp.get("type",{}).get("text","") or "").lower()
+                                    _dskip  = _dptype in {"end period","end of half","end of game","timeout","coin toss","kickoff","punt","penalty","uncategorized","field goal good","field goal missed","extra point good","safety",""}
+                                    _c5_rows.append({
+                                        "Q": f"Q{(_dp.get('period') or {}).get('number','?')}",
+                                        "rusher": _dn, "play_type": _dptype,
+                                        "yds": _dp.get("statYardage",0),
+                                        "isPenalty": _dp.get("isPenalty",False),
+                                        "would_count?": ("❌ SKIPPED" if _dskip else ("✅ rush handler" if _dptype in {"rush","scramble","rushing touchdown"} else "✅ catch-all")),
+                                        "text": str(_dp.get("text",""))[:80],
+                                    })
+                            if _c5_rows:
+                                _summary = {}
+                                for _row in _c5_rows:
+                                    _n = _row["rusher"]
+                                    if _n not in _summary: _summary[_n] = {"counted":0,"skipped":0}
+                                    if "SKIPPED" in _row["would_count?"]: _summary[_n]["skipped"]+=1
+                                    else: _summary[_n]["counted"]+=1
+                                st.dataframe(pd.DataFrame([{"rusher":n,"our_CAR":d["counted"],"skipped":d["skipped"]} for n,d in sorted(_summary.items())]), use_container_width=True, hide_index=True)
+                                with st.expander("All rusher plays"):
+                                    st.dataframe(pd.DataFrame(_c5_rows), use_container_width=True, hide_index=True)
+                            else:
+                                st.info("No rusher-role plays (or no match for filter).")
+                            # C6: negative receiving
+                            st.markdown("**C6 — Negative-yard receiving plays:**")
+                            _c6_rows = []
+                            for _dp in _dplays:
+                                if _dp.get("statYardage",0) >= 0: continue
+                                _droles = {_dpt.get("type","") for _dpt in _dp.get("participants",[])}
+                                if "receiver" not in _droles: continue
+                                _dyds = _dp.get("statYardage",0)
+                                _dpen = _dp.get("isPenalty",False)
+                                _dsc  = _dp.get("scoringPlay",False)
+                                _dn   = ""
+                                for _dpt in _dp.get("participants",[]):
+                                    if _dpt.get("type")=="receiver":
+                                        _daid = (_D_ID.search(_dpt.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1)
+                                        _dn   = _d_names.get(_daid,"?")
+                                _c6_rows.append({
+                                    "Q": f"Q{(_dp.get('period') or {}).get('number','?')}",
+                                    "receiver": _dn, "yds": _dyds,
+                                    "isPenalty": _dpen, "scoringPlay": _dsc,
+                                    "current_guard?": ("✅ SKIPPED" if _dpen and not _dsc else "❌ not skipped"),
+                                    "extended_guard?": ("✅ SKIPPED" if _dyds < -10 and not _dsc else "❌ not skipped"),
+                                    "text": str(_dp.get("text",""))[:80],
+                                })
+                            if _c6_rows:
+                                st.dataframe(pd.DataFrame(_c6_rows), use_container_width=True, hide_index=True)
+                            else:
+                                st.success("No negative-yard receiving plays.")
 
         # ── CSV download ──────────────────────────────────────────────────────
         _all_rows = []
