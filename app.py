@@ -3190,7 +3190,9 @@ elif st.session_state.view == "reconcile":
                         for _dtb in _dbox.get("players", []):
                             for _dcat in _dtb.get("statistics", []):
                                 for _da in _dcat.get("athletes", []):
-                                    _dn = _da.get("athlete", {}).get("displayName", "")
+                                    # F1: displayName lives on _da directly, not inside _da["athlete"]
+                                    _dn = (_da.get("displayName") or
+                                           _da.get("athlete", {}).get("displayName", ""))
                                     if _dn: _d_roster.add(_dn)
                         for _dtb in _dsum.get("boxscore", {}).get("teams", []):
                             _dt = str(_dtb.get("team", {}).get("id", ""))
@@ -3201,15 +3203,16 @@ elif st.session_state.view == "reconcile":
                             _m = _D_TM.search(ref or "")
                             return _d_tid.get(_m.group(1), "") if _m else ""
 
-                        # Build athlete_id → name from boxscore (0 extra API calls)
+                        # F1: Build athlete_id → name from boxscore
+                        # displayName is on _da directly; athlete.$ref carries the ID
                         _d_names = {}
                         for _dtb in _dbox.get("players", []):
                             for _dcat in _dtb.get("statistics", []):
                                 for _da in _dcat.get("athletes", []):
-                                    _da_info = _da.get("athlete", {})
-                                    _da_ref  = _da_info.get("$ref", "")
+                                    _da_ref  = _da.get("athlete", {}).get("$ref", "")
                                     _da_aid  = (_D_ID.search(_da_ref) or type("",(),{"group":lambda s,n:""})()).group(1)
-                                    _da_name = _da_info.get("displayName", "")
+                                    _da_name = (_da.get("displayName") or
+                                                _da.get("athlete", {}).get("displayName", ""))
                                     if _da_aid and _da_name:
                                         _d_names[_da_aid] = _da_name
                         # Fill stat-role IDs not in boxscore — no API calls, show raw ID
@@ -3290,7 +3293,9 @@ elif st.session_state.view == "reconcile":
                             _dpm  = _dre2.search(r"PENALTY ON ([A-Z]{2,3})[^A-Z]", _dtxt)
                             _dpt2 = _dpm.group(1) if _dpm else "—"
                             _dmatch = _dpt2 == _dpu if (_dpu and _dpt2 != "—") else None
-                            _skip_status = "✅ skipped" if _dmatch else ("❌ counted — wrong" if _dmatch is False else "⚠️ counted — pos_team unknown")
+                            _skip_status = ("✅ skipped (off. pen)" if _dmatch else
+                                            ("✅ counted (def. pen)" if _dmatch is False else
+                                             "⚠️ counted — pos_team unknown"))
                             _c4.append({"Q":f"Q{(_dp.get('period') or {}).get('number','?')}",
                                         "player":next((_d_names.get((_D_ID.search(_dpt.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1),"?") for _dpt in _dp.get("participants",[]) if _dpt.get("type") in ("passer","rusher","receiver")),"?"),
                                         "yds":_dp.get("statYardage",0),
