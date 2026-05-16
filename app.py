@@ -227,7 +227,7 @@ st.divider()
 
 # ── Data loaders ──────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=60*60*24*30, show_spinner=False)  # 30-day cache per athlete
+@st.cache_data(ttl=60*60*24*7, show_spinner=False)   # 7-day cache per athlete (F1: shorter TTL prevents stale name swaps)
 def _cached_athlete_name(athlete_id: str, season: str) -> str:
     """Resolve ESPN athlete ID to displayName, cached 30 days."""
     from nfl.api import get_athlete_displayname
@@ -3049,11 +3049,17 @@ elif st.session_state.view == "reconcile":
                                          key="recon_date_end", label_visibility="visible")
     with _rc2:
         st.markdown("<div style='margin-top:28px'>", unsafe_allow_html=True)
-        _run_recon = st.button("▶️ Run",   use_container_width=True, key="recon_run")
-        _clear_btn = st.button("🗑️ Clear", use_container_width=True, key="recon_clear")
+        _run_recon  = st.button("▶️ Run",          use_container_width=True, key="recon_run")
+        _clear_btn  = st.button("🗑️ Clear",        use_container_width=True, key="recon_clear")
+        _cache_btn  = st.button("♻️ Clear Name Cache", use_container_width=True, key="recon_cache_clear",
+                                help="Clears the athlete name cache. Use when player names appear swapped between games.")
         if _clear_btn:
             st.session_state.recon_results   = None
             st.session_state.recon_game_ids  = ""
+            st.rerun()
+        if _cache_btn:
+            st.cache_data.clear()
+            st.success("✅ Athlete name cache cleared — names will be re-fetched on next run.")
             st.rerun()
 
     # ── Build game ID list from date range ───────────────────────────────────
