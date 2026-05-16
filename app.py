@@ -633,6 +633,358 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
+    # ── DEBUG: Fix confirmation panel ─────────────────────────────────────────
+    with st.expander("🔍 DEBUG — Fix confirmation (C1–C6)", expanded=False):
+        import json as _dj, re as _dre, urllib.request as _dur
+
+        def _fetch(url):
+            _req = _dur.Request(url, headers={"User-Agent":"Mozilla/5.0","Accept":"application/json"})
+            with _dur.urlopen(_req, timeout=15) as _r:
+                return _dj.loads(_r.read())
+
+        _BASE = "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
+        _ID_RE2 = _dre.compile(r"/athletes/([0-9]+)")
+        _TM_RE2 = _dre.compile(r"/teams/([0-9]+)")
+
+        try:
+            _raw = _fetch(_BASE + f"/events/{game_id}/competitions/{game_id}/plays?limit=400")
+            _plays = _raw.get("items", [])
+            _play_count = _raw.get("count", 0)
+        except Exception as _e:
+            st.error(f"Could not fetch plays: {_e}")
+            _plays = []; _play_count = 0
+
+        import pandas as _dpd
+        from nfl.api import get_game_summary as _dgs2, get_passing_stats as _dps2
+
+        _sum2 = _dgs2(game_id) or {}
+        _box  = _sum2.get("boxscore", {})
+
+        # Build game roster: player name → team abbr
+        _roster_names = set()
+        _roster_by_name = {}  # last_name_lower → full display name
+        for _tb in _box.get("players", []):
+            _t_abbr = _tb.get("team", {}).get("abbreviation", "")
+            for _cat in _tb.get("statistics", []):
+                for _athl in _cat.get("athletes", []):
+                    _pname = _athl.get("athlete", {}).get("displayName", "")
+                    if _pname:
+                        _roster_names.add(_pname)
+                        _roster_by_name[_pname.split()[-1].lower()] = _pname
+
+        # Build team ID → abbreviation map
+        _tid_abbr = {}
+        for _tb in _sum2.get("boxscore", {}).get("teams", []):
+            _tid = str(_tb.get("team", {}).get("id", ""))
+            _tab = _tb.get("team", {}).get("abbreviation", "")
+            if _tid and _tab: _tid_abbr[_tid] = _tab
+
+        def _team_from_ref(ref):
+            _m = _TM_RE2.search(ref or "")
+            return _tid_abbr.get(_m.group(1), "") if _m else ""
+
+        # ── C1: RC-NAME — show athlete IDs that resolve to wrong names ────────
+        st.markdown("### C1 — RC-NAME: Athlete ID → resolved name vs game roster")
+        st.caption(
+            "For every participant in this game's plays, shows the athlete_id, "
+            "the name returned by the cache, and whether that name appears in the "
+            "ESPN boxscore roster. ❌ = cache returning wrong/stale name."
+        )
+        _name_check = {}  # aid → (resolved_name, in_roster)
+        for _pl in _plays:
+            for _pt in _pl.get("participants", []):
+                _ref = _pt.get("athlete", {}).get("$ref", "")
+                _aid = (_ID_RE2.search(_ref) or type("",(),{"group":lambda s,n:""})()).group(1)
+                if _aid and _aid not in _name_check:
+                    from nfl.api import get_athlete_displayname as _gadn
+                    _rname = _gadn(_aid, "2025") or _gadn(_aid, "") or ""
+                    _in_roster = _rname in _roster_names if _rname else False
+                    _name_check[_aid] = (_rname, _in_roster)
+
+        _nc_rows = [{"athlete_id": aid, "resolved_name": name,
+                     "in_roster?": "✅ YES" if ok else "❌ NO — stale/wrong",
+                     "role": next((p.get("type","") for pl in _plays
+                                   for p in pl.get("participants",[])
+                                   if (_ID_RE2.search(p.get("athlete",{}).get("$ref","")) or
+                                       type("",(),{"group":lambda s,n:""})()).group(1)==aid), "?")}
+                    for aid, (name, ok) in sorted(_name_check.items())]
+        _wrong = [r for r in _nc_rows if "NO" in r["in_roster?"]]
+        st.markdown(f"**Total unique athlete IDs: {len(_nc_rows)} | Wrong names: {len(_wrong)}**")
+        if _wrong:
+            st.dataframe(_dpd.DataFrame(_wrong), use_container_width=True, hide_index=True)
+        with st.expander("Show all resolved names"):
+            st.dataframe(_dpd.DataFrame(_nc_rows), use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        # ── C2: RC-TRICK — show _official_passers set and psr_name for flagged plays ─
+        st.markdown("### C2 — RC-TRICK: What does _official_passers contain?")
+        st.caption(
+            "Shows the official passer last-name set built from ESPN's boxscore, "
+            "and for every play where a non-QB passer is suspected, shows the "
+            "resolved psr_name and whether it appears in the set."
+        )
+        try:
+            _off_pass = _dps2(game_id)
+            if _off_pass is not None and not _off_pass.empty and "Player" in _off_pass.columns:
+                _official_passers = set(_off_pass["Player"].str.split().str[-1].str.lower())
+                st.markdown(f"**_official_passers set ({len(_official_passers)} names):**")
+                st.code(str(sorted(_official_passers)))
+
+                # Find any play where passer role is present but name not in official passers
+                _trick_rows = []
+                for _pl in _plays:
+                    for _pt in _pl.get("participants", []):
+                        if _pt.get("type") != "passer": continue
+                        _ref = _pt.get("athlete", {}).get("$ref", "")
+                        _aid = (_ID_RE2.search(_ref) or type("",(),{"group":lambda s,n:""})()).group(1)
+                        _rname = _name_check.get(_aid, ("?", False))[0]
+                        _last = _rname.split(".")[-1].strip().lower() if "." in _rname else _rname.split()[-1].lower() if _rname else ""
+                        _in_set = _last in _official_passers
+                        _ptype = (_pl.get("type",{}).get("text","") or "").lower()
+                        if not _in_set:
+                            _trick_rows.append({
+                                "play_type": _ptype,
+                                "psr_name":  _rname,
+                                "psr_last":  _last,
+                                "in_official_passers?": "❌ NOT IN SET",
+                                "athlete_id": _aid,
+                                "text": str(_pl.get("text",""))[:80],
+                            })
+                if _trick_rows:
+                    st.markdown("**Plays where passer role present but name NOT in official_passers:**")
+                    st.dataframe(_dpd.DataFrame(_trick_rows), use_container_width=True, hide_index=True)
+                else:
+                    st.success("All passer-role plays match official passers — RC-TRICK filter works correctly.")
+            else:
+                st.warning("Official passing stats empty — _official_passers would be empty set → RC-TRICK check skipped for all plays.")
+        except Exception as _e2:
+            st.error(f"C2 error: {_e2}")
+
+        st.divider()
+
+        # ── C3: RC-INT — show INT plays and whether passer role is present ────
+        st.markdown("### C3 — RC-INT: Interception plays — passer role present?")
+        st.caption(
+            "For every 'pass interception return' play, shows whether ESPN "
+            "attached a 'passer' participant role. If NO → the text-parse fallback "
+            "fires and the result goes to a name-string key instead of athlete_id. "
+            "Also shows what the text-parse regex would extract."
+        )
+        _int_plays = [_pl for _pl in _plays
+                      if (_pl.get("type",{}).get("text","") or "").lower() == "pass interception return"]
+        if _int_plays:
+            _int_rows = []
+            for _pl in _int_plays:
+                _roles  = {_pt.get("type","") for _pt in _pl.get("participants",[])}
+                _psr_present = "passer" in _roles
+                _txt = str(_pl.get("text",""))
+                _int_m = _dre.search(
+                    r"(?:\([^)]*\)\s*)?([A-Z]\.[A-Za-z\-']+(?:\s+(?:Jr|Sr|II|III|IV)\.?)?)\s+pass",
+                    _txt)
+                _parsed_name = _int_m.group(1) if _int_m else "❌ REGEX MISS"
+                _per = (_pl.get("period") or {}).get("number","?")
+                # If psr IS present, get the athlete_id
+                _psr_id = ""
+                for _pt in _pl.get("participants",[]):
+                    if _pt.get("type") == "passer":
+                        _ref = _pt.get("athlete",{}).get("$ref","")
+                        _psr_id = (_ID_RE2.search(_ref) or type("",(),{"group":lambda s,n:""})()).group(1)
+                _int_rows.append({
+                    "Q": f"Q{_per}",
+                    "passer role?": "✅ YES → uses athlete_id" if _psr_present else "❌ NO → uses parsed name",
+                    "psr_athlete_id": _psr_id or "N/A",
+                    "text_parse_result": _parsed_name,
+                    "key_mismatch?": "⚠️ MISMATCH — name key ≠ id key" if not _psr_present and _parsed_name != "❌ REGEX MISS" else ("✅ OK" if _psr_present else "❌ MISS"),
+                    "text": _txt[:90],
+                })
+            st.dataframe(_dpd.DataFrame(_int_rows), use_container_width=True, hide_index=True)
+        else:
+            st.info("No 'pass interception return' plays found in this game.")
+
+        st.divider()
+
+        # ── C4: RC-OFFPEN — show isPenalty plays and pos_team resolution ──────
+        st.markdown("### C4 — RC-OFFPEN: isPenalty plays — pos_team resolution")
+        st.caption(
+            "For every isPenalty=True play with offensive roles, shows: "
+            "the pos_team from play.$ref (primary), pos_team from participant.$ref (fallback), "
+            "the extracted penalty team from text, and whether they match. "
+            "'❌ EMPTY' = _pos_team cannot be determined → play NOT skipped regardless of penalty."
+        )
+        _pen_rows = []
+        for _pl in _plays:
+            if not _pl.get("isPenalty"): continue
+            _roles = {_pt.get("type","") for _pt in _pl.get("participants",[])}
+            if not (_roles & {"passer","receiver","rusher"}): continue
+            if _pl.get("scoringPlay"): continue
+
+            _ptype = (_pl.get("type",{}).get("text","") or "").lower()
+            _txt = (str(_pl.get("text","")) or "").upper()
+            _yds = _pl.get("statYardage",0)
+            _per = (_pl.get("period") or {}).get("number","?")
+
+            # Primary pos_team from play
+            _play_team_ref = _pl.get("team",{}).get("$ref","")
+            _pos_primary = _team_from_ref(_play_team_ref)
+
+            # Fallback: participant team ref
+            _pos_fallback = ""
+            for _pt in _pl.get("participants",[]):
+                if _pt.get("type") in ("passer","rusher","receiver"):
+                    _pt_ref = _pt.get("athlete",{}).get("$ref","")
+                    _pt_tm = _TM_RE2.search(_pt_ref)
+                    if _pt_tm:
+                        _pos_fallback = _tid_abbr.get(_pt_tm.group(1),"")
+                        if _pos_fallback: break
+
+            _pos_team_used = _pos_primary or _pos_fallback
+
+            # Penalty team from text
+            _pen_m = _dre.search(r"PENALTY ON ([A-Z]{2,3})[^A-Z]", _txt)
+            _pen_team = _pen_m.group(1) if _pen_m else "❌ REGEX MISS"
+
+            _match = _pen_team == _pos_team_used if (_pos_team_used and _pen_team != "❌ REGEX MISS") else None
+            _would_skip = "✅ YES — skipped" if _match else ("❌ NO — NOT skipped" if _match is False else "⚠️ pos_team empty — NOT skipped")
+
+            _pen_rows.append({
+                "Q": f"Q{_per}",
+                "play_type": _ptype,
+                "yds": _yds,
+                "pos_primary": _pos_primary or "❌ EMPTY",
+                "pos_fallback": _pos_fallback or "❌ EMPTY",
+                "pos_team_used": _pos_team_used or "❌ EMPTY",
+                "penalty_team": _pen_team,
+                "would_skip?": _would_skip,
+                "text": str(_pl.get("text",""))[:80],
+            })
+
+        if _pen_rows:
+            st.dataframe(_dpd.DataFrame(_pen_rows), use_container_width=True, hide_index=True)
+            _not_skipped = [r for r in _pen_rows if "NOT skipped" in r["would_skip?"]]
+            _empty = [r for r in _pen_rows if "empty" in r["would_skip?"].lower()]
+            st.markdown(f"**Not skipped (offensive): {len(_not_skipped)} | pos_team empty: {len(_empty)}**")
+        else:
+            st.success("No isPenalty=True offensive plays in this game.")
+
+        st.divider()
+
+        # ── C5: RC-CAR — find the ONE missing carry per player ────────────────
+        st.markdown("### C5 — RC-CAR: Find the missing carry")
+        st.caption(
+            "Shows ALL plays with a rusher participant role, grouped by player. "
+            "Enter a player's last name to filter. "
+            "Compare count here to official CAR — the difference reveals the missing play."
+        )
+        _c5_player = st.text_input("Filter by rusher last name (e.g. Stroud, Allen, Williams)", key="c5_player")
+        _rush_plays = []
+        for _pl in _plays:
+            for _pt in _pl.get("participants",[]):
+                if _pt.get("type") != "rusher": continue
+                _ref = _pt.get("athlete",{}).get("$ref","")
+                _aid = (_ID_RE2.search(_ref) or type("",(),{"group":lambda s,n:""})()).group(1)
+                _rname = _name_check.get(_aid,("?",False))[0]
+                if _c5_player and _c5_player.lower() not in _rname.lower(): continue
+                _ptype = (_pl.get("type",{}).get("text","") or "").lower()
+                _yds = _pl.get("statYardage",0)
+                _per = (_pl.get("period") or {}).get("number","?")
+                _is_pen  = _pl.get("isPenalty",False)
+                _txt = str(_pl.get("text",""))
+                # What would our code do with this play?
+                _in_skip = _ptype in {
+                    "end period","end of half","end of game","end of regulation",
+                    "timeout","coin toss","kickoff","punt","penalty","uncategorized",
+                    "field goal good","field goal missed","extra point good","safety",
+                    "kickoff return touchdown","punt return touchdown","placeholder",""
+                }
+                _rush_plays.append({
+                    "Q": f"Q{_per}",
+                    "rusher": _rname,
+                    "athlete_id": _aid,
+                    "play_type": _ptype,
+                    "yds": _yds,
+                    "isPenalty": _is_pen,
+                    "in_SKIP_TYPES?": "⚠️ SKIPPED" if _in_skip else "✅ counted",
+                    "would_count?": "✅ yes" if not _in_skip and _ptype in {"rush","scramble","rushing touchdown"} else
+                                    ("✅ catch-all" if not _in_skip else "❌ SKIPPED"),
+                    "text": _txt[:80],
+                })
+        if _rush_plays:
+            # Summary by player
+            by_rusher = {}
+            for row in _rush_plays:
+                n = row["rusher"]
+                if n not in by_rusher: by_rusher[n] = {"counted":0,"skipped":0,"catch_all":0}
+                if "SKIPPED" in row["in_SKIP_TYPES?"]: by_rusher[n]["skipped"]+=1
+                elif "catch-all" in row["would_count?"]: by_rusher[n]["catch_all"]+=1
+                else: by_rusher[n]["counted"]+=1
+            _sum_rows = [{"rusher":n,"our_CAR_count":d["counted"],"catch_all":d["catch_all"],
+                          "skipped":d["skipped"],"total_rusher_plays":d["counted"]+d["catch_all"]+d["skipped"]}
+                         for n,d in sorted(by_rusher.items())]
+            st.markdown("**CAR count summary per rusher:**")
+            st.dataframe(_dpd.DataFrame(_sum_rows), use_container_width=True, hide_index=True)
+            st.markdown("**All rusher-role plays:**")
+            st.dataframe(_dpd.DataFrame(_rush_plays), use_container_width=True, hide_index=True)
+        else:
+            st.info("No rusher-role plays found (or no match for filter).")
+
+        st.divider()
+
+        # ── C6: RC-NEG — show all receiving plays with negative yards ─────────
+        st.markdown("### C6 — RC-NEG: Negative-yard receiving plays")
+        st.caption(
+            "Shows all receiving plays where statYardage < 0. "
+            "Key columns: isPenalty flag, scoringPlay flag, and whether "
+            "the current guard (isPenalty=True AND yds<0) would skip it."
+        )
+        _neg_recv = []
+        for _pl in _plays:
+            _yds = _pl.get("statYardage",0)
+            if _yds >= 0: continue
+            _roles = {_pt.get("type","") for _pt in _pl.get("participants",[])}
+            if "receiver" not in _roles: continue
+            _per = (_pl.get("period") or {}).get("number","?")
+            _is_pen   = _pl.get("isPenalty",False)
+            _is_score = _pl.get("scoringPlay",False)
+            _ptype = (_pl.get("type",{}).get("text","") or "").lower()
+            # Receiver name
+            _rcv_name = ""
+            for _pt in _pl.get("participants",[]):
+                if _pt.get("type") == "receiver":
+                    _ref2 = _pt.get("athlete",{}).get("$ref","")
+                    _aid2 = (_ID_RE2.search(_ref2) or type("",(),{"group":lambda s,n:""})()).group(1)
+                    _rcv_name = _name_check.get(_aid2,("?",False))[0]
+            _current_guard_skips = _is_pen and not _is_score
+            _extended_guard_skips = _yds < -10 and not _is_score
+            _neg_recv.append({
+                "Q": f"Q{_per}",
+                "receiver": _rcv_name,
+                "play_type": _ptype,
+                "yds": _yds,
+                "isPenalty": _is_pen,
+                "scoringPlay": _is_score,
+                "current_guard_skips?": "✅ SKIPPED" if _current_guard_skips else "❌ NOT skipped",
+                "extended_guard_skips?": "✅ SKIPPED" if _extended_guard_skips else "❌ NOT skipped",
+                "text": str(_pl.get("text",""))[:80],
+            })
+        if _neg_recv:
+            st.dataframe(_dpd.DataFrame(_neg_recv), use_container_width=True, hide_index=True)
+            _still_counted = [r for r in _neg_recv if "NOT skipped" in r["current_guard_skips?"] and "NOT skipped" in r["extended_guard_skips?"]]
+            _ext_would_fix = [r for r in _neg_recv if "NOT skipped" in r["current_guard_skips?"] and "SKIPPED" in r["extended_guard_skips?"]]
+            st.markdown(f"**Current guard misses: {len([r for r in _neg_recv if 'NOT skipped' in r['current_guard_skips?']])} | "
+                        f"Extended guard would additionally catch: {len(_ext_would_fix)} | "
+                        f"Still uncaught after extended guard: {len(_still_counted)}**")
+        else:
+            st.success("No negative-yard receiving plays in this game.")
+
+        # Play count warning
+        st.divider()
+        if _play_count > len(_plays):
+            st.warning(f"⚠️ API returned {_play_count} total plays but only {len(_plays)} fetched (limit=400). "
+                       f"Missing {_play_count - len(_plays)} plays — some carries/stats may be from unfetched plays.")
+        else:
+            st.success(f"✅ All {_play_count} plays fetched ({len(_plays)} items).")
+    # ── END DEBUG ─────────────────────────────────────────────────────────────
 
 
 
