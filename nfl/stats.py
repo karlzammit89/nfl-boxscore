@@ -533,15 +533,51 @@ def get_player_stats_by_period(game_id: str) -> dict:
     _name_cache = {}   # athlete_id str → displayName str (local per-call cache)
 
     def _resolve_athlete(athlete_id: str) -> str:
-        """Resolve athlete_id to displayName. Cached locally and by caller."""
-        if athlete_id in _name_cache:
-            return _name_cache[athlete_id]
-        name = get_athlete_displayname(athlete_id, _season_year)
-        if not name:
-            # Try without season (some athletes only available without year)
-            name = get_athlete_displayname(athlete_id, "")
-        _name_cache[athlete_id] = name
-        return name
+    """
+    Resolve athlete_id to displayName.
+    Order: local session cache → Supabase → ESPN API → save to Supabase.
+    """
+    # 1. Check local session cache first (fastest — no network call)
+    if athlete_id in _name_cache:
+        return _name_cache[athlete_id]
+
+    # 2. Check Supabase
+    try:
+        import streamlit as st
+        from supabase import create_client
+        _sb = create_client(st.secrets["supabase"]["url"],
+                            st.secrets["supabase"]["key"])
+        result = (_sb.table("athletes")
+                    .select("display_name")
+                    .eq("athlete_id", athlete_id)
+                    .eq("season_year", _season_year)
+                    .limit(1)
+                    .execute())
+        if result.data:
+            name = result.data[0]["display_name"]
+            _name_cache[athlete_id] = name
+            return name
+    except Exception:
+        pass   # Supabase unavailable — fall through to ESPN
+
+    # 3. Fall back to ESPN API
+    name = get_athlete_displayname(athlete_id, _season_year)
+    if not name:
+        name = get_athlete_displayname(athlete_id, "")
+
+    # 4. Save the new player to Supabase so next time is instant
+    if name:
+        try:
+            _sb.table("athletes").upsert({
+                "athlete_id":   athlete_id,
+                "season_year":  _season_year,
+                "display_name": name,
+            }).execute()
+        except Exception:
+            pass   # Save failed — not critical, name still returned
+
+    _name_cache[athlete_id] = name
+    return name
 
     def _extract_id(ref_url: str) -> str:
         m = _ID_RE.search(ref_url)
