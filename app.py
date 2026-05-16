@@ -214,14 +214,15 @@ MONTH_NAMES = ["January","February","March","April","May","June",
 
 # ── Header ────────────────────────────────────────────────────────────────────
 
-_hdr1, _hdr2 = st.columns([8, 1.5])
+_hdr1, _hdr2 = st.columns([5, 2.5])
 with _hdr1:
     st.markdown("## 🏈 NFL Box Scores")
 with _hdr2:
     st.markdown("<div style='margin-top:14px'>", unsafe_allow_html=True)
-    if st.button("📊 Multi-Game Reconciliation", use_container_width=True, key="btn_reconcile_nav"):
-        st.session_state.view = "reconcile"
-        st.rerun()
+    if st.session_state.view != "reconcile":
+        if st.button("🔍 Multi-Game Reconciliation", use_container_width=True, key="btn_reconcile_nav"):
+            st.session_state.view = "reconcile"
+            st.rerun()
 st.divider()
 
 # ── Data loaders ──────────────────────────────────────────────────────────────
@@ -3211,19 +3212,16 @@ elif st.session_state.view == "reconcile":
                                     _da_name = _da_info.get("displayName", "")
                                     if _da_aid and _da_name:
                                         _d_names[_da_aid] = _da_name
-                        # Fill any remaining IDs from play refs using cached name lookup
-                        _missing_ids = set()
+                        # Fill stat-role IDs not in boxscore — no API calls, show raw ID
+                        _STAT_ROLES_DBG = {"passer", "receiver", "rusher", "sackedBy"}
                         for _dp in _dplays:
                             for _dpt in _dp.get("participants", []):
+                                if _dpt.get("type") not in _STAT_ROLES_DBG:
+                                    continue
                                 _dref = _dpt.get("athlete", {}).get("$ref", "")
                                 _daid = (_D_ID.search(_dref) or type("",(),{"group":lambda s,n:""})()).group(1)
                                 if _daid and _daid not in _d_names:
-                                    _missing_ids.add(_daid)
-                        if _missing_ids:
-                            from nfl.api import get_athlete_displayname as _dgadn
-                            with st.spinner(f"Resolving {len(_missing_ids)} unlisted athletes…"):
-                                for _daid in _missing_ids:
-                                    _d_names[_daid] = _dgadn(_daid, "2025") or _dgadn(_daid, "") or _daid
+                                    _d_names[_daid] = f"[ID:{_daid}]"
 
                         st.caption(f"Plays: {len(_dplays)}/{_dcount}" + (" ⚠️ limit hit" if _dcount > len(_dplays) else " ✅"))
 
