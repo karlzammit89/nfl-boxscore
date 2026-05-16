@@ -303,7 +303,8 @@ def get_team_stats(game_id: str) -> pd.DataFrame:
 def get_scoring_summary(game_id: str) -> pd.DataFrame:
     """
     Chronological scoring plays with quarter/half labels.
-    Cols: Quarter, Half, Clock, Team, Type, Description, Away Score, Home Score
+    Cols: Quarter, Half, Clock, Team, Type, TypeID, ScoreValue, Description, Away Score, Home Score
+    TypeID and ScoreValue allow structured grading without text parsing.
     """
     plays = get_scoring_plays(game_id)
     if not plays:
@@ -318,6 +319,8 @@ def get_scoring_summary(game_id: str) -> pd.DataFrame:
             "Clock":       play.get("clock", ""),
             "Team":        play.get("team_abbr", play.get("team", "")),
             "Type":        play.get("type", ""),
+            "TypeID":      play.get("type_id", ""),
+            "ScoreValue":  play.get("score_value", 0),
             "Description": play.get("description", ""),
             "Away Score":  _safe_int(play.get("away_score", 0)),
             "Home Score":  _safe_int(play.get("home_score", 0)),
