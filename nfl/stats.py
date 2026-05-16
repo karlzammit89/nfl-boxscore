@@ -612,22 +612,10 @@ def get_player_stats_by_period(game_id: str) -> dict:
         if ptype in _SKIP_TYPES:
             continue
 
-        # ── isPenalty guard — offensive vs defensive penalty ──────────────────
-        # isPenalty=True plays split into two cases:
-        #   a) Penalty on OFFENSIVE team → play nullified → skip
-        #   b) Penalty on DEFENSIVE team → play stands → count normally
-        #   c) scoringPlay=True (e.g. TD + roughing passer) → always count
-        # We detect (a) by extracting 'PENALTY on TEAM-...' from play text and
-        # comparing to the possessing team (from participant team reference).
-        if play.get("isPenalty") and not play.get("scoringPlay"):
-            _play_txt = (play.get("text") or "").upper()
-            _pen_m    = _re.search(r"PENALTY ON ([A-Z]{2,3})[^A-Z]", _play_txt)
-            if _pen_m:
-                _pen_team = _pen_m.group(1)
-                _pos_team = _team_abbr_from_play(play)
-                if _pos_team and _pen_team == _pos_team:
-                    continue  # offensive-team penalty: play nullified → skip
-            # No match or defensive penalty → fall through and classify normally
+        # isPenalty guard removed: plays with type='Penalty' are already caught
+        # by _SKIP_TYPES above. Real offensive plays (Rush, Pass Reception) that
+        # have isPenalty=True simply had a declined/offset penalty on the play —
+        # the yards still count and the play must be classified normally.
 
         period = _safe_int((play.get("period") or {}).get("number", 0))
         if period == 0:
@@ -638,7 +626,8 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
         # Build role → displayName map for this play
         # Only resolve IDs for roles we actually use
-        roles = {}   # role_str → displayName
+        roles    = {}   # role_str → displayName
+        role_ids = {}   # role_str → athlete_id
         for participant in play.get("participants", []):
             role = participant.get("type", "")
             if role not in _STAT_ROLES:
@@ -648,29 +637,45 @@ def get_player_stats_by_period(game_id: str) -> dict:
             if not aid:
                 continue
             name = _resolve_athlete(aid)
-            if name and role not in roles:   # first participant of each role wins
-                roles[role] = name
+            if name and role not in roles:
+                roles[role]    = name
+                role_ids[role] = aid
 
         psr = roles.get("passer")
         rcv = roles.get("receiver")
         rsh = roles.get("rusher")
         skr = roles.get("sackedBy")
 
+        # RC-OFFPEN Fix: determine possession team with fallback to participant ref
+        _pos_team = _team_abbr_from_play(play)
+        if not _pos_team:
+            for _pt in play.get("participants", []):
+                if _pt.get("type") in ("passer", "rusher", "receiver"):
+                    _pt_ref = _pt.get("athlete", {}).get("$ref", "")
+                    _pt_tm  = _re.search(r"/teams/([0-9]+)", _pt_ref)
+                    if _pt_tm:
+                        _pos_team = _team_id_to_abbr.get(_pt_tm.group(1), "")
+                        if _pos_team:
+                            break
+
+        # RC-OFFPEN Fix: skip offensive-penalty plays (penalty on possession team)
+        if play.get("isPenalty") and not play.get("scoringPlay"):
+            _play_txt = (play.get("text") or "").upper()
+            _pen_m    = _re.search(r"PENALTY ON ([A-Z]{2,3})[^A-Z]", _play_txt)
+            if _pen_m and _pos_team and _pen_m.group(1) == _pos_team:
+                continue  # offensive-team penalty: play nullified → skip
+            # RC3a Fix: DPI completions statYardage=0 — skip as ATT/REC
+            if ptype in {"pass reception", "pass"} and stat_yds == 0:
+                continue
+
         # ── Classify and accumulate ───────────────────────────────────────────
         if ptype in {"pass reception", "pass"}:
-            # Fix RC3a: Skip defensive-penalty completions where ESPN records
-            # statYardage=0 — these are DPI plays where the penalty yardage is
-            # credited separately; ESPN's official box score doesn't count
-            # the underlying completion as an ATT or REC.
-            if play.get("isPenalty") and stat_yds == 0:
-                pass  # don't credit ATT/REC
-            else:
-                if psr:
-                    d = passing[period][psr]; d["Team"] = team or d["Team"]
-                    d["att"] += 1; d["comp"] += 1; d["yds"] += stat_yds
-                if rcv:
-                    rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
-                    rd["rec"] += 1; rd["yds"] += stat_yds
+            if psr:
+                d = passing[period][psr]; d["Team"] = team or d["Team"]
+                d["att"] += 1; d["comp"] += 1; d["yds"] += stat_yds
+            if rcv:
+                rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
+                rd["rec"] += 1; rd["yds"] += stat_yds
 
         elif ptype == "pass incompletion":
             if psr:
@@ -686,15 +691,21 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 rd["rec"] += 1; rd["yds"] += stat_yds; rd["td"] += 1
 
         elif ptype == "pass interception return":
-            # Fix RC3b: Core API attaches 'passer' role on INT plays — credit
-            # the passer with ATT+1 and INT+1.  If the role is absent (edge case)
-            # the accumulator simply goes unmodified for this play.
-            if psr:
-                d = passing[period][psr]; d["Team"] = team or d["Team"]
+            # RC-INT Fix: ESPN often omits passer role on INT plays.
+            # Parse QB abbreviated name from play text as fallback.
+            _int_psr = psr
+            if not _int_psr:
+                _int_txt = play.get("text") or ""
+                _int_m = _re.search(
+                    r"(?:\([^)]*\)\s*)?([A-Z]\.[A-Za-z\-']+(?:\s+(?:Jr|Sr|II|III|IV)\.?)?)\s+pass",
+                    _int_txt)
+                if _int_m:
+                    _int_psr = _int_m.group(1)
+            if _int_psr:
+                d = passing[period][_int_psr]; d["Team"] = team or d["Team"]
                 d["att"] += 1; d["int"] += 1
 
         elif ptype == "sack":
-            # QB still recorded in passing (no stat increment — ESPN convention)
             if psr:
                 d = passing[period][psr]; d["Team"] = team or d["Team"]
             if skr:
@@ -702,25 +713,17 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 sd["sacks"] += 1
 
         elif ptype in {"rush", "scramble", "rushing touchdown"}:
-            # Fix RC4a: Skip QB kneels — excluded from ESPN official rushing stats
-            if "kneel" in (play.get("text") or "").lower():
-                pass  # skip kneel
-            else:
-                if rsh:
-                    d = rushing[period][rsh]; d["Team"] = team or d["Team"]
-                    d["car"] += 1; d["yds"] += stat_yds
-                    if ptype == "rushing touchdown":
-                        d["td"] += 1
+            # RC-KNEEL Fix: count kneels — ESPN includes them in official rushing stats
+            if rsh:
+                d = rushing[period][rsh]; d["Team"] = team or d["Team"]
+                d["car"] += 1; d["yds"] += stat_yds
+                if ptype == "rushing touchdown":
+                    d["td"] += 1
 
         elif ptype in {"fumble recovery (own)", "fumble recovery (opponent)"}:
-            # Fix RC4b: Skip aborted snap fumble recoveries — these occur when
-            # the QB muffs the snap and recovers it. ESPN excludes them from
-            # official rushing stats. Detect via 'aborted' in play text.
+            # RC4b: Skip aborted snap recoveries
             _fum_txt = (play.get("text") or "").lower()
-            if "aborted" in _fum_txt:
-                pass  # skip aborted snap recovery
-            else:
-                # ESPN sets statYardage=0 when a reversal occurs; parse from text instead
+            if "aborted" not in _fum_txt:
                 fum_yds = stat_yds
                 if fum_yds == 0:
                     yd_m = _re.search(r"\bfor\s+(-?[0-9]+)\s+yards?", _fum_txt, _re.I)
@@ -732,9 +735,14 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 if rcv:
                     rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
                     rd["rec"] += 1; rd["yds"] += fum_yds
-                if rsh and not psr:   # rushing fumble recovery
+                if rsh and not psr:
                     d = rushing[period][rsh]; d["Team"] = team or d["Team"]
-                d["car"] += 1; d["yds"] += fum_yds
+                    d["car"] += 1; d["yds"] += fum_yds
+
+        elif rsh and ptype not in _SKIP_TYPES:
+            # RC-MISC catch-all: unhandled play type with rusher role
+            d = rushing[period][rsh]; d["Team"] = team or d["Team"]
+            d["car"] += 1; d["yds"] += stat_yds
 
     # ── DataFrame builders ────────────────────────────────────────────────────
     def to_sack_df(acc):
@@ -753,8 +761,8 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
     def to_rush_df(acc):
         rows = [{"Player": n, "Team": d["Team"],
-                 "CAR": d["car"], "YDS": d["yds"], "TD": d["td"]}
-                for n, d in acc.items() if d["car"] > 0]
+                 "CAR": d.get("car", 0), "YDS": d.get("yds", 0), "TD": d.get("td", 0)}
+                for n, d in acc.items() if d.get("car", 0) > 0 or d.get("yds", 0) != 0]
         return (pd.DataFrame(rows).sort_values("YDS", ascending=False)
                 .reset_index(drop=True)) if rows else pd.DataFrame()
 
