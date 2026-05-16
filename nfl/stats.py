@@ -548,13 +548,11 @@ def get_player_stats_by_period(game_id: str) -> dict:
         return m.group(1) if m else ""
 
     # ── Stat accumulators ─────────────────────────────────────────────────────
-    def new_pass(): return {"Name": "", "Team": "", "comp": 0, "att": 0, "yds": 0, "td": 0, "int": 0}
-    def new_rush(): return {"Name": "", "Team": "", "car": 0, "yds": 0, "td": 0}
-    def new_recv(): return {"Name": "", "Team": "", "rec": 0, "yds": 0, "td": 0}
-    def new_sack(): return {"Name": "", "Team": "", "sacks": 0}
+    def new_pass(): return {"Team": "", "comp": 0, "att": 0, "yds": 0, "td": 0, "int": 0}
+    def new_rush(): return {"Team": "", "car": 0, "yds": 0, "td": 0}
+    def new_recv(): return {"Team": "", "rec": 0, "yds": 0, "td": 0}
+    def new_sack(): return {"Team": "", "sacks": 0}
 
-    # RC-NAME: Key accumulators by athlete_id (not display name) to prevent
-    # name collisions (two players with same name) and stale-cache wrong names.
     passing   = defaultdict(lambda: defaultdict(new_pass))
     rushing   = defaultdict(lambda: defaultdict(new_rush))
     receiving = defaultdict(lambda: defaultdict(new_recv))
@@ -600,18 +598,6 @@ def get_player_stats_by_period(game_id: str) -> dict:
             return _team_id_to_abbr.get(m.group(1), "")
         return ""
 
-    # ── RC-TRICK: Load official passing roster to validate passer roles ────────
-    # Non-QB players (punters, safeties) sometimes get a 'passer' role on
-    # trick plays. We skip passer credit if the player isn't in the official
-    # passing boxscore for this game.
-    try:
-        _official_passers = set()
-        _off_pass_df = get_passing_stats(game_id)
-        if _off_pass_df is not None and not _off_pass_df.empty and "Player" in _off_pass_df.columns:
-            _official_passers = set(_off_pass_df["Player"].str.split().str[-1].str.lower())
-    except Exception:
-        _official_passers = set()  # if fetch fails, don't filter
-
     # ── Main play loop ────────────────────────────────────────────────────────
     _seen_ids = set()
 
@@ -640,9 +626,7 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
         # Build role → displayName map for this play
         # Only resolve IDs for roles we actually use
-        # RC-NAME: use athlete_id as primary key; display name stored inside dict
-        role_ids = {}   # role_str → athlete_id  (primary accumulator key)
-        role_names = {} # role_str → display name (stored in dict, used for output)
+        roles = {}   # role_str → displayName
         for participant in play.get("participants", []):
             role = participant.get("type", "")
             if role not in _STAT_ROLES:
@@ -652,142 +636,83 @@ def get_player_stats_by_period(game_id: str) -> dict:
             if not aid:
                 continue
             name = _resolve_athlete(aid)
-            if aid and role not in role_ids:
-                role_ids[role]   = aid
-                role_names[role] = name or aid  # fallback to ID if name lookup fails
+            if name and role not in roles:   # first participant of each role wins
+                roles[role] = name
 
-        psr = role_ids.get("passer")   # athlete_id
-        rcv = role_ids.get("receiver")
-        rsh = role_ids.get("rusher")
-        skr = role_ids.get("sackedBy")
-        psr_name = role_names.get("passer", "")
-        rcv_name = role_names.get("receiver", "")
-        rsh_name = role_names.get("rusher", "")
-        skr_name = role_names.get("sackedBy", "")
-
-        # RC-OFFPEN Fix: determine possession team with fallback to participant ref
-        _pos_team = _team_abbr_from_play(play)
-        if not _pos_team:
-            for _pt in play.get("participants", []):
-                if _pt.get("type") in ("passer", "rusher", "receiver"):
-                    _pt_ref = _pt.get("athlete", {}).get("$ref", "")
-                    _pt_tm  = _re.search(r"/teams/([0-9]+)", _pt_ref)
-                    if _pt_tm:
-                        _pos_team = _team_id_to_abbr.get(_pt_tm.group(1), "")
-                        if _pos_team:
-                            break
-
-        # RC-TRICK: Skip passer credit if player isn't a recognised QB in this game
-        # _psr_valid is True if we should credit passing stats for this play's passer
-        _psr_valid = True
-        if psr and psr_name and _official_passers:
-            _psr_last = psr_name.split(".")[-1].strip().lower() if "." in psr_name else psr_name.split()[-1].lower()
-            if _official_passers and _psr_last not in _official_passers:
-                _psr_valid = False
-
-        # RC-OFFPEN Fix: skip offensive-penalty plays (penalty on possession team)
-        if play.get("isPenalty") and not play.get("scoringPlay"):
-            _play_txt = (play.get("text") or "").upper()
-            _pen_m    = _re.search(r"PENALTY ON ([A-Z]{2,3})[^A-Z]", _play_txt)
-            if _pen_m and _pos_team and _pen_m.group(1) == _pos_team:
-                continue  # offensive-team penalty: play nullified → skip
-            # RC3a Fix: DPI completions statYardage=0 — skip as ATT/REC
-            if ptype in {"pass reception", "pass"} and stat_yds == 0:
-                continue
+        psr = roles.get("passer")
+        rcv = roles.get("receiver")
+        rsh = roles.get("rusher")
+        skr = roles.get("sackedBy")
 
         # ── Classify and accumulate ───────────────────────────────────────────
         if ptype in {"pass reception", "pass"}:
-            if psr and _psr_valid:
-                d = passing[period][psr]; d["Name"] = psr_name or d["Name"]; d["Team"] = team or d["Team"]
+            if psr:
+                d = passing[period][psr]; d["Team"] = team or d["Team"]
                 d["att"] += 1; d["comp"] += 1; d["yds"] += stat_yds
-            # RC-NEG: Skip receiving credit for negative-yard catches that ESPN
-            # excludes from the official boxscore (e.g. behind-LOS screens
-            # where the penalty is applied, not the catch).
-            _rcv_eligible = rcv and not (stat_yds < 0 and not play.get("scoringPlay") and play.get("isPenalty"))
-            if _rcv_eligible:
-                rd = receiving[period][rcv]; rd["Name"] = rcv_name or rd["Name"]; rd["Team"] = team or rd["Team"]
+            if rcv:
+                rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
                 rd["rec"] += 1; rd["yds"] += stat_yds
 
         elif ptype == "pass incompletion":
-            if psr and _psr_valid:
-                d = passing[period][psr]; d["Name"] = psr_name or d["Name"]; d["Team"] = team or d["Team"]
+            if psr:
+                d = passing[period][psr]; d["Team"] = team or d["Team"]
                 d["att"] += 1
 
         elif ptype == "passing touchdown":
-            if psr and _psr_valid:
-                d = passing[period][psr]; d["Name"] = psr_name or d["Name"]; d["Team"] = team or d["Team"]
+            if psr:
+                d = passing[period][psr]; d["Team"] = team or d["Team"]
                 d["att"] += 1; d["comp"] += 1; d["yds"] += stat_yds; d["td"] += 1
             if rcv:
-                rd = receiving[period][rcv]; rd["Name"] = rcv_name or rd["Name"]; rd["Team"] = team or rd["Team"]
+                rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
                 rd["rec"] += 1; rd["yds"] += stat_yds; rd["td"] += 1
 
         elif ptype == "pass interception return":
-            # RC-INT Fix: ESPN often omits passer role on INT plays.
-            # Parse QB abbreviated name from play text as fallback.
-            _int_key  = psr        # athlete_id if role present
-            _int_name = psr_name   # display name
-            if not _int_key:
-                _int_txt = play.get("text") or ""
-                _int_m = _re.search(
-                    r"(?:\([^)]*\)\s*)?([A-Z]\.[A-Za-z\-']+(?:\s+(?:Jr|Sr|II|III|IV)\.?)?)\s+pass",
-                    _int_txt)
-                if _int_m:
-                    # Use parsed name as both key and name (no ID available)
-                    _int_key  = _int_m.group(1)
-                    _int_name = _int_m.group(1)
-            if _int_key:
-                d = passing[period][_int_key]
-                d["Name"] = _int_name or d["Name"]; d["Team"] = team or d["Team"]
+            if psr:
+                d = passing[period][psr]; d["Team"] = team or d["Team"]
                 d["att"] += 1; d["int"] += 1
 
         elif ptype == "sack":
-            if psr and _psr_valid:
-                d = passing[period][psr]; d["Name"] = psr_name or d["Name"]; d["Team"] = team or d["Team"]
+            # QB still recorded in passing (no stat increment — ESPN convention)
+            if psr:
+                d = passing[period][psr]; d["Team"] = team or d["Team"]
             if skr:
-                sd = sacking[period][skr]; sd["Name"] = skr_name or sd["Name"]; sd["Team"] = team or sd["Team"]
+                sd = sacking[period][skr]; sd["Team"] = team or sd["Team"]
                 sd["sacks"] += 1
 
         elif ptype in {"rush", "scramble", "rushing touchdown"}:
-            # RC-KNEEL Fix: count kneels — ESPN includes them in official rushing stats
             if rsh:
-                d = rushing[period][rsh]; d["Name"] = rsh_name or d["Name"]; d["Team"] = team or d["Team"]
+                d = rushing[period][rsh]; d["Team"] = team or d["Team"]
                 d["car"] += 1; d["yds"] += stat_yds
                 if ptype == "rushing touchdown":
                     d["td"] += 1
 
         elif ptype in {"fumble recovery (own)", "fumble recovery (opponent)"}:
-            # RC4b: Skip aborted snap recoveries
-            _fum_txt = (play.get("text") or "").lower()
-            if "aborted" not in _fum_txt:
-                fum_yds = stat_yds
-                if fum_yds == 0:
-                    yd_m = _re.search(r"\bfor\s+(-?[0-9]+)\s+yards?", _fum_txt, _re.I)
-                    if yd_m:
-                        fum_yds = _safe_int(yd_m.group(1))
-                if psr:
-                    d = passing[period][psr]; d["Name"] = psr_name or d["Name"]; d["Team"] = team or d["Team"]
-                    d["att"] += 1; d["comp"] += 1; d["yds"] += fum_yds
-                if rcv:
-                    rd = receiving[period][rcv]; rd["Name"] = rcv_name or rd["Name"]; rd["Team"] = team or rd["Team"]
-                    rd["rec"] += 1; rd["yds"] += fum_yds
-                if rsh and not psr:
-                    d = rushing[period][rsh]; d["Name"] = rsh_name or d["Name"]; d["Team"] = team or d["Team"]
-                    d["car"] += 1; d["yds"] += fum_yds
-
-        elif rsh and ptype not in _SKIP_TYPES:
-            # RC-MISC catch-all: unhandled play type with rusher role
-            d = rushing[period][rsh]; d["Name"] = rsh_name or d["Name"]; d["Team"] = team or d["Team"]
-            d["car"] += 1; d["yds"] += stat_yds
+            # ESPN sets statYardage=0 when a reversal occurs; parse from text instead
+            fum_yds = stat_yds
+            if fum_yds == 0:
+                text = play.get("text", "") or ""
+                yd_m = _re.search(r"\bfor\s+(-?[0-9]+)\s+yards?", text, _re.I)
+                if yd_m:
+                    fum_yds = _safe_int(yd_m.group(1))
+            if psr:
+                d = passing[period][psr]; d["Team"] = team or d["Team"]
+                d["att"] += 1; d["comp"] += 1; d["yds"] += fum_yds
+            if rcv:
+                rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
+                rd["rec"] += 1; rd["yds"] += fum_yds
+            if rsh and not psr:   # rushing fumble recovery
+                d = rushing[period][rsh]; d["Team"] = team or d["Team"]
+                d["car"] += 1; d["yds"] += fum_yds
 
     # ── DataFrame builders ────────────────────────────────────────────────────
     def to_sack_df(acc):
-        rows = [{"Player": d.get("Name") or n, "Team": d["Team"], "SACKS": d["sacks"]}
+        rows = [{"Player": n, "Team": d["Team"], "SACKS": d["sacks"]}
                 for n, d in acc.items() if d["sacks"] > 0]
         return (pd.DataFrame(rows).sort_values("SACKS", ascending=False)
                 .reset_index(drop=True)) if rows else pd.DataFrame()
 
     def to_pass_df(acc):
-        rows = [{"Player": d.get("Name") or n, "Team": d["Team"],
+        rows = [{"Player": n, "Team": d["Team"],
                  "C/ATT": f"{d['comp']}/{d['att']}",
                  "YDS": d["yds"], "TD": d["td"], "INT": d["int"]}
                 for n, d in acc.items() if d["att"] > 0]
@@ -795,14 +720,14 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 .reset_index(drop=True)) if rows else pd.DataFrame()
 
     def to_rush_df(acc):
-        rows = [{"Player": d.get("Name") or n, "Team": d["Team"],
-                 "CAR": d.get("car", 0), "YDS": d.get("yds", 0), "TD": d.get("td", 0)}
-                for n, d in acc.items() if d.get("car", 0) > 0 or d.get("yds", 0) != 0]
+        rows = [{"Player": n, "Team": d["Team"],
+                 "CAR": d["car"], "YDS": d["yds"], "TD": d["td"]}
+                for n, d in acc.items() if d["car"] > 0]
         return (pd.DataFrame(rows).sort_values("YDS", ascending=False)
                 .reset_index(drop=True)) if rows else pd.DataFrame()
 
     def to_recv_df(acc):
-        rows = [{"Player": d.get("Name") or n, "Team": d["Team"],
+        rows = [{"Player": n, "Team": d["Team"],
                  "REC": d["rec"], "YDS": d["yds"], "TD": d["td"]}
                 for n, d in acc.items() if d["rec"] > 0]
         return (pd.DataFrame(rows).sort_values("YDS", ascending=False)
