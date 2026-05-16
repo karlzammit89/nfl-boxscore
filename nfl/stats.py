@@ -497,8 +497,9 @@ def get_player_stats_by_period(game_id: str) -> dict:
     structured participant roles (passer/receiver/rusher/sackedBy) and athlete IDs
     per play — no text parsing needed for player identification.
 
-    Athlete IDs are resolved to displayNames via individual athlete API calls.
-    Callers (app.py) cache these resolutions for 30 days via @st.cache_data.
+    Athlete IDs are resolved to displayNames via Supabase (persistent DB across
+    restarts) with ESPN Core API as fallback for players not yet in the database.
+    New players are saved to Supabase automatically on first encounter.
 
     Data sources:
       1. summary endpoint (existing) — boxscore official stats + season year
