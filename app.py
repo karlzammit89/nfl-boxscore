@@ -3215,7 +3215,7 @@ elif st.session_state.view == "reconcile":
                                                 _da.get("athlete", {}).get("displayName", ""))
                                     if _da_aid and _da_name:
                                         _d_names[_da_aid] = _da_name
-                        # Fill stat-role IDs not in boxscore — no API calls, show raw ID
+                        # Fill stat-role IDs not in boxscore — resolve via cached ESPN lookup
                         _STAT_ROLES_DBG = {"passer", "receiver", "rusher", "sackedBy"}
                         for _dp in _dplays:
                             for _dpt in _dp.get("participants", []):
@@ -3224,7 +3224,9 @@ elif st.session_state.view == "reconcile":
                                 _dref = _dpt.get("athlete", {}).get("$ref", "")
                                 _daid = (_D_ID.search(_dref) or type("",(),{"group":lambda s,n:""})()).group(1)
                                 if _daid and _daid not in _d_names:
-                                    _d_names[_daid] = f"[ID:{_daid}]"
+                                    # Use same 30-day cache that stats.py uses — no extra API calls on warm cache
+                                    _resolved = _cached_athlete_name(_daid, "2025") or _cached_athlete_name(_daid, "") or f"[ID:{_daid}]"
+                                    _d_names[_daid] = _resolved
 
                         # ── C1: stale/wrong athlete names ───────────────────
                         _c1 = [{"athlete_id":aid, "resolved_name":name, "role":
