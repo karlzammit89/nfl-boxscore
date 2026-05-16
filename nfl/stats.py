@@ -694,7 +694,13 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 yd_m = _re.search(r"\bfor\s+(-?[0-9]+)\s+yards?", text, _re.I)
                 if yd_m:
                     fum_yds = _safe_int(yd_m.group(1))
-            if psr:
+            # F2: skip passer credit on fumble recovery when it's a direct-snap
+            # run (e.g. Taysom Hill). A direct-snap runner tagged as "passer" by
+            # ESPN should not accumulate passing yards from a fumble recovery.
+            # Signal: "direct snap" in play text, meaning psr is not a true QB.
+            _fum_text = (play.get("text", "") or "").lower()
+            _psr_is_direct_snap = "direct snap" in _fum_text
+            if psr and not _psr_is_direct_snap:
                 d = passing[period][psr]; d["Team"] = team or d["Team"]
                 d["att"] += 1; d["comp"] += 1; d["yds"] += fum_yds
             if rcv:
