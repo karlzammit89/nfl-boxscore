@@ -3215,34 +3215,18 @@ elif st.session_state.view == "reconcile":
                                                 _da.get("athlete", {}).get("displayName", ""))
                                     if _da_aid and _da_name:
                                         _d_names[_da_aid] = _da_name
-                        # Fill stat-role IDs not in boxscore.
-                        # Use the monkey-patched get_athlete_displayname (= _cached_athlete_name)
-                        # which has a 30-day Streamlit cache. Warm = instant. Cold = 1 ESPN call.
-                        # We cap at MAX_RESOLVE cold calls so it never hangs; rest show [ID:xxx].
+                        # Fill stat-role IDs not in boxscore — zero API calls, instant.
+                        # Boxscore has no inline displayName so we use [ID:xxx] as placeholder.
+                        # The reconciliation mismatches are unaffected by this debug label.
                         _STAT_ROLES_DBG = {"passer", "receiver", "rusher", "sackedBy"}
-                        _MAX_RESOLVE = 5   # max live API calls; rest fall back to [ID:xxx]
-                        _live_calls  = 0
-                        import nfl.api as _nfl_api_dbg
                         for _dp in _dplays:
                             for _dpt in _dp.get("participants", []):
                                 if _dpt.get("type") not in _STAT_ROLES_DBG:
                                     continue
                                 _dref = _dpt.get("athlete", {}).get("$ref", "")
                                 _daid = (_D_ID.search(_dref) or type("",(),{"group":lambda s,n:""})()).group(1)
-                                if not _daid or _daid in _d_names:
-                                    continue
-                                # Try the patched resolver (hits Streamlit cache if warm)
-                                if _live_calls < _MAX_RESOLVE:
-                                    try:
-                                        _rn = _nfl_api_dbg.get_athlete_displayname(_daid, "2025") or ""
-                                        if not _rn:
-                                            _rn = _nfl_api_dbg.get_athlete_displayname(_daid, "") or ""
-                                        _live_calls += 1
-                                    except Exception:
-                                        _rn = ""
-                                else:
-                                    _rn = ""
-                                _d_names[_daid] = _rn or f"[ID:{_daid}]"
+                                if _daid and _daid not in _d_names:
+                                    _d_names[_daid] = f"[ID:{_daid}]"
 
                         # ── C1: stale/wrong athlete names ───────────────────
                         _c1 = [{"athlete_id":aid, "resolved_name":name, "role":
