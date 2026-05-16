@@ -3030,22 +3030,54 @@ elif st.session_state.view == "reconcile":
 
     st.markdown("<div class='sec-div' style='margin-top:12px'>🔍 Multi-Game Reconciliation</div>",
                 unsafe_allow_html=True)
-    st.caption(
-        "Enter one game ID per line (or comma-separated). "
-        "Get IDs from ESPN URLs: espn.com/nfl/game/_/gameId/**401772984**. "
-        "You can also enter a date (YYYY-MM-DD) to auto-load all games that day."
+
+    # ── Mode selector ─────────────────────────────────────────────────────────
+    _mode = st.radio(
+        "Mode",
+        options=["Paste IDs", "Single Day", "Full Week", "Full Month"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="recon_mode",
     )
+
+    import re as _re_rc
+    _now = et_now()
 
     _rc1, _rc2 = st.columns([4, 1])
     with _rc1:
-        _recon_input = st.text_area(
-            "Game IDs or date",
-            value=st.session_state.recon_game_ids,
-            placeholder="401772984\n401772949\n2025-12-14",
-            height=120,
-            key="recon_input_box",
-            label_visibility="collapsed",
-        )
+        if _mode == "Paste IDs":
+            st.caption("Enter one game ID per line or comma-separated. You can also enter a YYYY-MM-DD date to expand to all games that day.")
+            _recon_input = st.text_area(
+                "Game IDs or date",
+                value=st.session_state.recon_game_ids,
+                placeholder="401772984\n401772949\n2025-12-14",
+                height=100,
+                key="recon_input_box",
+                label_visibility="collapsed",
+            )
+        elif _mode == "Single Day":
+            st.caption("Load all games played on a specific date.")
+            _day_date = st.date_input("Date", value=_now.date(), key="recon_day_date", label_visibility="collapsed")
+            _recon_input = str(_day_date)
+        elif _mode == "Full Week":
+            st.caption("Load all games in a 7-day window starting from the selected date (covers Thu–Wed of an NFL week).")
+            _week_start = st.date_input("Week starts", value=_now.date(), key="recon_week_start", label_visibility="collapsed")
+            _recon_input = ",".join(
+                str(_week_start + timedelta(days=i)) for i in range(7)
+            )
+        else:  # Full Month
+            st.caption("Load all games in a calendar month (~64 games, ~90s first run).")
+            _mc1, _mc2 = st.columns(2)
+            with _mc1:
+                _sel_year = st.selectbox("Year", options=[_now.year - 1, _now.year, _now.year + 1],
+                                         index=1, key="recon_year", label_visibility="collapsed")
+            with _mc2:
+                _sel_month = st.selectbox("Month", options=list(range(1, 13)),
+                                          format_func=lambda m: MONTH_NAMES[m - 1],
+                                          index=_now.month - 1, key="recon_month",
+                                          label_visibility="collapsed")
+            _recon_input = f"MONTH:{_sel_year}:{_sel_month}"
+
     with _rc2:
         st.markdown("<div style='margin-top:4px'>", unsafe_allow_html=True)
         _run_recon = st.button("▶ Run", use_container_width=True, key="recon_run")
@@ -3055,31 +3087,39 @@ elif st.session_state.view == "reconcile":
             st.session_state.recon_game_ids = ""
             st.rerun()
 
-    if _run_recon and _recon_input.strip():
-        st.session_state.recon_game_ids = _recon_input
+    if _run_recon and _recon_input:
+        if _mode == "Paste IDs":
+            st.session_state.recon_game_ids = _recon_input
 
-        # Parse input — expand date strings into game IDs
-        import re as _re_rc
-        _raw_tokens = [t.strip() for t in _re_rc.split(r'[\n,]+', _recon_input) if t.strip()]
+        # ── Build game ID list from mode ──────────────────────────────────────
         _game_ids = []
         _date_re  = _re_rc.compile(r'^\d{4}-\d{2}-\d{2}$')
 
-        for _tok in _raw_tokens:
-            if _date_re.match(_tok):
-                # Date → expand to all game IDs for that day
-                try:
-                    _d = date.fromisoformat(_tok)
-                    _month_games = fetch_games_for_month(_d.year, _d.month)
-                    _day_ids = [g["id"] for g in _month_games if et_date_str(g["date"]) == _tok]
-                    _game_ids.extend(_day_ids)
-                    if not _day_ids:
-                        st.warning(f"No games found for {_tok}")
-                except Exception as _de:
-                    st.warning(f"Could not expand date {_tok}: {_de}")
-            elif _tok.isdigit():
-                _game_ids.append(_tok)
+        if _recon_input.startswith("MONTH:"):
+            # Full Month: fetch_games_for_month already exists
+            _, _yr, _mo = _recon_input.split(":")
+            with st.spinner(f"Loading {MONTH_NAMES[int(_mo)-1]} {_yr} schedule…"):
+                _month_games = fetch_games_for_month(int(_yr), int(_mo))
+            _game_ids = list(dict.fromkeys(g["id"] for g in _month_games))
+            st.caption(f"Found **{len(_game_ids)} games** in {MONTH_NAMES[int(_mo)-1]} {_yr}")
+        else:
+            # Paste IDs or date-based modes — expand each token
+            _raw_tokens = [t.strip() for t in _re_rc.split(r'[\n,]+', _recon_input) if t.strip()]
+            for _tok in _raw_tokens:
+                if _date_re.match(_tok):
+                    try:
+                        _d = date.fromisoformat(_tok)
+                        _month_games = fetch_games_for_month(_d.year, _d.month)
+                        _day_ids = [g["id"] for g in _month_games if et_date_str(g["date"]) == _tok]
+                        _game_ids.extend(_day_ids)
+                        if not _day_ids and _mode == "Single Day":
+                            st.warning(f"No games found for {_tok}")
+                    except Exception as _de:
+                        st.warning(f"Could not expand date {_tok}: {_de}")
+                elif _tok.isdigit():
+                    _game_ids.append(_tok)
 
-        _game_ids = list(dict.fromkeys(_game_ids))  # deduplicate, preserve order
+            _game_ids = list(dict.fromkeys(_game_ids))  # deduplicate, preserve order
 
         if not _game_ids:
             st.error("No valid game IDs found. Enter numeric IDs or YYYY-MM-DD dates.")
