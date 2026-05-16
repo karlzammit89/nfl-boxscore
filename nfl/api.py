@@ -107,6 +107,8 @@ def get_scoring_plays(game_id: str) -> list[dict]:
             "team":        sp.get("team", {}).get("displayName", ""),
             "team_abbr":   sp.get("team", {}).get("abbreviation", ""),
             "type":        sp.get("type", {}).get("text", ""),
+            "type_id":     str(sp.get("type", {}).get("id", "")),
+            "score_value": sp.get("scoreValue", 0),
             "description": sp.get("text", ""),
             "away_score":  sp.get("awayScore", 0),
             "home_score":  sp.get("homeScore", 0),
