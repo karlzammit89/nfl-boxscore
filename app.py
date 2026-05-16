@@ -624,8 +624,91 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
+    # ── DEBUG: TypeID mapping + Core API first play ───────────────────────────
+    with st.expander("🔍 DEBUG — TypeID mapping & Core API first play", expanded=True):
+        import json as _json, urllib.request as _ur
 
+        # ── Part 1: Raw scoring plays type objects ────────────────────────────
+        st.markdown("**Part 1 — Raw `type` object from each ESPN scoring play:**")
+        try:
+            from nfl.api import get_game_summary as _dgs
+            _sum = _dgs(game_id)
+            _sps = _sum.get("scoringPlays", []) if _sum else []
+            if _sps:
+                _rows = []
+                for _i, _sp in enumerate(_sps[:20], 1):  # first 20 scoring plays
+                    _per   = _sp.get("period", {}).get("number", "?")
+                    _team  = _sp.get("team", {}).get("abbreviation", "?")
+                    _away  = _sp.get("awayScore", "?")
+                    _home  = _sp.get("homeScore", "?")
+                    _sv    = _sp.get("scoreValue", "MISSING")
+                    _type  = _sp.get("type", {})
+                    _desc  = str(_sp.get("text", ""))[:60]
+                    _rows.append({
+                        "#":          _i,
+                        "Q":          f"Q{_per}",
+                        "Team":       _team,
+                        "Away-Home":  f"{_away}-{_home}",
+                        "scoreValue": _sv,
+                        "type.id":    _type.get("id", "MISSING"),
+                        "type.text":  _type.get("text", "MISSING"),
+                        "type keys":  str(list(_type.keys())),
+                        "Description": _desc,
+                    })
+                import pandas as _pd2
+                st.dataframe(_pd2.DataFrame(_rows), use_container_width=True, hide_index=True)
+                st.markdown("**Raw `type` dict for first scoring play (full JSON):**")
+                st.json(_sps[0].get("type", {}))
+                st.markdown("**All top-level keys on first scoring play:**")
+                st.code(str(list(_sps[0].keys())))
+            else:
+                st.warning("No scoring plays found.")
+        except Exception as _e:
+            st.error(f"Part 1 error: {_e}")
 
+        st.divider()
+
+        # ── Part 2: Core API first 5 plays with type info ─────────────────────
+        st.markdown("**Part 2 — Core API: first 5 plays (to find real first play):**")
+        try:
+            from nfl.api import get_core_plays as _gcp2
+            _cp = _gcp2(game_id)
+            if _cp:
+                _cp_rows = []
+                for _i, _pl in enumerate(_cp[:5], 0):
+                    _cp_rows.append({
+                        "index":        _i,
+                        "type.id":      _pl.get("type", {}).get("id", "MISSING"),
+                        "type.text":    _pl.get("type", {}).get("text", "MISSING"),
+                        "period.number": _pl.get("period", {}).get("number", "?"),
+                        "statYardage":  _pl.get("statYardage", "?"),
+                        "scoringPlay":  _pl.get("scoringPlay", "?"),
+                        "text":         str(_pl.get("text", ""))[:80],
+                    })
+                import pandas as _pd3
+                st.dataframe(_pd3.DataFrame(_cp_rows), use_container_width=True, hide_index=True)
+                st.markdown("**Full type dict for plays[0]:**")
+                st.json(_cp[0].get("type", {}))
+                st.markdown("**Full type dict for plays[1]:**")
+                st.json(_cp[1].get("type", {})) if len(_cp) > 1 else None
+            else:
+                st.warning("No Core API plays found.")
+        except Exception as _e:
+            st.error(f"Part 2 error: {_e}")
+
+        st.divider()
+
+        # ── Part 3: Current scoring_df with TypeID column ─────────────────────
+        st.markdown("**Part 3 — scoring_df as built (TypeID column we're actually using):**")
+        _sdf_dbg = data.get("scoring", None)
+        if _sdf_dbg is not None and not _sdf_dbg.empty:
+            _cols = [c for c in ["Quarter","Team","Type","TypeID","ScoreValue","Away Score","Home Score","Description"] if c in _sdf_dbg.columns]
+            st.dataframe(_sdf_dbg[_cols].head(20), use_container_width=True, hide_index=True)
+            st.markdown("**Unique TypeID values in this game:**")
+            st.code(str(sorted(_sdf_dbg["TypeID"].astype(str).unique().tolist())) if "TypeID" in _sdf_dbg.columns else "TypeID column missing")
+        else:
+            st.warning("scoring_df is empty.")
+    # ── END DEBUG ─────────────────────────────────────────────────────────────
 
 
 
