@@ -624,25 +624,6 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
-    # ── DEBUG: Full scoring_df ────────────────────────────────────────────────
-    with st.expander("🔍 DEBUG — Full scoring_df all rows", expanded=True):
-        _sdf_d = data.get("scoring", pd.DataFrame())
-        if _sdf_d is not None and not _sdf_d.empty:
-            st.markdown(f"**Total rows: {len(_sdf_d)}**")
-            _cols_d = [c for c in ["Quarter","Team","TypeID","ScoringTypeName","ScoreValue","Type","Description"] if c in _sdf_d.columns]
-            st.dataframe(_sdf_d[_cols_d], use_container_width=True, hide_index=True)
-            st.markdown("**Counts per Quarter:**")
-            _grp = _sdf_d.groupby("Quarter").size().reset_index(name="rows") if "Quarter" in _sdf_d.columns else pd.DataFrame()
-            if not _grp.empty:
-                st.dataframe(_grp, use_container_width=True, hide_index=True)
-            st.markdown("**TypeID counts:**")
-            if "TypeID" in _sdf_d.columns:
-                _tc = _sdf_d.groupby("TypeID").size().reset_index(name="count")
-                st.dataframe(_tc, use_container_width=True, hide_index=True)
-            st.markdown("**ScoringTypeName present?** " + ("✅ Yes" if "ScoringTypeName" in _sdf_d.columns else "❌ No — stale cache, press 🔄 Refresh"))
-        else:
-            st.warning("scoring_df is empty.")
-    # ── END DEBUG ─────────────────────────────────────────────────────────────
 
 
 
@@ -2149,10 +2130,7 @@ elif st.session_state.view == "boxscore":
             if scoring_df is None or scoring_df.empty or "Quarter" not in scoring_df.columns:
                 return []
             rows = scoring_df[scoring_df["Quarter"] == period_label]
-            # Return list of (type_id, scoring_type_name) tuples for structured matching
-            if "TypeID" in rows.columns and "ScoringTypeName" in rows.columns:
-                return list(zip(rows["TypeID"].astype(str), rows["ScoringTypeName"].astype(str)))
-            return []
+            return rows["TypeID"].astype(str).tolist() if "TypeID" in rows.columns else []
 
         def _pts_in(period_label):
             if linescore is None or linescore.empty or period_label not in linescore.columns:
@@ -2220,24 +2198,20 @@ elif st.session_state.view == "boxscore":
             return False, f"No {label}2pt Conversion"
 
         def _check_reqs(reqs, period_label, each_team):
-            # plays = list of (type_id, scoring_type_name) tuples
             plays = _plays_in(period_label) if period_label else (
-                list(zip(
-                    scoring_df["TypeID"].astype(str),
-                    scoring_df["ScoringTypeName"].astype(str)
-                )) if scoring_df is not None and not scoring_df.empty
-                   and "TypeID" in scoring_df.columns and "ScoringTypeName" in scoring_df.columns
+                scoring_df["TypeID"].astype(str).tolist()
+                if scoring_df is not None and not scoring_df.empty and "TypeID" in scoring_df.columns
                 else [])
             pts = _pts_in(period_label) if period_label else 0
             for req_type, req_n in reqs:
                 if req_type == "rushing_td":
-                    ok = sum(1 for tid, _ in plays if tid == "68") >= req_n
+                    ok = sum(1 for tid in plays if tid in _RUSH_TD_IDS) >= req_n
                 elif req_type == "passing_td":
-                    ok = sum(1 for tid, _ in plays if tid == "67") >= req_n
+                    ok = sum(1 for tid in plays if tid in _PASS_TD_IDS) >= req_n
                 elif req_type == "any_td":
-                    ok = sum(1 for _, stn in plays if stn == "touchdown") >= req_n
+                    ok = sum(1 for tid in plays if tid in _ALL_TD_IDS) >= req_n
                 elif req_type == "fg":
-                    ok = sum(1 for _, stn in plays if stn == "field-goal") >= req_n
+                    ok = sum(1 for tid in plays if tid in _FG_IDS) >= req_n
                 else:  # score / points
                     if scoring_df is not None and not scoring_df.empty and "Quarter" in scoring_df.columns:
                         q_rows = scoring_df[scoring_df["Quarter"] == period_label]
@@ -2267,12 +2241,13 @@ elif st.session_state.view == "boxscore":
         )
         _KICK_TD_RE    = _re_t.compile(r'^opening kick(?:off)?.*(?:return|returned).*td|opening kickoff.*touchdown', _re_t.I)
 
-        # ── Verified ESPN TypeID sets (from live data, 100% confirmed) ─────────
-        # scoringType.name='touchdown' covers all TD types — use for any_td/no_td
-        # TypeID used for subtype grading (rush vs pass) and ST identification
-        _ST_TD_IDS  = {"18","32","34","37"}   # Blocked FG(18), KR TD(32), PR TD(34), Blocked Punt TD(37)
-        _ALL_TD_IDS = {"18","32","34","36","37","39","67","68"}  # all TD type IDs
-        # Legacy text sets kept for _FIRST_TD_RE scoring description parsing only
+        # ── Verified ESPN TypeID sets — 100% confirmed from live data ──────────
+        _ALL_TD_IDS  = {"18","32","34","36","37","39","67","68"}  # all TD types
+        _FG_IDS      = {"59"}           # Field Goal Good
+        _RUSH_TD_IDS = {"68"}           # Rushing Touchdown
+        _PASS_TD_IDS = {"67"}           # Passing Touchdown (covers receiving TD too)
+        _ST_TD_IDS   = {"18","32","34","37"}  # ST TDs: Blocked FG, KR TD, PR TD, Blocked Punt TD
+        # Legacy text set — used only for _FIRST_TD_RE description parsing
         _ALL_TD_TYPES = {"rushing touchdown", "passing touchdown", "receiving touchdown",
                          "punt return touchdown", "kickoff return touchdown",
                          "fumble return touchdown", "blocked punt touchdown",
@@ -2359,9 +2334,10 @@ elif st.session_state.view == "boxscore":
             # ── No Touchdown in Game ──────────────────────────────────────────
             if _NO_TD_RE.match(line):
                 _sdf_n = data.get("scoring", pd.DataFrame())
-                if _sdf_n is not None and not _sdf_n.empty and "ScoringTypeName" in _sdf_n.columns:
-                    _has_td   = _sdf_n["ScoringTypeName"].eq("touchdown").any()
-                    _td_count = int(_sdf_n["ScoringTypeName"].eq("touchdown").sum())
+                if _sdf_n is not None and not _sdf_n.empty and "TypeID" in _sdf_n.columns:
+                    _td_mask  = _sdf_n["TypeID"].astype(str).isin(_ALL_TD_IDS)
+                    _has_td   = _td_mask.any()
+                    _td_count = int(_td_mask.sum())
                 else:
                     _has_td   = False
                     _td_count = 0
@@ -2456,8 +2432,8 @@ elif st.session_state.view == "boxscore":
                 _sdf_stf = data.get("scoring", pd.DataFrame())
                 won = False
                 _first_desc = "No TDs"
-                if _sdf_stf is not None and not _sdf_stf.empty and "ScoringTypeName" in _sdf_stf.columns:
-                    _td_rows = _sdf_stf[_sdf_stf["ScoringTypeName"] == "touchdown"]
+                if _sdf_stf is not None and not _sdf_stf.empty and "TypeID" in _sdf_stf.columns:
+                    _td_rows = _sdf_stf[_sdf_stf["TypeID"].astype(str).isin(_ALL_TD_IDS)]
                     if not _td_rows.empty:
                         _first_td   = _td_rows.iloc[0]
                         _first_desc = f"{_first_td.get('Team','')} {_first_td.get('Type','')}"
@@ -2729,8 +2705,7 @@ elif st.session_state.view == "boxscore":
             _PASS_TD_ID = "67"    # Passing Touchdown (covers receiving TD too)
 
             def _sdf_types(team=None, period=None):
-                """Return list of (type_id, scoring_type_name) tuples from scoring_df,
-                filtered by team and/or period."""
+                """Return list of TypeID strings from scoring_df, filtered by team and/or period."""
                 if scoring_df is None or scoring_df.empty: return []
                 df = scoring_df.copy()
                 if period:
@@ -2748,16 +2723,14 @@ elif st.session_state.view == "boxscore":
                         df = df[df["Quarter"] == period]
                 if team and "Team" in df.columns:
                     df = df[df["Team"].str.upper() == team.upper()]
-                if "TypeID" in df.columns and "ScoringTypeName" in df.columns:
-                    return list(zip(df["TypeID"].astype(str), df["ScoringTypeName"].astype(str)))
-                return []
+                return df["TypeID"].astype(str).tolist() if "TypeID" in df.columns else []
 
-            def _count_from_types(plays_list, req_type):
-                """Count plays matching req_type from list of (type_id, scoring_type_name) tuples."""
-                if req_type == "rushing_td": return sum(1 for tid, _ in plays_list if tid == _RUSH_TD_ID)
-                if req_type == "passing_td": return sum(1 for tid, _ in plays_list if tid == _PASS_TD_ID)
-                if req_type == "any_td":     return sum(1 for _, stn in plays_list if stn == "touchdown")
-                if req_type == "fg":         return sum(1 for _, stn in plays_list if stn == "field-goal")
+            def _count_from_types(ids_list, req_type):
+                """Count plays matching req_type from list of TypeID strings."""
+                if req_type == "rushing_td": return sum(1 for i in ids_list if i in _RUSH_TD_IDS)
+                if req_type == "passing_td": return sum(1 for i in ids_list if i in _PASS_TD_IDS)
+                if req_type == "any_td":     return sum(1 for i in ids_list if i in _ALL_TD_IDS)
+                if req_type == "fg":         return sum(1 for i in ids_list if i in _FG_IDS)
                 return 0
 
             def _pts_from_sdf(df_slice):
