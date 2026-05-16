@@ -533,51 +533,57 @@ def get_player_stats_by_period(game_id: str) -> dict:
     _name_cache = {}   # athlete_id str → displayName str (local per-call cache)
 
     def _resolve_athlete(athlete_id: str) -> str:
-    """
-    Resolve athlete_id to displayName.
-    Order: local session cache → Supabase → ESPN API → save to Supabase.
-    """
-    # 1. Check local session cache first (fastest — no network call)
-    if athlete_id in _name_cache:
-        return _name_cache[athlete_id]
+        """
+        Resolve athlete_id to displayName.
+        Order: session cache → Supabase → ESPN API → save back to Supabase.
+        _sb is created once per call stack and reused for the save step.
+        """
+        # 1. Session cache — fastest, no network call
+        if athlete_id in _name_cache:
+            return _name_cache[athlete_id]
 
-    # 2. Check Supabase
-    try:
-        import streamlit as st
-        from supabase import create_client
-        _sb = create_client(st.secrets["supabase"]["url"],
-                            st.secrets["supabase"]["key"])
-        result = (_sb.table("athletes")
-                    .select("display_name")
-                    .eq("athlete_id", athlete_id)
-                    .eq("season_year", _season_year)
-                    .limit(1)
-                    .execute())
-        if result.data:
-            name = result.data[0]["display_name"]
-            _name_cache[athlete_id] = name
-            return name
-    except Exception:
-        pass   # Supabase unavailable — fall through to ESPN
-
-    # 3. Fall back to ESPN API
-    name = get_athlete_displayname(athlete_id, _season_year)
-    if not name:
-        name = get_athlete_displayname(athlete_id, "")
-
-    # 4. Save the new player to Supabase so next time is instant
-    if name:
+        # 2. Supabase lookup — create client once, reuse for save in step 4
+        _sb = None
         try:
-            _sb.table("athletes").upsert({
-                "athlete_id":   athlete_id,
-                "season_year":  _season_year,
-                "display_name": name,
-            }).execute()
+            import streamlit as _st
+            from supabase import create_client as _create_client
+            _sb = _create_client(
+                _st.secrets["supabase"]["url"],
+                _st.secrets["supabase"]["key"],
+            )
+            result = (
+                _sb.table("athletes")
+                   .select("display_name")
+                   .eq("athlete_id", athlete_id)
+                   .eq("season_year", _season_year)
+                   .limit(1)
+                   .execute()
+            )
+            if result.data:
+                name = result.data[0]["display_name"]
+                _name_cache[athlete_id] = name
+                return name
         except Exception:
-            pass   # Save failed — not critical, name still returned
+            pass   # Supabase unavailable — fall through to ESPN
 
-    _name_cache[athlete_id] = name
-    return name
+        # 3. ESPN API fallback
+        name = get_athlete_displayname(athlete_id, _season_year)
+        if not name:
+            name = get_athlete_displayname(athlete_id, "")
+
+        # 4. Save new player to Supabase — _sb may be None if step 2 failed
+        if name and _sb is not None:
+            try:
+                _sb.table("athletes").upsert({
+                    "athlete_id":   athlete_id,
+                    "season_year":  _season_year,
+                    "display_name": name,
+                }).execute()
+            except Exception:
+                pass   # Save failed — not critical, name still returned
+
+        _name_cache[athlete_id] = name
+        return name
 
     def _extract_id(ref_url: str) -> str:
         m = _ID_RE.search(ref_url)
