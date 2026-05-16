@@ -624,8 +624,25 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
-
-
+    # ── DEBUG: Full scoring_df ────────────────────────────────────────────────
+    with st.expander("🔍 DEBUG — Full scoring_df all rows", expanded=True):
+        _sdf_d = data.get("scoring", pd.DataFrame())
+        if _sdf_d is not None and not _sdf_d.empty:
+            st.markdown(f"**Total rows: {len(_sdf_d)}**")
+            _cols_d = [c for c in ["Quarter","Team","TypeID","ScoringTypeName","ScoreValue","Type","Description"] if c in _sdf_d.columns]
+            st.dataframe(_sdf_d[_cols_d], use_container_width=True, hide_index=True)
+            st.markdown("**Counts per Quarter:**")
+            _grp = _sdf_d.groupby("Quarter").size().reset_index(name="rows") if "Quarter" in _sdf_d.columns else pd.DataFrame()
+            if not _grp.empty:
+                st.dataframe(_grp, use_container_width=True, hide_index=True)
+            st.markdown("**TypeID counts:**")
+            if "TypeID" in _sdf_d.columns:
+                _tc = _sdf_d.groupby("TypeID").size().reset_index(name="count")
+                st.dataframe(_tc, use_container_width=True, hide_index=True)
+            st.markdown("**ScoringTypeName present?** " + ("✅ Yes" if "ScoringTypeName" in _sdf_d.columns else "❌ No — stale cache, press 🔄 Refresh"))
+        else:
+            st.warning("scoring_df is empty.")
+    # ── END DEBUG ─────────────────────────────────────────────────────────────
 
 
 
