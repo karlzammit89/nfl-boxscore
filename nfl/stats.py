@@ -303,8 +303,13 @@ def get_team_stats(game_id: str) -> pd.DataFrame:
 def get_scoring_summary(game_id: str) -> pd.DataFrame:
     """
     Chronological scoring plays with quarter/half labels.
-    Cols: Quarter, Half, Clock, Team, Type, TypeID, ScoreValue, Description, Away Score, Home Score
-    TypeID and ScoreValue allow structured grading without text parsing.
+    Cols: Quarter, Half, Clock, Team, Type, TypeID, ScoringTypeName, ScoreValue,
+          Description, Away Score, Home Score
+
+    ScoringTypeName (ESPN scoringType.name) is the authoritative high-level
+    classification: 'touchdown', 'field-goal', 'safety'. Use this for any_td
+    and fg grading instead of text parsing or TypeID enumeration.
+    TypeID is used for subtype grading: '67'=Pass TD, '68'=Rush TD, '32'=KR TD etc.
     """
     plays = get_scoring_plays(game_id)
     if not plays:
@@ -314,16 +319,17 @@ def get_scoring_summary(game_id: str) -> pd.DataFrame:
     for play in plays:
         period = _safe_int(play.get("period", 0))
         rows.append({
-            "Quarter":     _quarter_label(period),
-            "Half":        _period_to_half(period),
-            "Clock":       play.get("clock", ""),
-            "Team":        play.get("team_abbr", play.get("team", "")),
-            "Type":        play.get("type", ""),
-            "TypeID":      play.get("type_id", ""),
-            "ScoreValue":  play.get("score_value", 0),
-            "Description": play.get("description", ""),
-            "Away Score":  _safe_int(play.get("away_score", 0)),
-            "Home Score":  _safe_int(play.get("home_score", 0)),
+            "Quarter":         _quarter_label(period),
+            "Half":            _period_to_half(period),
+            "Clock":           play.get("clock", ""),
+            "Team":            play.get("team_abbr", play.get("team", "")),
+            "Type":            play.get("type", ""),
+            "TypeID":          play.get("type_id", ""),
+            "ScoringTypeName": play.get("scoring_type_name", ""),
+            "ScoreValue":      play.get("score_value", 0),
+            "Description":     play.get("description", ""),
+            "Away Score":      _safe_int(play.get("away_score", 0)),
+            "Home Score":      _safe_int(play.get("home_score", 0)),
         })
 
     return pd.DataFrame(rows) if rows else pd.DataFrame()
