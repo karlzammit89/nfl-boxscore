@@ -612,10 +612,22 @@ def get_player_stats_by_period(game_id: str) -> dict:
         if ptype in _SKIP_TYPES:
             continue
 
-        # isPenalty guard removed: plays with type='Penalty' are already caught
-        # by _SKIP_TYPES above. Real offensive plays (Rush, Pass Reception) that
-        # have isPenalty=True simply had a declined/offset penalty on the play —
-        # the yards still count and the play must be classified normally.
+        # ── isPenalty guard — offensive vs defensive penalty ──────────────────
+        # isPenalty=True plays split into two cases:
+        #   a) Penalty on OFFENSIVE team → play nullified → skip
+        #   b) Penalty on DEFENSIVE team → play stands → count normally
+        #   c) scoringPlay=True (e.g. TD + roughing passer) → always count
+        # We detect (a) by extracting 'PENALTY on TEAM-...' from play text and
+        # comparing to the possessing team (from participant team reference).
+        if play.get("isPenalty") and not play.get("scoringPlay"):
+            _play_txt = (play.get("text") or "").upper()
+            _pen_m    = _re.search(r"PENALTY ON ([A-Z]{2,3})[^A-Z]", _play_txt)
+            if _pen_m:
+                _pen_team = _pen_m.group(1)
+                _pos_team = _team_abbr_from_play(play)
+                if _pos_team and _pen_team == _pos_team:
+                    continue  # offensive-team penalty: play nullified → skip
+            # No match or defensive penalty → fall through and classify normally
 
         period = _safe_int((play.get("period") or {}).get("number", 0))
         if period == 0:
@@ -646,12 +658,19 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
         # ── Classify and accumulate ───────────────────────────────────────────
         if ptype in {"pass reception", "pass"}:
-            if psr:
-                d = passing[period][psr]; d["Team"] = team or d["Team"]
-                d["att"] += 1; d["comp"] += 1; d["yds"] += stat_yds
-            if rcv:
-                rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
-                rd["rec"] += 1; rd["yds"] += stat_yds
+            # Fix RC3a: Skip defensive-penalty completions where ESPN records
+            # statYardage=0 — these are DPI plays where the penalty yardage is
+            # credited separately; ESPN's official box score doesn't count
+            # the underlying completion as an ATT or REC.
+            if play.get("isPenalty") and stat_yds == 0:
+                pass  # don't credit ATT/REC
+            else:
+                if psr:
+                    d = passing[period][psr]; d["Team"] = team or d["Team"]
+                    d["att"] += 1; d["comp"] += 1; d["yds"] += stat_yds
+                if rcv:
+                    rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
+                    rd["rec"] += 1; rd["yds"] += stat_yds
 
         elif ptype == "pass incompletion":
             if psr:
@@ -667,6 +686,9 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 rd["rec"] += 1; rd["yds"] += stat_yds; rd["td"] += 1
 
         elif ptype == "pass interception return":
+            # Fix RC3b: Core API attaches 'passer' role on INT plays — credit
+            # the passer with ATT+1 and INT+1.  If the role is absent (edge case)
+            # the accumulator simply goes unmodified for this play.
             if psr:
                 d = passing[period][psr]; d["Team"] = team or d["Team"]
                 d["att"] += 1; d["int"] += 1
@@ -680,28 +702,38 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 sd["sacks"] += 1
 
         elif ptype in {"rush", "scramble", "rushing touchdown"}:
-            if rsh:
-                d = rushing[period][rsh]; d["Team"] = team or d["Team"]
-                d["car"] += 1; d["yds"] += stat_yds
-                if ptype == "rushing touchdown":
-                    d["td"] += 1
+            # Fix RC4a: Skip QB kneels — excluded from ESPN official rushing stats
+            if "kneel" in (play.get("text") or "").lower():
+                pass  # skip kneel
+            else:
+                if rsh:
+                    d = rushing[period][rsh]; d["Team"] = team or d["Team"]
+                    d["car"] += 1; d["yds"] += stat_yds
+                    if ptype == "rushing touchdown":
+                        d["td"] += 1
 
         elif ptype in {"fumble recovery (own)", "fumble recovery (opponent)"}:
-            # ESPN sets statYardage=0 when a reversal occurs; parse from text instead
-            fum_yds = stat_yds
-            if fum_yds == 0:
-                text = play.get("text", "") or ""
-                yd_m = _re.search(r"\bfor\s+(-?[0-9]+)\s+yards?", text, _re.I)
-                if yd_m:
-                    fum_yds = _safe_int(yd_m.group(1))
-            if psr:
-                d = passing[period][psr]; d["Team"] = team or d["Team"]
-                d["att"] += 1; d["comp"] += 1; d["yds"] += fum_yds
-            if rcv:
-                rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
-                rd["rec"] += 1; rd["yds"] += fum_yds
-            if rsh and not psr:   # rushing fumble recovery
-                d = rushing[period][rsh]; d["Team"] = team or d["Team"]
+            # Fix RC4b: Skip aborted snap fumble recoveries — these occur when
+            # the QB muffs the snap and recovers it. ESPN excludes them from
+            # official rushing stats. Detect via 'aborted' in play text.
+            _fum_txt = (play.get("text") or "").lower()
+            if "aborted" in _fum_txt:
+                pass  # skip aborted snap recovery
+            else:
+                # ESPN sets statYardage=0 when a reversal occurs; parse from text instead
+                fum_yds = stat_yds
+                if fum_yds == 0:
+                    yd_m = _re.search(r"\bfor\s+(-?[0-9]+)\s+yards?", _fum_txt, _re.I)
+                    if yd_m:
+                        fum_yds = _safe_int(yd_m.group(1))
+                if psr:
+                    d = passing[period][psr]; d["Team"] = team or d["Team"]
+                    d["att"] += 1; d["comp"] += 1; d["yds"] += fum_yds
+                if rcv:
+                    rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
+                    rd["rec"] += 1; rd["yds"] += fum_yds
+                if rsh and not psr:   # rushing fumble recovery
+                    d = rushing[period][rsh]; d["Team"] = team or d["Team"]
                 d["car"] += 1; d["yds"] += fum_yds
 
     # ── DataFrame builders ────────────────────────────────────────────────────
