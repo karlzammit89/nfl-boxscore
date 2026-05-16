@@ -3236,6 +3236,7 @@ elif st.session_state.view == "reconcile":
                             st.dataframe(pd.DataFrame(_c1), use_container_width=True, hide_index=True)
 
                         # ── C2: non-QB passer roles ──────────────────────────
+                        _c2 = []
                         try:
                             _doff = _dgps(_dgid)
                             if _doff is not None and not _doff.empty and "Player" in _doff.columns:
@@ -3356,6 +3357,24 @@ elif st.session_state.view == "reconcile":
                             st.markdown(f"**C6 — {len(_c6)} negative receiving play(s) · {_c6_bad} incorrectly counted:**")
                             st.dataframe(pd.DataFrame(_c6), use_container_width=True, hide_index=True)
 
+                        # ── Store debug in session state for bulk download ────
+                        _dbg_key = f"dbg_{_dgid}"
+                        _dbg_store = []
+                        def _rows_with_game(rows, section):
+                            return [{"game": _r["label"], "game_id": _dgid,
+                                     "section": section, **row} for row in rows]
+                        if _c1:  _dbg_store.extend(_rows_with_game(_c1,  "C1-name"))
+                        if _c2:  _dbg_store.extend(_rows_with_game(_c2,  "C2-trick"))
+                        if _c3:  _dbg_store.extend(_rows_with_game(_c3,  "C3-int"))
+                        if _c4:  _dbg_store.extend(_rows_with_game(_c4,  "C4-offpen"))
+                        if _c5s: _dbg_store.extend([{"game": _r["label"], "game_id": _dgid,
+                                                      "section": "C5-car", "rusher": n,
+                                                      "our_CAR": d["our_CAR"],
+                                                      "skipped": d["skipped_plays"]}
+                                                     for n, d in sorted(_c5s.items())])
+                        if _c6:  _dbg_store.extend(_rows_with_game(_c6,  "C6-neg"))
+                        st.session_state[_dbg_key] = _dbg_store
+
         # ── CSV download ──────────────────────────────────────────────────────
         _all_rows = []
         for _r in _results:
@@ -3366,6 +3385,24 @@ elif st.session_state.view == "reconcile":
                                   "Stat":"","Col":"","Q/H Total":"","Official":"","Missing":""})
         if _all_rows:
             st.divider()
-            st.download_button("📥 Download CSV", data=pd.DataFrame(_all_rows).to_csv(index=False),
-                               file_name="reconciliation_results.csv", mime="text/csv", key="recon_dl")
+            _dl1, _dl2 = st.columns(2)
+            with _dl1:
+                st.download_button("📥 Download mismatches CSV",
+                                   data=pd.DataFrame(_all_rows).to_csv(index=False),
+                                   file_name="reconciliation_results.csv",
+                                   mime="text/csv", key="recon_dl")
+            with _dl2:
+                # Collect all debug rows stored across games
+                _all_dbg = []
+                for _r in _results:
+                    _dk = f"dbg_{_r['game_id']}"
+                    if _dk in st.session_state:
+                        _all_dbg.extend(st.session_state[_dk])
+                if _all_dbg:
+                    st.download_button("🔍 Download debug CSV",
+                                       data=pd.DataFrame(_all_dbg).to_csv(index=False),
+                                       file_name="reconciliation_debug.csv",
+                                       mime="text/csv", key="debug_dl")
+                else:
+                    st.caption("Debug CSV available after games load above.")
 # ══ END RECONCILE ══════════════════════════════════════════════════════════════
