@@ -791,6 +791,78 @@ elif st.session_state.view == "boxscore":
                 st.dataframe(_dpd.DataFrame(_int_rows), use_container_width=True, hide_index=True)
             else:
                 st.info("No interception plays in this game.")
+            # ── RC4c: Shovel pass as rush — specific player debug ─────────────
+            st.markdown("---")
+            st.markdown("### RC4c — All rusher-role plays for specified players (shovel pass check)")
+            st.caption(
+                "Enter comma-separated player last names to see every play where they have "
+                "a rusher role, including full play text. Looking for plays where text "
+                "contains 'pass' — those are shovel passes credited as rush."
+            )
+            _rc4c_input = st.text_input(
+                "Player last names",
+                value="Taylor, Tuten",
+                key="rc4c_players",
+            )
+            if _rc4c_input.strip() and _plays:
+                _target_names = [n.strip().lower() for n in _rc4c_input.split(",") if n.strip()]
+                _ID_RE2 = _dre.compile(r"/athletes/([0-9]+)")
+
+                # Build athlete ID → name map from by_period rushing data
+                _aid_name: dict = {}
+                _rush_df = by_period.get("Full Game", {}).get("rushing", None)
+                if _rush_df is not None and not _rush_df.empty and "Player" in _rush_df.columns:
+                    for _, _rrow in _rush_df.iterrows():
+                        _pname = str(_rrow.get("Player", ""))
+                        # ESPN abbr format: J.Taylor, B.Tuten
+                        _parts = _pname.split(".")
+                        if len(_parts) >= 2:
+                            _last = _parts[-1].lower()
+                            _aid_name[_last] = _pname
+
+                _rc4c_rows = []
+                for _pl in _plays:
+                    for _pt in _pl.get("participants", []):
+                        if _pt.get("type") != "rusher":
+                            continue
+                        _ref = _pt.get("athlete", {}).get("$ref", "")
+                        _aid = (_ID_RE2.search(_ref) or type("",(),{"group":lambda s,n:""})()).group(1)
+                        _txt = str(_pl.get("text", ""))
+                        _txt_lower = _txt.lower()
+
+                        # Match by athlete ID resolved name or by text mention
+                        _matched = False
+                        for _tname in _target_names:
+                            if _tname in _txt_lower:
+                                _matched = True
+                                break
+
+                        if not _matched:
+                            continue
+
+                        _per  = (_pl.get("period") or {}).get("number", "?")
+                        _typ  = _pl.get("type", {}).get("text", "")
+                        _yds  = _pl.get("statYardage", 0)
+                        _pen  = _pl.get("isPenalty", False)
+                        _has_pass = "pass" in _txt_lower
+                        _kneel    = "kneel" in _txt_lower
+                        _rc4c_rows.append({
+                            "Q":            f"Q{_per}",
+                            "type":         _typ,
+                            "yds":          _yds,
+                            "isPenalty":    _pen,
+                            "has 'pass'?":  "⚠️ YES — shovel?" if _has_pass else "no",
+                            "kneel?":       "✅ YES" if _kneel else "no",
+                            "athlete_id":   _aid,
+                            "text":         _txt[:120],
+                        })
+
+                if _rc4c_rows:
+                    import pandas as _dpd2
+                    st.dataframe(_dpd2.DataFrame(_rc4c_rows), use_container_width=True, hide_index=True)
+                    st.markdown(f"**{len(_rc4c_rows)} rusher-role plays found for: {_rc4c_input}**")
+                else:
+                    st.info(f"No rusher-role plays found for: {_rc4c_input} — try different names or check this is the right game.")
     # ── END DEBUG ─────────────────────────────────────────────────────────────
 
 
