@@ -3049,21 +3049,18 @@ elif st.session_state.view == "reconcile":
                                          key="recon_date_end", label_visibility="visible")
     with _rc2:
         st.markdown("<div style='margin-top:28px'>", unsafe_allow_html=True)
-        _run_recon  = st.button("▶️ Run",          use_container_width=True, key="recon_run")
-        _clear_btn  = st.button("🗑️ Clear",        use_container_width=True, key="recon_clear")
-        _cache_btn  = st.button("♻️ Clear Name Cache", use_container_width=True, key="recon_cache_clear",
-                                help="Clears the athlete name cache. Use when player names appear swapped between games.")
+        _run_recon = st.button("▶️ Run",  use_container_width=True, key="recon_run")
+        _clear_btn = st.button("🗑️ Clear", use_container_width=True, key="recon_clear")
         if _clear_btn:
-            st.session_state.recon_results   = None
-            st.session_state.recon_game_ids  = ""
-            st.rerun()
-        if _cache_btn:
-            st.cache_data.clear()
-            st.success("✅ Athlete name cache cleared — names will be re-fetched on next run.")
+            st.session_state.recon_results  = None
+            st.session_state.recon_game_ids = ""
             st.rerun()
 
     # ── Build game ID list from date range ───────────────────────────────────
     if _run_recon:
+        # Auto-clear athlete name cache on every run — prevents stale name swaps
+        # (Bond/Corley, Evans duplicates) without requiring a manual button press.
+        st.cache_data.clear()
         if _date_start > _date_end:
             st.error("Start date must be before end date.")
             _run_recon = False
@@ -3110,11 +3107,22 @@ elif st.session_state.view == "reconcile":
                         else:
                             _mrows = []
                             for _player, _cat, _col, _pbp, _official, _ in _recon["mismatches"]:
+                                _gap = _pbp - _official
+                                _abs = abs(_gap)
+                                _count_col = _col in ("ATT", "CAR", "REC", "INT", "TD")
+                                if _count_col and _abs >= 2:
+                                    _cause = "❌ Logic"
+                                elif _count_col and _abs == 1:
+                                    _cause = "🔍 Investigate"
+                                elif not _count_col and _abs <= 2:
+                                    _cause = "📊 ESPN gap"
+                                else:  # YDS/AVG gap > 2
+                                    _cause = "🔍 Investigate"
                                 _mrows.append({
                                     "Game": _label, "Player": _player,
                                     "Stat": _cat.capitalize(), "Col": _col,
                                     "Q/H Total": _pbp, "Official": _official,
-                                    "Missing": str(_pbp - _official),
+                                    "Missing": str(_gap), "Cause": _cause,
                                 })
                             _results.append({"game_id":_gid,"label":_label,"passed":False,"rows":_mrows})
                     except Exception as _ge:
@@ -3135,8 +3143,17 @@ elif st.session_state.view == "reconcile":
         if _n_fail == 0 and _n_err == 0:
             st.success(f"✅ All {len(_results)} games passed — stats match official totals.")
         else:
-            st.error(f"❌ {_n_fail} / {len(_results)} games have gaps · "
-                     f"{_n_miss} total mismatches · ✅ {_n_pass} passed"
+            # Count by cause across all games
+            _all_mrows = [row for r in _results if not r["passed"] for row in r["rows"]]
+            _n_logic   = sum(1 for row in _all_mrows if row.get("Cause","") == "❌ Logic")
+            _n_invest  = sum(1 for row in _all_mrows if row.get("Cause","") == "🔍 Investigate")
+            _n_espngap = sum(1 for row in _all_mrows if row.get("Cause","") == "📊 ESPN gap")
+            _parts = []
+            if _n_logic:  _parts.append(f"❌ {_n_logic} logic bug{'s' if _n_logic!=1 else ''}")
+            if _n_invest: _parts.append(f"🔍 {_n_invest} to investigate")
+            if _n_espngap:_parts.append(f"📊 {_n_espngap} ESPN gap{'s' if _n_espngap!=1 else ''}")
+            _summary = " · ".join(_parts) if _parts else f"{_n_miss} mismatches"
+            st.error(f"{_n_fail}/{len(_results)} games have gaps · {_summary} · ✅ {_n_pass} passed"
                      + (f" · ⚠️ {_n_err} errors" if _n_err else ""))
 
         # ── Per-game results (collapsed by default) ───────────────────────────
@@ -3154,14 +3171,28 @@ elif st.session_state.view == "reconcile":
                     expanded=False,
                 ):
                     _mdf = pd.DataFrame(_r["rows"])
-                    st.dataframe(
-                        _mdf.style.map(
-                            lambda v: "color:#f59e0b;font-weight:700"
-                            if isinstance(v, str) and v.startswith("-") else "",
+                    # Split rows by cause for separate display
+                    _real_rows = _mdf[_mdf["Cause"].isin(["❌ Logic", "🔍 Investigate"])] if "Cause" in _mdf.columns else _mdf
+                    _gap_rows  = _mdf[_mdf["Cause"] == "📊 ESPN gap"] if "Cause" in _mdf.columns else pd.DataFrame()
+
+                    def _style_missing(df):
+                        return df.style.map(
+                            lambda v: "color:#ef4444;font-weight:700" if isinstance(v, str) and v.startswith("-")
+                            else ("color:#f59e0b;font-weight:700" if isinstance(v, str) and v.lstrip("+").lstrip("-").isdigit() and not v.startswith("-") else ""),
                             subset=["Missing"],
-                        ),
-                        use_container_width=True, hide_index=True,
-                    )
+                        )
+
+                    if not _real_rows.empty:
+                        st.markdown(f"**🔍 Logic / Investigate — {len(_real_rows)} row(s):**")
+                        st.dataframe(_style_missing(_real_rows), use_container_width=True, hide_index=True)
+
+                    if not _gap_rows.empty:
+                        with st.expander(f"📊 ESPN data gaps — {len(_gap_rows)} row(s) (measurement noise, not logic bugs)", expanded=False):
+                            st.caption("These rows are ±1–2 YDS differences between ESPN's Core API play-by-play and their official boxscore. Structurally unfixable — two ESPN systems measuring the same plays differently.")
+                            st.dataframe(_gap_rows, use_container_width=True, hide_index=True)
+
+                    if _real_rows.empty and _gap_rows.empty:
+                        st.dataframe(_mdf, use_container_width=True, hide_index=True)
 
                     # ── Debug — loads automatically for mismatch games ────────
                     import json as _dj, urllib.request as _dur, re as _dre2
