@@ -196,6 +196,8 @@ st.markdown("""
 
 for k, v in {
     "view":                "calendar",
+    "recon_game_ids":      "",
+    "recon_results":       None,
     "selected_game_id":    None,
     "selected_game":       None,
     "selected_date":       None,
@@ -211,7 +213,14 @@ MONTH_NAMES = ["January","February","March","April","May","June",
 
 # ── Header ────────────────────────────────────────────────────────────────────
 
-st.markdown("## 🏈 NFL Box Scores")
+_hc1, _hc2 = st.columns([8, 1.5])
+with _hc1:
+    st.markdown("## 🏈 NFL Box Scores")
+with _hc2:
+    st.markdown("<div style='margin-top:14px'>", unsafe_allow_html=True)
+    if st.button("🔍 Reconcile", use_container_width=True, key="btn_reconcile_nav"):
+        st.session_state.view = "reconcile"
+        st.rerun()
 st.divider()
 
 # ── Data loaders ──────────────────────────────────────────────────────────────
@@ -3006,3 +3015,187 @@ elif st.session_state.view == "boxscore":
 - `Rec Yards` is **not supported** — use `Receiving Yards` instead
 - Stat names are not case-sensitive
         """)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  VIEW — RECONCILE  (temporary — remove this block + the header button to clean up)
+# ══════════════════════════════════════════════════════════════════════════════
+
+elif st.session_state.view == "reconcile":
+
+    b1, _ = st.columns([1.5, 8])
+    with b1:
+        if st.button("← Calendar", use_container_width=True, key="recon_back"):
+            st.session_state.view = "calendar"
+            st.rerun()
+
+    st.markdown("<div class='sec-div' style='margin-top:12px'>🔍 Multi-Game Reconciliation</div>",
+                unsafe_allow_html=True)
+    st.caption(
+        "Enter one game ID per line (or comma-separated). "
+        "Get IDs from ESPN URLs: espn.com/nfl/game/_/gameId/**401772984**. "
+        "You can also enter a date (YYYY-MM-DD) to auto-load all games that day."
+    )
+
+    _rc1, _rc2 = st.columns([4, 1])
+    with _rc1:
+        _recon_input = st.text_area(
+            "Game IDs or date",
+            value=st.session_state.recon_game_ids,
+            placeholder="401772984\n401772949\n2025-12-14",
+            height=120,
+            key="recon_input_box",
+            label_visibility="collapsed",
+        )
+    with _rc2:
+        st.markdown("<div style='margin-top:4px'>", unsafe_allow_html=True)
+        _run_recon = st.button("▶ Run", use_container_width=True, key="recon_run")
+        _clear_btn = st.button("✕ Clear", use_container_width=True, key="recon_clear")
+        if _clear_btn:
+            st.session_state.recon_results = None
+            st.session_state.recon_game_ids = ""
+            st.rerun()
+
+    if _run_recon and _recon_input.strip():
+        st.session_state.recon_game_ids = _recon_input
+
+        # Parse input — expand date strings into game IDs
+        import re as _re_rc
+        _raw_tokens = [t.strip() for t in _re_rc.split(r'[\n,]+', _recon_input) if t.strip()]
+        _game_ids = []
+        _date_re  = _re_rc.compile(r'^\d{4}-\d{2}-\d{2}$')
+
+        for _tok in _raw_tokens:
+            if _date_re.match(_tok):
+                # Date → expand to all game IDs for that day
+                try:
+                    _d = date.fromisoformat(_tok)
+                    _month_games = fetch_games_for_month(_d.year, _d.month)
+                    _day_ids = [g["id"] for g in _month_games if et_date_str(g["date"]) == _tok]
+                    _game_ids.extend(_day_ids)
+                    if not _day_ids:
+                        st.warning(f"No games found for {_tok}")
+                except Exception as _de:
+                    st.warning(f"Could not expand date {_tok}: {_de}")
+            elif _tok.isdigit():
+                _game_ids.append(_tok)
+
+        _game_ids = list(dict.fromkeys(_game_ids))  # deduplicate, preserve order
+
+        if not _game_ids:
+            st.error("No valid game IDs found. Enter numeric IDs or YYYY-MM-DD dates.")
+        else:
+            _results = []
+            _prog = st.progress(0, text=f"Processing 0 / {len(_game_ids)} games…")
+
+            for _gi, _gid in enumerate(_game_ids):
+                _prog.progress((_gi) / len(_game_ids),
+                               text=f"Processing game {_gi+1} / {len(_game_ids)}: {_gid}")
+                try:
+                    _gdata = load_all_stats(_gid)
+                    _recon = get_reconciliation_status(_gdata, _gid)
+
+                    # Resolve game label (away @ home)
+                    _ls  = _gdata.get("linescore", pd.DataFrame())
+                    if _ls is not None and not _ls.empty and "Team" in _ls.columns and len(_ls) >= 2:
+                        _label = f"{_ls.iloc[0]['Team']} @ {_ls.iloc[1]['Team']}"
+                    else:
+                        _label = _gid
+
+                    if _recon["passed"]:
+                        _results.append({
+                            "game_id": _gid,
+                            "label":   _label,
+                            "passed":  True,
+                            "rows":    [],
+                        })
+                    else:
+                        _mrows = []
+                        for _player, _cat, _col, _pbp, _official, _ in _recon["mismatches"]:
+                            _mrows.append({
+                                "Game":       _label,
+                                "Player":     _player,
+                                "Stat":       _cat.capitalize(),
+                                "Col":        _col,
+                                "Q/H Total":  _pbp,
+                                "Official":   _official,
+                                "Missing":    str(_pbp - _official),
+                            })
+                        _results.append({
+                            "game_id": _gid,
+                            "label":   _label,
+                            "passed":  False,
+                            "rows":    _mrows,
+                        })
+                except Exception as _ge:
+                    _results.append({
+                        "game_id": _gid,
+                        "label":   _gid,
+                        "passed":  None,
+                        "rows":    [{"Game": _gid, "Player": f"Error: {str(_ge)[:60]}",
+                                     "Stat":"","Col":"","Q/H Total":"","Official":"","Missing":""}],
+                    })
+
+            _prog.progress(1.0, text=f"Done — {len(_game_ids)} games processed.")
+            st.session_state.recon_results = _results
+
+    # ── Display results ───────────────────────────────────────────────────────
+    if st.session_state.recon_results:
+        _results = st.session_state.recon_results
+        _n_total  = len(_results)
+        _n_passed = sum(1 for r in _results if r["passed"] is True)
+        _n_failed = sum(1 for r in _results if r["passed"] is False)
+        _n_error  = sum(1 for r in _results if r["passed"] is None)
+        _n_miss   = sum(len(r["rows"]) for r in _results if not r["passed"])
+
+        # Summary banner
+        if _n_failed == 0 and _n_error == 0:
+            st.success(f"✅ All {_n_total} games passed reconciliation — stats match official totals.")
+        else:
+            st.error(
+                f"❌ {_n_failed} / {_n_total} games have gaps · "
+                f"{_n_miss} total mismatches · "
+                f"✅ {_n_passed} passed"
+                + (f" · ⚠️ {_n_error} errors" if _n_error else "")
+            )
+
+        # Per-game results
+        for _r in _results:
+            if _r["passed"] is True:
+                st.success(f"✅ {_r['label']}  ({_r['game_id']})")
+            elif _r["passed"] is None:
+                st.warning(f"⚠️ {_r['label']}  ({_r['game_id']}) — {_r['rows'][0]['Player']}")
+            else:
+                with st.expander(
+                    f"❌ {_r['label']}  ({_r['game_id']}) — {len(_r['rows'])} mismatch{'es' if len(_r['rows'])>1 else ''}",
+                    expanded=True,
+                ):
+                    _mdf = pd.DataFrame(_r["rows"])
+                    st.dataframe(
+                        _mdf.style.map(
+                            lambda v: "color:#f59e0b;font-weight:700"
+                            if isinstance(v, str) and v.startswith("-") else "",
+                            subset=["Missing"],
+                        ),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+        # Full flat table download
+        _all_rows = []
+        for _r in _results:
+            if _r["rows"]:
+                _all_rows.extend(_r["rows"])
+            elif _r["passed"]:
+                _all_rows.append({"Game": _r["label"], "Player": "✅ Passed",
+                                  "Stat":"","Col":"","Q/H Total":"","Official":"","Missing":""})
+        if _all_rows:
+            st.divider()
+            _flat_df = pd.DataFrame(_all_rows)
+            st.download_button(
+                "⬇ Download full results as CSV",
+                data=_flat_df.to_csv(index=False),
+                file_name="reconciliation_results.csv",
+                mime="text/csv",
+                key="recon_download",
+            )
