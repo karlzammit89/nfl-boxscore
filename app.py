@@ -624,93 +624,84 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
-    # ── DEBUG: TypeID mapping + Core API first play ───────────────────────────
-    with st.expander("🔍 DEBUG — scoringType field & Core API first play", expanded=True):
-        import json as _json, urllib.request as _ur
+    # ── DEBUG: Multi-game TypeID discovery ───────────────────────────────────
+    with st.expander("🔍 DEBUG — ESPN TypeID & scoringType.name discovery", expanded=True):
 
-        # ── Part 1: Raw scoringType from each scoring play ────────────────────
-        st.markdown("**Part 1 — `scoringType` field from each ESPN scoring play:**")
-        try:
-            from nfl.api import get_game_summary as _dgs
-            _sum = _dgs(game_id)
-            _sps = _sum.get("scoringPlays", []) if _sum else []
-            if _sps:
-                _rows = []
-                for _i, _sp in enumerate(_sps, 1):
-                    _per  = _sp.get("period", {}).get("number", "?")
-                    _team = _sp.get("team", {}).get("abbreviation", "?")
-                    _sv   = _sp.get("scoreValue", "MISSING")
-                    _t    = _sp.get("type", {})
-                    _st   = _sp.get("scoringType", {})
-                    _desc = str(_sp.get("text", ""))[:55]
-                    _rows.append({
-                        "#":                   _i,
-                        "Q":                   f"Q{_per}",
-                        "Team":                _team,
-                        "scoreValue":          _sv,
-                        "type.id":             _t.get("id", "MISSING"),
-                        "type.text":           _t.get("text", "MISSING"),
-                        "scoringType.id":      _st.get("id", "MISSING"),
-                        "scoringType.text":    _st.get("text", "MISSING"),
-                        "scoringType keys":    str(list(_st.keys())),
-                        "Description":         _desc,
-                    })
-                import pandas as _pd2
-                st.dataframe(_pd2.DataFrame(_rows), use_container_width=True, hide_index=True)
-                st.markdown("**Full `scoringType` dict — first scoring play:**")
-                st.json(_sps[0].get("scoringType", {}))
-                # Show a second play if it has a different scoringType
-                if len(_sps) > 1:
-                    st.markdown("**Full `scoringType` dict — second scoring play:**")
-                    st.json(_sps[1].get("scoringType", {}))
-                st.markdown("**Unique `scoringType.id` → `scoringType.text` pairs in this game:**")
-                _pairs = {}
-                for _sp in _sps:
-                    _st = _sp.get("scoringType", {})
-                    _sid = str(_st.get("id", ""))
-                    _stxt = _st.get("text", "")
-                    if _sid:
-                        _pairs[_sid] = _stxt
-                st.json(_pairs)
-            else:
-                st.warning("No scoring plays found.")
-        except Exception as _e:
-            st.error(f"Part 1 error: {_e}")
+        st.markdown("""
+**Instructions:** Enter up to 5 game IDs below (comma-separated) to map all scoring type IDs
+across multiple games. Pick games you know had Rush TDs, FGs, Defensive TDs etc.
 
-        st.divider()
+*Get game IDs from the ESPN URL: `espn.com/nfl/game/_/gameId/`**`401772984`*
+        """)
 
-        # ── Part 2: Core API first 5 plays ────────────────────────────────────
-        st.markdown("**Part 2 — Core API: first 5 plays (find real first play past Coin Toss):**")
-        try:
-            from nfl.api import get_core_plays as _gcp2
-            _cp = _gcp2(game_id)
-            if _cp:
-                _cp_rows = []
-                for _i, _pl in enumerate(_cp[:5]):
-                    _cp_rows.append({
-                        "index":         _i,
-                        "type.id":       _pl.get("type", {}).get("id", "MISSING"),
-                        "type.text":     _pl.get("type", {}).get("text", "MISSING"),
-                        "period.number": _pl.get("period", {}).get("number", "?"),
-                        "scoringPlay":   _pl.get("scoringPlay", "?"),
-                        "text":          str(_pl.get("text", ""))[:80],
-                    })
-                import pandas as _pd3
-                st.dataframe(_pd3.DataFrame(_cp_rows), use_container_width=True, hide_index=True)
-            else:
-                st.warning("No Core API plays found.")
-        except Exception as _e:
-            st.error(f"Part 2 error: {_e}")
+        _test_ids_input = st.text_input(
+            "Game IDs (comma-separated)",
+            value=game_id,
+            key="debug_game_ids",
+        )
+        _run_discovery = st.button("🔎 Run Discovery", key="debug_run")
 
-        st.divider()
+        if _run_discovery:
+            _test_ids = [g.strip() for g in _test_ids_input.split(",") if g.strip()]
 
-        # ── Part 3: Current scoring_df TypeID column ──────────────────────────
-        st.markdown("**Part 3 — Unique TypeID values in scoring_df (currently used for grading):**")
-        _sdf_dbg = data.get("scoring", None)
-        if _sdf_dbg is not None and not _sdf_dbg.empty and "TypeID" in _sdf_dbg.columns:
-            st.code(str(sorted(_sdf_dbg["TypeID"].astype(str).unique().tolist())))
-        else:
-            st.warning("TypeID column missing from scoring_df.")
+            # Aggregate across all games
+            _id_map   = {}   # type.id → set of type.text values seen
+            _sct_map  = {}   # scoringType.name → set of type.id values seen
+            _all_rows = []   # flat list for the full table
+
+            for _gid in _test_ids:
+                try:
+                    from nfl.api import get_game_summary as _dgs2
+                    _s2 = _dgs2(_gid)
+                    _sps2 = _s2.get("scoringPlays", []) if _s2 else []
+                    for _sp in _sps2:
+                        _per  = _sp.get("period", {}).get("number", "?")
+                        _team = _sp.get("team", {}).get("abbreviation", "?")
+                        _sv   = _sp.get("scoreValue", "?")
+                        _t    = _sp.get("type", {})
+                        _st   = _sp.get("scoringType", {})
+                        _tid  = str(_t.get("id", ""))
+                        _ttxt = _t.get("text", "")
+                        _stn  = _st.get("name", "")
+                        _std  = _st.get("displayName", "")
+                        _desc = str(_sp.get("text", ""))[:60]
+
+                        # Aggregate
+                        if _tid:
+                            _id_map.setdefault(_tid, set()).add(_ttxt)
+                        if _stn:
+                            _sct_map.setdefault(_stn, set()).add(_tid)
+
+                        _all_rows.append({
+                            "game_id":            _gid,
+                            "Q":                  f"Q{_per}",
+                            "Team":               _team,
+                            "scoreValue":         _sv,
+                            "type.id":            _tid,
+                            "type.text":          _ttxt,
+                            "scoringType.name":   _stn,
+                            "scoringType.display":_std,
+                            "Description":        _desc,
+                        })
+                except Exception as _ge:
+                    st.warning(f"Game {_gid}: {_ge}")
+
+            if _all_rows:
+                import pandas as _pdf
+
+                st.markdown("---")
+                st.markdown("### 📋 Complete type.id → type.text map (all games combined)")
+                _id_rows = [{"type.id": k, "type.text (all seen)": " / ".join(sorted(v))}
+                            for k, v in sorted(_id_map.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 999)]
+                st.dataframe(_pdf.DataFrame(_id_rows), use_container_width=True, hide_index=True)
+
+                st.markdown("### 📋 scoringType.name → type.id values seen")
+                _sct_rows = [{"scoringType.name": k, "type.ids seen": ", ".join(sorted(v))}
+                             for k, v in sorted(_sct_map.items())]
+                st.dataframe(_pdf.DataFrame(_sct_rows), use_container_width=True, hide_index=True)
+
+                st.markdown("### 📋 Full play-by-play across all games")
+                st.dataframe(_pdf.DataFrame(_all_rows), use_container_width=True, hide_index=True)
     # ── END DEBUG ─────────────────────────────────────────────────────────────
 
 
