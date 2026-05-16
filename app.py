@@ -633,7 +633,165 @@ elif st.session_state.view == "boxscore":
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
+    # ── DEBUG: Root cause investigation ──────────────────────────────────────
+    with st.expander("🔍 DEBUG — Mismatch root cause investigation", expanded=True):
+        import json as _dj, re as _dre, urllib.request as _dur
 
+        def _core_fetch(url):
+            _req = _dur.Request(url, headers={"User-Agent":"Mozilla/5.0","Accept":"application/json"})
+            with _dur.urlopen(_req, timeout=15) as _r:
+                return _dj.loads(_r.read())
+
+        _BASE = "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
+        _ID_RE = _dre.compile(r"/athletes/([0-9]+)")
+
+        try:
+            _raw = _core_fetch(
+                _BASE + f"/events/{game_id}/competitions/{game_id}/plays?limit=400"
+            )
+            _plays = _raw.get("items", [])
+            st.markdown(f"**Total Core API plays:** {len(_plays)} / {_raw.get('count','?')}")
+        except Exception as _e:
+            st.error(f"Could not fetch plays: {_e}")
+            _plays = []
+
+        if _plays:
+            import pandas as _dpd
+
+            # ── RC1: isPenalty=True plays with OFFENSIVE roles ────────────────
+            st.markdown("---")
+            st.markdown("### RC1 — isPenalty=True plays with passer/receiver/rusher roles")
+            st.caption("Looking for accepted vs declined — check 'Declined' in text. "
+                       "Accepted penalty = play nullified = should NOT count.")
+            _pen_rows = []
+            for _pl in _plays:
+                if not _pl.get("isPenalty"):
+                    continue
+                _roles = [p.get("type","") for p in _pl.get("participants",[])
+                          if p.get("type","") in ("passer","receiver","rusher","sackedBy")]
+                if not _roles:
+                    continue
+                _txt  = str(_pl.get("text",""))
+                _yds  = _pl.get("statYardage",0)
+                _per  = (_pl.get("period") or {}).get("number","?")
+                _typ  = _pl.get("type",{}).get("text","")
+                _sc   = _pl.get("scoringPlay", False)
+                _declined = "declined" in _txt.lower()
+                _no_play  = "no play" in _txt.lower()
+                _enforced = any(w in _txt.lower() for w in ["enforced","accepted","yards"])
+                _pen_rows.append({
+                    "Q":        f"Q{_per}",
+                    "type":     _typ,
+                    "yds":      _yds,
+                    "roles":    ", ".join(set(_roles)),
+                    "scoring":  _sc,
+                    "Declined?": "✅ YES" if _declined else ("⚠️ no play" if _no_play else "❌ NO"),
+                    "text":     _txt[:100],
+                })
+            if _pen_rows:
+                st.dataframe(_dpd.DataFrame(_pen_rows), use_container_width=True, hide_index=True)
+                st.markdown(f"**{len(_pen_rows)} isPenalty=True plays with offensive roles**")
+            else:
+                st.success("No isPenalty=True plays with offensive roles in this game.")
+
+            # ── RC2: OT plays (period ≥ 5) ───────────────────────────────────
+            st.markdown("---")
+            st.markdown("### RC2 — OT plays (period.number ≥ 5) with offensive roles")
+            st.caption("If these are being included in Q/H sums, it explains +14 overage.")
+            _ot_rows = []
+            for _pl in _plays:
+                _per = (_pl.get("period") or {}).get("number", 0)
+                if _per < 5:
+                    continue
+                _roles = [p.get("type","") for p in _pl.get("participants",[])
+                          if p.get("type","") in ("passer","receiver","rusher","sackedBy")]
+                if not _roles:
+                    continue
+                _ot_rows.append({
+                    "period":  _per,
+                    "type":    _pl.get("type",{}).get("text",""),
+                    "yds":     _pl.get("statYardage",0),
+                    "roles":   ", ".join(set(_roles)),
+                    "text":    str(_pl.get("text",""))[:100],
+                })
+            if _ot_rows:
+                st.dataframe(_dpd.DataFrame(_ot_rows), use_container_width=True, hide_index=True)
+                st.markdown(f"**{len(_ot_rows)} OT plays with offensive roles**")
+                # Check how our code maps period 5+
+                st.markdown("**How does stats.py map period 5+?**")
+                st.code(
+                    "def _quarter_label(period):\n"
+                    "    if period <= 4: return f'Q{period}'\n"
+                    "    return 'OT'   # period 5,6 etc → 'OT' bucket\n\n"
+                    "by_period['OT'] → only shown when OT data exists\n"
+                    "Reconciliation sums Q1+Q2+Q3+Q4+OT — OT should NOT leak into Q1–Q4"
+                )
+            else:
+                st.success("No OT plays with offensive roles (or no OT in this game).")
+
+            # ── RC3 & RC4: Kneel-downs, spikes, aborted snaps ────────────────
+            st.markdown("---")
+            st.markdown("### RC3/RC4 — Kneels, spikes, aborted snaps with rusher/passer roles")
+            st.caption(
+                "ESPN excludes these from official stats. "
+                "If our code credits them, Q/H will overstate by 1 play / N yards."
+            )
+            _KNEEL_SPIKE_TYPES = {"kneel","spike","quarterback kneel",
+                                   "end of game","victory formation","qb kneel"}
+            _kneel_rows = []
+            for _pl in _plays:
+                _typ  = (_pl.get("type",{}).get("text","") or "").lower()
+                _txt  = (str(_pl.get("text","")) or "").lower()
+                _yds  = _pl.get("statYardage", 0)
+                _roles = [p.get("type","") for p in _pl.get("participants",[])
+                          if p.get("type","") in ("passer","receiver","rusher","sackedBy")]
+                if not _roles:
+                    continue
+                _is_kneel  = any(k in _typ or k in _txt for k in
+                                 ["kneel","spike","kneels","victory","aborted"])
+                _is_neg    = isinstance(_yds, (int,float)) and _yds < 0
+                _is_zero   = _yds == 0 and "incomplet" not in _txt
+                if _is_kneel or (_is_neg and "rusher" in _roles):
+                    _kneel_rows.append({
+                        "Q":      f"Q{(_pl.get('period') or {}).get('number','?')}",
+                        "type":   _pl.get("type",{}).get("text",""),
+                        "yds":    _yds,
+                        "roles":  ", ".join(set(_roles)),
+                        "flag":   "kneel/spike" if _is_kneel else "neg rush",
+                        "text":   str(_pl.get("text",""))[:100],
+                    })
+            if _kneel_rows:
+                st.dataframe(_dpd.DataFrame(_kneel_rows), use_container_width=True, hide_index=True)
+            else:
+                st.success("No kneels/spikes/negative rushes with rusher roles found.")
+
+            # ── RC3: Missing plays — INT / spike as ATT ───────────────────────
+            st.markdown("---")
+            st.markdown("### RC3 — Pass interceptions (passer role presence check)")
+            st.caption(
+                "On interception plays, does ESPN attach a 'passer' participant role? "
+                "If not, we miss the ATT and the INT credit."
+            )
+            _int_rows = []
+            for _pl in _plays:
+                _typ = (_pl.get("type",{}).get("text","") or "").lower()
+                if "interception" not in _typ:
+                    continue
+                _roles = {p.get("type","") for p in _pl.get("participants",[])}
+                _per   = (_pl.get("period") or {}).get("number","?")
+                _int_rows.append({
+                    "Q":              f"Q{_per}",
+                    "type":           _pl.get("type",{}).get("text",""),
+                    "yds":            _pl.get("statYardage",0),
+                    "has passer?":    "✅" if "passer" in _roles else "❌ MISSING",
+                    "all roles":      ", ".join(sorted(_roles)),
+                    "text":           str(_pl.get("text",""))[:100],
+                })
+            if _int_rows:
+                st.dataframe(_dpd.DataFrame(_int_rows), use_container_width=True, hide_index=True)
+            else:
+                st.info("No interception plays in this game.")
+    # ── END DEBUG ─────────────────────────────────────────────────────────────
 
 
 
