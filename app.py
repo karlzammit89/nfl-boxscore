@@ -280,13 +280,6 @@ if st.session_state.view == "calendar":
     for g in month_games:
         games_by_date.setdefault(et_date_str(g["date"]), []).append(g)
 
-    # Multi-Game Reconciliation button
-    _recon_col, _ = st.columns([2.5, 7])
-    with _recon_col:
-        if st.button("🔍 Multi-Game Reconciliation", use_container_width=True, key="btn_recon_cal"):
-            st.session_state.view = "reconcile"
-            st.rerun()
-
     # ── Month / Year picker — native st.selectbox, no buttons needed ────────
     # Selectboxes trigger instant reruns on change with no page flash,
     # and are completely immune to any button CSS.
@@ -435,6 +428,13 @@ if st.session_state.view == "calendar":
     # Legend
     st.caption("Cells with text = has games  ·  🔴 = live game  ·  Red border = today")
 
+    st.divider()
+    _recon_col, _ = st.columns([2.5, 7])
+    with _recon_col:
+        if st.button("🔍 Multi-Game Reconciliation", use_container_width=True, key="btn_recon_cal"):
+            st.session_state.view = "reconcile"
+            st.rerun()
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  VIEW — DAY
@@ -448,13 +448,6 @@ elif st.session_state.view == "day":
     if not ds or not games:
         st.session_state.view = "calendar"
         st.rerun()
-
-    # Multi-Game Reconciliation button
-    _recon_col, _ = st.columns([2.5, 7])
-    with _recon_col:
-        if st.button("🔍 Multi-Game Reconciliation", use_container_width=True, key="btn_recon_day"):
-            st.session_state.view = "reconcile"
-            st.rerun()
 
     try:
         d_obj      = date.fromisoformat(ds)
@@ -534,6 +527,13 @@ elif st.session_state.view == "day":
                 st.session_state.selected_game    = g
                 st.session_state.view = "boxscore"
                 st.rerun()
+
+    st.divider()
+    _recon_col, _ = st.columns([2.5, 7])
+    with _recon_col:
+        if st.button("🔍 Multi-Game Reconciliation", use_container_width=True, key="btn_recon_day"):
+            st.session_state.view = "reconcile"
+            st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3145,7 +3145,7 @@ elif st.session_state.view == "reconcile":
             if _n_invest: _parts.append(f"🔍 {_n_invest} to investigate")
             if _n_espngap:_parts.append(f"⚠️ {_n_espngap} ESPN gap{'s' if _n_espngap!=1 else ''}")
             _summary = " · ".join(_parts) if _parts else f"{_n_miss} mismatches"
-            st.error(f"{_n_pass}/{len(_results)} games passed · {_summary} · ✅ {_n_pass} game{'s' if _n_pass!=1 else ''} passed"
+            st.error(f"{_n_pass}/{len(_results)} games passed · {_summary}"
                      + (f" · ⚠️ {_n_err} errors" if _n_err else ""))
 
         # ── Per-game results (collapsed by default) ───────────────────────────
@@ -3426,12 +3426,13 @@ elif st.session_state.view == "reconcile":
                                   "Stat":"","Col":"","Q/H Total":"","Official":"","Missing":""})
         if _all_rows:
             st.divider()
-            _dl1, _dl2 = st.columns(2)
+            _dl1, _dl2 = st.columns(2, gap="small")
             with _dl1:
                 st.download_button("📥 Download Mismatches CSV",
                                    data=pd.DataFrame(_all_rows).to_csv(index=False),
                                    file_name="reconciliation_results.csv",
-                                   mime="text/csv", key="recon_dl")
+                                   mime="text/csv", key="recon_dl",
+                                   disabled=(_n_fail == 0 and _n_err == 0))
             with _dl2:
                 # Collect all debug rows stored across games
                 _all_dbg = []
