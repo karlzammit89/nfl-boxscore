@@ -32,6 +32,12 @@ Change log:
          all text-parse helpers
       6. Skips scoring-summary duplicate entries
          ("Player N Yd pass from QB (Kicker Kick)" format)
+      7. type_id=5 def-pen rush with dead-ball/declined foul (NFL §Rule 2A):
+         credit actual rush yards from text (or 0 on "no gain"), not statYardage
+         which includes the penalty distance.
+      8. type_id=24 off-pen reception with statYardage > 0 (NFL §Rule 2B):
+         credit statYardage as "yards to spot of foul" when the offensive penalty
+         is enforced downfield. ESPN encodes the spot-of-foul value in statYardage.
 """
 
 import pandas as pd
@@ -743,7 +749,20 @@ def get_player_stats_by_period(game_id: str) -> dict:
                     if rcv:
                         rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
                         rd["rec"] += 1; rd["yds"] += stat_yds
-                # else: standard live-ball off-pen → nullified (NFL Rule 1), no stats
+                # Change 8: NFL §Penalty Plays Rule 2B — when the offensive penalty is
+                # enforced from a spot BEYOND the line of scrimmage (downfield holding,
+                # clipping, illegal block), credit the receiver/passer with yards gained
+                # to the spot of the foul. ESPN encodes that value in statYardage when
+                # statYardage > 0 on an off-pen reception. (When statYardage <= 0, the
+                # foul was at/behind LOS and the play is nullified per Rule 1.)
+                elif stat_yds > 0:
+                    if psr:
+                        d = passing[period][psr]; d["Team"] = team or d["Team"]
+                        d["att"] += 1; d["comp"] += 1; d["yds"] += stat_yds
+                    if rcv:
+                        rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
+                        rd["rec"] += 1; rd["yds"] += stat_yds
+                # else: standard live-ball off-pen at/behind LOS → nullified (Rule 1)
             elif play.get("isPenalty"):
                 # Defensive penalty: statYardage = net field gain (catch + penalty yds)
                 # Use text-parsed yards for box-score-accurate individual stats
@@ -849,13 +868,34 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 if _is_off_pen_rush:
                     # Off-pen rush: credit text-parsed yards, no CAR
                     # statYardage = march-back distance (e.g., -12 for 3-yd run + 15 penalty)
-                    _pen_text = play.get("text", "") or ""
-                    _pen_yd_m = _re.search(r"for\s+(-?\d+)\s+yards?", _pen_text, _re.I)
-                    if _pen_yd_m:
-                        d["yds"] += _safe_int(_pen_yd_m.group(1))
+                    _txt_yds = _text_parse_yards(play.get("text", "") or "")
+                    if _txt_yds is not None:
+                        d["yds"] += _txt_yds
                     # else: no yards parseable, add nothing
                 else:
-                    d["car"] += 1; d["yds"] += stat_yds
+                    # Change 7: Detect dead-ball / declined penalty on def-pen rush.
+                    # Per NFL §Rule 2A, dead-ball fouls (Taunting, Unsportsmanlike,
+                    # Excessive Celebration, Dead Ball, Late Hit) and declined penalties
+                    # do not add yards to the live-play credit. The rusher's credit
+                    # must reflect actual yards gained, not statYardage (which includes
+                    # the penalty distance).
+                    #
+                    # Detection scope: only when isPenalty=True (defensive penalty present).
+                    # Normal rushes with no penalty are unaffected (no behavior change).
+                    _r_text = play.get("text", "") or ""
+                    if play.get("isPenalty") and _has_dead_ball_or_declined(_r_text):
+                        # Dead-ball / declined: credit actual yards from text.
+                        # "for no gain" → 0 yds. "for N yards" → N. Fallback: statYardage.
+                        _no_gain = "no gain" in _r_text.lower()
+                        if _no_gain:
+                            _actual_rush = 0
+                        else:
+                            _txt = _text_parse_yards(_r_text)
+                            _actual_rush = _txt if _txt is not None else stat_yds
+                        d["car"] += 1; d["yds"] += _actual_rush
+                    else:
+                        # Normal rush, live-ball def-pen, or no penalty: credit statYardage.
+                        d["car"] += 1; d["yds"] += stat_yds
                     if ptype == "rushing touchdown":
                         d["td"] += 1
 
