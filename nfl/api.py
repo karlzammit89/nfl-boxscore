@@ -5,6 +5,7 @@ All ESPN unofficial API calls for live NFL game data.
 """
 
 import requests
+import time
 from typing import Optional
 import logging
 
@@ -25,6 +26,7 @@ def _get(url: str, params: dict = None, timeout: int = 10) -> Optional[dict]:
     try:
         r = SESSION.get(url, params=params, timeout=timeout)
         r.raise_for_status()
+        time.sleep(0.15)   # throttle guard — space ESPN calls to avoid rate limiting
         return r.json()
     except requests.RequestException as e:
         logger.error(f"ESPN API error [{url}]: {e}")
@@ -159,7 +161,9 @@ def _get_core(url: str, timeout: int = 15) -> Optional[dict]:
     try:
         req = _ur.Request(url, headers=_CORE_HEADERS)
         with _ur.urlopen(req, timeout=timeout) as r:
-            return _json.loads(r.read())
+            data = _json.loads(r.read())
+        time.sleep(0.15)   # throttle guard — space ESPN calls to avoid rate limiting
+        return data
     except Exception as e:
         logger.error(f"ESPN Core API error [{url}]: {e}")
         return None
