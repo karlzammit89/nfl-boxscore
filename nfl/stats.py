@@ -666,11 +666,14 @@ def get_player_stats_by_period(game_id: str) -> dict:
     # fetched as part of get_game_summary. We read them here to lock game totals.
     def _read_official_totals(summary: dict) -> dict:
         """
-        Returns {player_name: {cat: {stat: value}}} from boxscore.players.
+        Returns {athlete_id: {cat: {stat: value}}} from boxscore.players.
+        Keyed by athlete_id (numeric string from $ref) so it works regardless
+        of whether _resolve_athlete returns a display name or "[ID:XXXX]".
         cat ∈ {"passing", "rushing", "receiving"}
         stat keys: passing→{att,comp,yds,td,int}  rushing→{car,yds,td}  receiving→{rec,yds,td}
         """
         totals = {}
+        _aid_re = _re.compile(r"/athletes/([0-9]+)")
         cat_map = {
             "passing":   {"C/ATT": "c_att", "YDS": "yds", "TD": "td", "INT": "int"},
             "rushing":   {"CAR": "car",     "YDS": "yds", "TD": "td"},
@@ -681,27 +684,31 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 cat_name = category.get("name", "").lower()
                 if cat_name not in cat_map:
                     continue
-                keys   = category.get("keys", [])
-                labels = category.get("labels", keys)
+                labels = category.get("labels", category.get("keys", []))
                 for athlete_entry in category.get("athletes", []):
                     athlete   = athlete_entry.get("athlete", {})
-                    name      = athlete.get("displayName", "")
                     stats_raw = athlete_entry.get("stats", [])
-                    if not name or not stats_raw:
+                    if not stats_raw:
                         continue
-                    if name not in totals:
-                        totals[name] = {}
-                    if cat_name not in totals[name]:
-                        totals[name][cat_name] = {}
+                    # Key by athlete_id from $ref — works even when name resolution fails
+                    ref = athlete.get("$ref", "")
+                    m   = _aid_re.search(ref)
+                    if not m:
+                        continue
+                    aid = m.group(1)
+                    if aid not in totals:
+                        totals[aid] = {}
+                    if cat_name not in totals[aid]:
+                        totals[aid][cat_name] = {}
                     for label, val in zip(labels, stats_raw):
                         if label in cat_map[cat_name]:
                             try:
                                 if label == "C/ATT":
                                     parts = str(val).split("/")
-                                    totals[name][cat_name]["comp"] = int(parts[0]) if len(parts) == 2 else 0
-                                    totals[name][cat_name]["att"]  = int(parts[1]) if len(parts) == 2 else 0
+                                    totals[aid][cat_name]["comp"] = int(parts[0]) if len(parts) == 2 else 0
+                                    totals[aid][cat_name]["att"]  = int(parts[1]) if len(parts) == 2 else 0
                                 else:
-                                    totals[name][cat_name][label.lower()] = int(
+                                    totals[aid][cat_name][label.lower()] = int(
                                         pd.to_numeric(val, errors="coerce") or 0
                                     )
                             except Exception:
@@ -780,8 +787,9 @@ def get_player_stats_by_period(game_id: str) -> dict:
             if not aid:
                 continue
             name = _resolve_athlete(aid)
-            if name:
-                roles[role] = name
+            if not name:
+                name = f"[ID:{aid}]"   # fallback — never drop a play due to name failure
+            roles[role] = name
 
         psr = roles.get("passer")
         rcv = roles.get("receiver")
@@ -899,10 +907,11 @@ def get_player_stats_by_period(game_id: str) -> dict:
             if psr:
                 d = passing[eff_period][psr]; d["Team"] = team or d["Team"]
                 d["att"] += 1
-                sack_yds = stat_yds  # sack yards are negative passing yards
-                d["yds"] += sack_yds
+                # ESPN's official passing YDS are GROSS (sacks not subtracted).
+                # Do not add negative sack yards — that would undercount vs official.
+                # ATT+1 is the only stat credited on a sack play.
                 _play_log[(psr, "passing")].append(
-                    (eff_period, sack_yds, text_str, False))
+                    (eff_period, 0, text_str, False))
 
         # ── Fumble Recovery (type_id=9 or ptype) ─────────────────────────────
         elif type_id == "9" or ptype in {"fumble recovery (own)", "fumble recovery (opponent)"}:
@@ -948,6 +957,8 @@ def get_player_stats_by_period(game_id: str) -> dict:
     # that player×category (quarters withheld; game total still shown via Full Game).
 
     reconciliation_failed = {}   # {player: {cat: reason_str}}
+    # Regex to extract numeric ID from "[ID:4045163]" fallback names
+    _ID_KEY_RE = _re.compile(r"\[ID:(\d+)\]")
 
     cat_accumulators = {
         "passing":   (passing,   "yds"),
@@ -956,8 +967,21 @@ def get_player_stats_by_period(game_id: str) -> dict:
     }
 
     for cat, (acc, yds_key) in cat_accumulators.items():
-        # Collect all players who appear in official_totals for this category
-        for player, player_totals in official_totals.items():
+        # Iterate the accumulators (keyed by resolved name or "[ID:XXXX]")
+        # and look up official totals by athlete_id extracted from the key.
+        all_players = set()
+        for p in acc:
+            all_players.update(acc[p].keys())
+
+        for player in all_players:
+            # Extract athlete_id from player key
+            m = _ID_KEY_RE.search(player)
+            aid = m.group(1) if m else None
+
+            # Look up official totals: try by athlete_id first, then by name
+            player_totals = official_totals.get(aid, {}) if aid else {}
+            if not player_totals:
+                player_totals = official_totals.get(player, {})
             if cat not in player_totals:
                 continue
             off = player_totals[cat]
@@ -1007,11 +1031,19 @@ def get_player_stats_by_period(game_id: str) -> dict:
             )
 
     # ── Also reconcile CAR and REC counts ────────────────────────────────────
-    for player, player_totals in official_totals.items():
-        for cat, count_key, acc in [
-            ("rushing",   "car", rushing),
-            ("receiving", "rec", receiving),
-        ]:
+    for cat, count_key, acc in [
+        ("rushing",   "car", rushing),
+        ("receiving", "rec", receiving),
+    ]:
+        all_players = set()
+        for p in acc:
+            all_players.update(acc[p].keys())
+        for player in all_players:
+            m = _ID_KEY_RE.search(player)
+            aid = m.group(1) if m else None
+            player_totals = official_totals.get(aid, {}) if aid else {}
+            if not player_totals:
+                player_totals = official_totals.get(player, {})
             if cat not in player_totals:
                 continue
             official_count = player_totals[cat].get(count_key, 0)
@@ -1022,7 +1054,6 @@ def get_player_stats_by_period(game_id: str) -> dict:
             diff = official_count - attributed_count
             if diff == 0:
                 continue
-            # Apply count correction to the period with the most plays for this player
             best_period = None
             best_yds = -1
             for p in acc:
@@ -1035,8 +1066,16 @@ def get_player_stats_by_period(game_id: str) -> dict:
                     acc[best_period][player].get(count_key, 0) + diff
                 )
 
-    # Also reconcile ATT/COMP for passing
-    for player, player_totals in official_totals.items():
+    # Also reconcile ATT/COMP/TD/INT for passing
+    all_pass_players = set()
+    for p in passing:
+        all_pass_players.update(passing[p].keys())
+    for player in all_pass_players:
+        m = _ID_KEY_RE.search(player)
+        aid = m.group(1) if m else None
+        player_totals = official_totals.get(aid, {}) if aid else {}
+        if not player_totals:
+            player_totals = official_totals.get(player, {})
         if "passing" not in player_totals:
             continue
         for count_key in ("att", "comp", "int", "td"):
