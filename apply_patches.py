@@ -1,85 +1,54 @@
 #!/usr/bin/env python3
 """
-apply_patches.py — Apply the 4 targeted app.py changes
-Run once from the same directory as app.py: python3 apply_patches.py
+apply_patches.py  (patches 3 and 4 only — 1 and 2 already applied)
+Run from your project root:  python3 apply_patches.py
 """
-import sys
+import sys, shutil, os
 
-with open("app.py", "r") as f:
-    src = f.read()
+SRC = "app.py"
+BAK = "app.py.bak"
 
-original_len = len(src)
-errors = []
-
-# ── Patch 1: add _get_game_summary_for_debug import ───────────────────────────
-OLD1 = """from nfl.api import get_live_games
-from nfl.api import get_core_plays as _get_core_plays_for_debug"""
-NEW1 = """from nfl.api import get_live_games
-from nfl.api import get_core_plays as _get_core_plays_for_debug
-from nfl.api import get_game_summary as _get_game_summary_for_debug"""
-if OLD1 in src:
-    src = src.replace(OLD1, NEW1, 1)
-    print("✅ Patch 1 applied: added _get_game_summary_for_debug import")
-else:
-    errors.append("❌ Patch 1 NOT applied: target string not found")
-
-# ── Patch 2: add _summary key to load_all_stats ───────────────────────────────
-OLD2 = """        "core_plays":  _get_core_plays_for_debug(game_id),  # reused for debug CSV
-    }"""
-NEW2 = """        "core_plays":  _get_core_plays_for_debug(game_id),  # reused for debug CSV
-        "_summary":    _get_game_summary_for_debug(game_id),   # cached; used by debug builder
-    }"""
-if OLD2 in src:
-    src = src.replace(OLD2, NEW2, 1)
-    print("✅ Patch 2 applied: added _summary key to load_all_stats")
-else:
-    errors.append("❌ Patch 2 NOT applied: target string not found")
-
-# ── Patch 3: populate _d_tid from summary + add alias map ────────────────────
-OLD3 = """                        _d_tid = {}
-                        def _db_team(ref):
-                            _m = _DBRE_TM.search(ref or "")
-                            return _d_tid.get(_m.group(1), "") if _m else "" """
-NEW3 = """                        _d_tid = {}
-                        # Populate team ID → abbreviation from cached game summary
-                        try:
-                            _gsumm = _gdata.get("_summary") or {}
-                            for _tbx in _gsumm.get("boxscore", {}).get("teams", []):
-                                _t_id  = str(_tbx.get("team", {}).get("id", ""))
-                                _t_abr = _tbx.get("team", {}).get("abbreviation", "")
-                                if _t_id and _t_abr:
-                                    _d_tid[_t_id] = _t_abr
-                        except Exception:
-                            pass
-                        # Alias map: ESPN play text uses internal codes; boxscore uses display codes
-                        _D_ALIAS = {"CLV":"CLE","WAS":"WSH","HST":"HOU","ARZ":"ARI","BLT":"BAL","LA":"LAR"}
-                        def _db_team(ref):
-                            _m = _DBRE_TM.search(ref or "")
-                            return _d_tid.get(_m.group(1), "") if _m else "" """
-if OLD3 in src:
-    src = src.replace(OLD3, NEW3, 1)
-    print("✅ Patch 3 applied: _d_tid populated from summary + alias map added")
-else:
-    errors.append("❌ Patch 3 NOT applied: target string not found")
-
-# ── Patch 4: normalize pen_team with alias map ───────────────────────────────
-OLD4 = """                            _dpm6  = _dbre.search(r"PENALTY ON ([A-Z]{2,3})[^A-Z]", _dtxt6)
-                            _dpt6b = _dpm6.group(1) if _dpm6 else "—" """
-NEW4 = """                            _dpm6  = _dbre.search(r"PENALTY ON ([A-Z]{2,3})[^A-Z]", _dtxt6)
-                            _dpt6b_raw = _dpm6.group(1) if _dpm6 else "—"
-                            _dpt6b = _D_ALIAS.get(_dpt6b_raw, _dpt6b_raw)  # normalize alias codes"""
-if OLD4 in src:
-    src = src.replace(OLD4, NEW4, 1)
-    print("✅ Patch 4 applied: pen_team alias normalization added")
-else:
-    errors.append("❌ Patch 4 NOT applied: target string not found")
-
-if errors:
-    for e in errors:
-        print(e)
+if not os.path.exists(SRC):
+    print(f"{SRC} not found. Run from your project root.")
     sys.exit(1)
 
-with open("app.py", "w") as f:
+with open(SRC, "r") as f:
+    src = f.read()
+
+patch3_old = '                        _d_tid = {}\n                        def _db_team(ref):\n                            _m = _DBRE_TM.search(ref or "")\n                            return _d_tid.get(_m.group(1), "") if _m else ""'
+patch3_new = '                        _d_tid = {}\n                        # Populate team ID -> abbreviation from cached game summary\n                        try:\n                            _gsumm = _gdata.get("_summary") or {}\n                            for _tbx in _gsumm.get("boxscore", {}).get("teams", []):\n                                _t_id  = str(_tbx.get("team", {}).get("id",  ""))\n                                _t_abr = _tbx.get("team", {}).get("abbreviation", "")\n                                if _t_id and _t_abr:\n                                    _d_tid[_t_id] = _t_abr\n                        except Exception:\n                            pass\n                        _D_ALIAS = {\n                            "CLV": "CLE", "WAS": "WSH", "HST": "HOU",\n                            "ARZ": "ARI", "BLT": "BAL", "LA":  "LAR",\n                        }\n                        def _db_team(ref):\n                            _m = _DBRE_TM.search(ref or "")\n                            return _d_tid.get(_m.group(1), "") if _m else ""'
+patch4_old = '                            _dpm6  = _dbre.search(r"PENALTY ON ([A-Z]{2,3})[^A-Z]", _dtxt6)\n                            _dpt6b = _dpm6.group(1) if _dpm6 else "—"'
+patch4_new = '                            _dpm6      = _dbre.search(r"PENALTY ON ([A-Z]{2,3})[^A-Z]", _dtxt6)\n                            _dpt6b_raw = _dpm6.group(1) if _dpm6 else "—"\n                            _dpt6b     = _D_ALIAS.get(_dpt6b_raw, _dpt6b_raw)'
+
+PATCHES = [
+    ("PATCH 3 — populate _d_tid and add _D_ALIAS map", patch3_old, patch3_new),
+    ("PATCH 4 — normalize pen_team with _D_ALIAS",     patch4_old, patch4_new),
+]
+
+print("Checking patches...\n")
+missing = []
+for name, old, _ in PATCHES:
+    count = src.count(old)
+    if count == 0:
+        missing.append(name)
+        print(f"  NOT FOUND -- {name}")
+    elif count > 1:
+        print(f"  AMBIGUOUS ({count}x) -- {name}")
+    else:
+        print(f"  Found     -- {name}")
+
+if missing:
+    print(f"\n{len(missing)} patch(es) not found. app.py NOT modified.")
+    sys.exit(1)
+
+shutil.copy(SRC, BAK)
+print(f"\nBackup saved -> {BAK}")
+
+for name, old, new in PATCHES:
+    src = src.replace(old, new, 1)
+    print(f"Applied: {name}")
+
+with open(SRC, "w") as f:
     f.write(src)
 
-print(f"\n✅ All patches applied. app.py: {original_len:,} → {len(src):,} chars (+{len(src)-original_len:,})")
+print(f"\nDone. {SRC} updated successfully.")
