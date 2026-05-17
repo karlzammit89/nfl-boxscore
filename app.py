@@ -10,6 +10,7 @@ import calendar as cal_mod
 
 from nfl.api import get_live_games
 from nfl.api import get_core_plays as _get_core_plays_for_debug
+from nfl.api import get_game_summary as _get_game_summary_for_debug  # debug builder
 from nfl.stats import (
     build_linescore_df,
     get_player_stats_by_period,
@@ -283,6 +284,7 @@ def load_all_stats(game_id: str) -> dict:
         "pbp":         get_pbp_by_quarter(game_id),
         "by_period":   get_player_stats_by_period(game_id),
         "core_plays":  _get_core_plays_for_debug(game_id),  # reused for debug CSV
+        "_summary":    _get_game_summary_for_debug(game_id),   # cached; no extra API call
     }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3225,6 +3227,20 @@ elif st.session_state.view == "reconcile":
                             if _dfval is not None and not _dfval.empty and "Player" in _dfval.columns:
                                 _d_roster.update(_dfval["Player"].dropna().tolist())
                         _d_tid = {}
+                        # Populate team ID -> abbreviation from cached game summary
+                        try:
+                            _gsumm = _gdata.get("_summary") or {}
+                            for _tbx in _gsumm.get("boxscore", {}).get("teams", []):
+                                _t_id  = str(_tbx.get("team", {}).get("id",  ""))
+                                _t_abr = _tbx.get("team", {}).get("abbreviation", "")
+                                if _t_id and _t_abr:
+                                    _d_tid[_t_id] = _t_abr
+                        except Exception:
+                            pass
+                        _D_ALIAS = {
+                            "CLV": "CLE", "WAS": "WSH", "HST": "HOU",
+                            "ARZ": "ARI", "BLT": "BAL", "LA":  "LAR",
+                        }
                         def _db_team(ref):
                             _m = _DBRE_TM.search(ref or "")
                             return _d_tid.get(_m.group(1), "") if _m else ""
@@ -3277,8 +3293,9 @@ elif st.session_state.view == "reconcile":
                                         _dpos6b = _d_tid.get(_dtm6.group(1),"")
                                         if _dpos6b: break
                             _dpu6  = _dpos6a or _dpos6b
-                            _dpm6  = _dbre.search(r"PENALTY ON ([A-Z]{2,3})[^A-Z]", _dtxt6)
-                            _dpt6b = _dpm6.group(1) if _dpm6 else "—"
+                            _dpm6      = _dbre.search(r"PENALTY ON ([A-Z]{2,3})[^A-Z]", _dtxt6)
+                            _dpt6b_raw = _dpm6.group(1) if _dpm6 else "—"
+                            _dpt6b     = _D_ALIAS.get(_dpt6b_raw, _dpt6b_raw)
                             _dmatch6 = _dpt6b == _dpu6 if (_dpu6 and _dpt6b != "—") else None
                             _c4.append({"Q":f"Q{(_dp6.get('period') or {}).get('number','?')}","type_id":(_dp6.get("type",{}).get("id","") or ""),"player":next((_d_names.get((_DBRE_ID.search(_dpt6c.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1),"?") for _dpt6c in _dp6.get("participants",[]) if _dpt6c.get("type") in ("passer","rusher","receiver")),"?"),"yds":_dp6.get("statYardage",0),"pos_team":_dpu6 or "❌ unknown","pen_team":_dpt6b,"result":"✅ skipped (off. pen)" if _dmatch6 else ("✅ counted (def. pen)" if _dmatch6 is False else "⚠️ counted — pos_team unknown"),"text":str(_dp6.get("text",""))[:80]})
                         _c5s = {}
