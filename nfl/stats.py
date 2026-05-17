@@ -38,18 +38,16 @@ Change log:
       8. type_id=24 off-pen reception with statYardage > 0 (NFL §Rule 2B):
          credit statYardage as "yards to spot of foul" when the offensive penalty
          is enforced downfield. ESPN encodes the spot-of-foul value in statYardage.
-      9. type_id=8 off-pen completed pass (NFL §Rule 1 full):
-         ATT+1 to passer; 0 pass YDS, 0 rec YDS. Attempt is charged even when
-         yards are nullified. Previous code credited text-parsed yards to psr+rcv
-         and missed ATT entirely.
-     10. type_id=5 off-pen rush (NFL §Rule 1 full):
-         CAR+1 to rusher; 0 rush YDS. Previous code credited text-parsed yards
-         and skipped CAR — inverted vs Rule 1.
-     11. type_id=8 off-pen rush (NFL §Rule 1 full):
-         CAR+1 to rusher; 0 rush YDS. Previous code skipped entirely (no CAR).
-     12. type_id=8 off-pen QB scramble (ESPN box-score convention):
-         ATT+1 to QB. ESPN credits scramble-off-pen as a pass attempt in their
-         system. 0 pass YDS, 0 rush YDS.
+      9. type_id=8 handler rewritten with text-based off-pen detection:
+         _is_off_pen_from_text() extracts "PENALTY on TEAM" from play.text
+         and compares against possessing team abbreviation (penaltyTeam.$ref
+         is absent on type_id=8 plays so _is_off_pen() always returned False).
+         Off-pen pass/scramble: ATT+1, 0 yards.
+         Off-pen rush: 0 everything.
+         Def-pen with receiver: text-parsed yards to psr+rcv (Change 1 retained).
+     10. type_id=5 off-pen rush: CAR+1 AND text-parsed yards.
+         Confirmed from live data: ESPN credits actual rush yards on off-pen rushes
+         (zeroing yards caused -16 gap for Sanders).
 """
 
 import pandas as pd
@@ -624,6 +622,34 @@ def get_player_stats_by_period(game_id: str) -> dict:
         play_tid = _re.search(r"/teams/(\d+)", (play.get("team") or {}).get("$ref", ""))
         return bool(pen_tid and play_tid and pen_tid.group(1) == play_tid.group(1))
 
+    # ── Text-based off-pen detector for type_id=8 plays ─────────────────────
+    # type_id=8 plays do not include penaltyTeam.$ref in the Core API response,
+    # so _is_off_pen() always returns False for them. Instead, extract the
+    # penalised team abbreviation from "PENALTY on TEAM" in play.text and compare
+    # against the possessing team abbreviation from _team_abbr_from_play().
+    # This mirrors exactly what the debug builder does for pen_team/pos_team.
+    # In production, play.text is never truncated, so this is reliable.
+    _ESPN_ABBR_ALIASES = {
+        # ESPN API abbreviation → canonical (used in play text)
+        "CLV": "CLE", "WAS": "WSH", "HST": "HOU",
+        "ARZ": "ARI", "BLT": "BAL", "LA":  "LAR",
+    }
+    _PENALTY_ON_RE = _re.compile(r"PENALTY\s+on\s+([A-Z]{2,3})", _re.I)
+
+    def _is_off_pen_from_text(play: dict) -> bool:
+        """True when the penalty team extracted from play text == possessing team."""
+        text = play.get("text", "") or ""
+        m = _PENALTY_ON_RE.search(text)
+        if not m:
+            return False
+        pen_abbr = m.group(1).upper()
+        pen_abbr = _ESPN_ABBR_ALIASES.get(pen_abbr, pen_abbr)
+        pos_abbr = _team_abbr_from_play(play).upper()
+        pos_abbr = _ESPN_ABBR_ALIASES.get(pos_abbr, pos_abbr)
+        if not pos_abbr:
+            return False
+        return pen_abbr == pos_abbr
+
     # ── Penalty / text helpers (Changes 3, 5, 6) ──────────────────────────────
     # NFL Guide for Statisticians §Penalty Plays:
     #   Rule 2A — Penalty enforced from dead ball spot → credit yards normally.
@@ -850,56 +876,39 @@ def get_player_stats_by_period(game_id: str) -> dict:
             # ── Penalty event (type_id=8 confirmed) ──────────────────────────
             # statYardage semantics for type_id=8:
             #   < 0 : off-pen march-back distance (e.g., -10 for holding)
-            #         → actual yards are in play text "for N yards"
-            #   > 0 : defensive penalty ball advance (e.g., DPI +15)
-            #         → no individual player stat credits per NFL rules
+            #   > 0 : defensive penalty ball advance (e.g., DPI +15) → no player stats
             #   = 0 : pre-snap or declined penalty → no stats
             #
-            # NFL §Penalty Plays Rule 1 (full):
-            #   Yards are nullified on all off-pen plays enforced from previous spot.
-            #   BUT attempts (ATT for passes, CAR for rushes) ARE still charged.
-            #   Source: NFL Guide for Statisticians 2025 §Penalty Plays.
+            # type_id=8 plays do NOT include penaltyTeam.$ref in the Core API,
+            # so _is_off_pen() always returns False. Use text-based detection instead:
+            # _is_off_pen_from_text() extracts "PENALTY on TEAM" from play.text and
+            # compares against the possessing team abbreviation — reliable on full text.
             #
-            # Sub-case detection uses play text (type_id=8 covers multiple scenarios):
-            _t8_text = play.get("text", "") or ""
-            _t8_low  = _t8_text.lower()
-            _is_t8_scramble   = "scrambles" in _t8_low
-            _is_t8_pass       = "pass" in _t8_low
-            _is_t8_pass_comp  = _is_t8_pass and "pass incomplete" not in _t8_low
-            _is_t8_rush       = not _is_t8_pass and not _is_t8_scramble
-            _is_t8_off_pen    = _is_off_pen(play)
+            # NFL §Penalty Plays Rule 1:
+            #   Pass ATT is charged even when the play is nullified.
+            #   No passing, receiving, or rushing yards are credited on off-pen plays.
+            #   ESPN also credits ATT for off-pen QB scrambles in their box score.
+            _t8_text    = play.get("text", "") or ""
+            _t8_low     = _t8_text.lower()
+            _t8_is_pass = "pass" in _t8_low
+            _t8_is_scr  = "scrambles" in _t8_low
+            _t8_off_pen = _is_off_pen_from_text(play)  # text-based; works without $ref
 
-            if _is_t8_pass_comp and _is_t8_off_pen and stat_yds < 0:
-                # Action 1: Off-pen completed pass (e.g., Prescott→Sanders, PENALTY on DAL).
-                # NFL Rule 1: ATT is charged; no passing or receiving yards credited.
-                # rcv participant may or may not be resolved — only psr (ATT) matters here.
-                if psr:
-                    d = passing[period][psr]; d["Team"] = team or d["Team"]
-                    d["att"] += 1
-                # Intentionally 0 YDS and 0 REC — yards are nullified per Rule 1.
+            if stat_yds < 0 and _t8_off_pen:
+                # Off-pen: ATT+1 for pass or scramble; 0 for pure rush.
+                # Yards always nullified (0 pass_yds, 0 rec_yds, 0 rush_yds).
+                if _t8_is_pass or _t8_is_scr:
+                    if psr:
+                        d = passing[period][psr]; d["Team"] = team or d["Team"]
+                        d["att"] += 1
+                    elif rsh:   # scramble where QB is only recorded as rusher
+                        d = passing[period][rsh]; d["Team"] = team or d["Team"]
+                        d["att"] += 1
+                # else: pure rush off-pen → 0 everything
 
-            elif _is_t8_scramble and _is_t8_off_pen:
-                # Action 4: Off-pen QB scramble (e.g., Mahomes scrambles, PENALTY on KC).
-                # NFL Rule: scramble = rush, no ATT. ESPN box score credits ATT for QB
-                # scrambles in their system. Credit ATT to the rusher (QB is also psr).
-                # 0 rushing or passing yards credited.
-                if psr:
-                    d = passing[period][psr]; d["Team"] = team or d["Team"]
-                    d["att"] += 1
-                elif rsh:
-                    d = passing[period][rsh]; d["Team"] = team or d["Team"]
-                    d["att"] += 1
-
-            elif _is_t8_rush and _is_t8_off_pen:
-                # Action 3: Off-pen rush play (e.g., Hampton left tackle, PENALTY on LAC).
-                # NFL Rule 1: CAR is credited; no rushing yards credited.
-                if rsh:
-                    d = rushing[period][rsh]; d["Team"] = team or d["Team"]
-                    d["car"] += 1
-
-            elif stat_yds < 0 and rcv:
-                # Change 1 (retained): def-pen pass where rcv is present.
-                # Only fires when not off-pen. Credits text-parsed yards to psr + rcv.
+            elif stat_yds < 0 and rcv and not _t8_off_pen:
+                # Def-pen (or off-pen not detectable by text) with receiver present:
+                # credit text-parsed actual yards to passer and receiver (Change 1).
                 _txt_yds = _text_parse_yards(_t8_text)
                 if _txt_yds is not None:
                     if psr:
@@ -907,8 +916,7 @@ def get_player_stats_by_period(game_id: str) -> dict:
                         d["yds"] += _txt_yds
                     rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
                     rd["yds"] += _txt_yds
-            # else: positive statYardage (def-pen advance) or pre-snap → no individual stats
-
+            # else: stat_yds >= 0 (def-pen advance or pre-snap) → no individual stats
         elif type_id == "5" or ptype in {"rush", "scramble", "rushing touchdown"}:
             # ── Rush (type_id=5 confirmed; ptype fallback for rushing TD & scramble) ─
             # Rushing Touchdown type_id not yet confirmed — keep ptype fallback.
@@ -916,12 +924,14 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 d = rushing[period][rsh]; d["Team"] = team or d["Team"]
                 _is_off_pen_rush = _is_off_pen(play)
                 if _is_off_pen_rush:
-                    # Action 2: Off-pen rush — NFL §Penalty Plays Rule 1.
-                    # Rushing ATTEMPT (CAR) is charged even when the play is nullified.
-                    # Rushing YARDS are NOT credited (yards enforced back to previous spot).
-                    # Previous code: credited text_yards, skipped CAR — backwards.
+                    # Off-pen rush: ESPN credits both CAR+1 AND actual play yards.
+                    # Confirmed from live data: Sanders Rush YDS dropped 15 when we
+                    # zeroed yards (Action 2 was wrong). ESPN credits text-parsed yards.
+                    # statYardage is negative (march-back net), so use text parse.
+                    _txt_yds = _text_parse_yards(play.get("text", "") or "")
                     d["car"] += 1
-                    # 0 rush YDS — intentional per Rule 1.
+                    if _txt_yds is not None:
+                        d["yds"] += _txt_yds
                 else:
                     # Change 7: Detect dead-ball / declined penalty on def-pen rush.
                     # Per NFL §Rule 2A, dead-ball fouls (Taunting, Unsportsmanlike,
