@@ -3252,7 +3252,7 @@ elif st.session_state.view == "reconcile":
                                         _dn4   = _d_names.get(_daid4, "")
                                         _dl4   = _dn4.split(".")[-1].strip().lower() if "." in _dn4 else _dn4.split()[-1].lower() if _dn4 else ""
                                         if _dl4 and _dl4 not in _dop:
-                                            _c2.append({"passer":_dn4,"play_type":(_dp4.get("type",{}).get("text","") or "").lower(),"yds":_dp4.get("statYardage",0),"text":str(_dp4.get("text",""))[:80]})
+                                            _c2.append({"passer":_dn4,"play_type":(_dp4.get("type",{}).get("text","") or "").lower(),"type_id":(_dp4.get("type",{}).get("id","") or ""),"yds":_dp4.get("statYardage",0),"text":str(_dp4.get("text",""))[:80]})
                         except Exception: pass
                         _c3 = []
                         for _dp5 in _dplays:
@@ -3280,7 +3280,7 @@ elif st.session_state.view == "reconcile":
                             _dpm6  = _dbre.search(r"PENALTY ON ([A-Z]{2,3})[^A-Z]", _dtxt6)
                             _dpt6b = _dpm6.group(1) if _dpm6 else "—"
                             _dmatch6 = _dpt6b == _dpu6 if (_dpu6 and _dpt6b != "—") else None
-                            _c4.append({"Q":f"Q{(_dp6.get('period') or {}).get('number','?')}","player":next((_d_names.get((_DBRE_ID.search(_dpt6c.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1),"?") for _dpt6c in _dp6.get("participants",[]) if _dpt6c.get("type") in ("passer","rusher","receiver")),"?"),"yds":_dp6.get("statYardage",0),"pos_team":_dpu6 or "❌ unknown","pen_team":_dpt6b,"result":"✅ skipped (off. pen)" if _dmatch6 else ("✅ counted (def. pen)" if _dmatch6 is False else "⚠️ counted — pos_team unknown"),"text":str(_dp6.get("text",""))[:80]})
+                            _c4.append({"Q":f"Q{(_dp6.get('period') or {}).get('number','?')}","type_id":(_dp6.get("type",{}).get("id","") or ""),"player":next((_d_names.get((_DBRE_ID.search(_dpt6c.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1),"?") for _dpt6c in _dp6.get("participants",[]) if _dpt6c.get("type") in ("passer","rusher","receiver")),"?"),"yds":_dp6.get("statYardage",0),"pos_team":_dpu6 or "❌ unknown","pen_team":_dpt6b,"result":"✅ skipped (off. pen)" if _dmatch6 else ("✅ counted (def. pen)" if _dmatch6 is False else "⚠️ counted — pos_team unknown"),"text":str(_dp6.get("text",""))[:80]})
                         _c5s = {}
                         for _dp7 in _dplays:
                             for _dpt7 in _dp7.get("participants",[]):
