@@ -579,7 +579,7 @@ elif st.session_state.view == "boxscore":
     except Exception:
         date_label = "Schedule"
 
-    b1, b2, b3, b4, _ = st.columns([1.5, 1.6, 1.3, 2.5, 2.5])
+    b1, b2, b3, _ = st.columns([1.5, 1.6, 1.3, 7])
     with b1:
         if st.button("← Calendar", use_container_width=True):
             st.session_state.view = "calendar"
@@ -591,11 +591,6 @@ elif st.session_state.view == "boxscore":
     with b3:
         if st.button("🔄 Refresh", use_container_width=True):
             st.cache_data.clear()
-            st.rerun()
-    with b4:
-        if st.button("🔍 Multi-Game Reconciliation", use_container_width=True,
-                     key="btn_recon_box", type="primary"):
-            st.session_state.view = "reconcile"
             st.rerun()
 
     away  = game["away"]; home = game["home"]
@@ -3038,6 +3033,14 @@ elif st.session_state.view == "boxscore":
 - `Rec Yards` is **not supported** — use `Receiving Yards` instead
 - Stat names are not case-sensitive
         """)
+
+    st.divider()
+    _recon_col, _ = st.columns([2.5, 7])
+    with _recon_col:
+        if st.button("🔍 Multi-Game Reconciliation", use_container_width=True,
+                     key="btn_recon_box", type="primary"):
+            st.session_state.view = "reconcile"
+            st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
