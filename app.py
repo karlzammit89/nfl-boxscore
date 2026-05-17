@@ -3365,274 +3365,107 @@ elif st.session_state.view == "reconcile":
             st.error(f"{_n_pass}/{len(_results)} games passed · {_summary}"
                      + (f" · ⚠️ {_n_err} errors" if _n_err else ""))
 
-        # ── Per-game results (collapsed by default) ───────────────────────────
+        # ── Summary table — ONE render call for all games (instant) ─────────
+        _summary_rows = []
         for _r in _results:
             if _r["passed"] is True:
-                st.success(f"✅ {_r['label']}  ({_r['game_id']})")
-
+                _summary_rows.append({
+                    "Game": _r["label"], "Status": "✅ Passed",
+                    "❌ Logic": "", "🔍 Investigate": "", "⚠️ ESPN gap": ""
+                })
             elif _r["passed"] is None:
-                with st.expander(f"⚠️ {_r['label']}  ({_r['game_id']})", expanded=False):
-                    st.warning(_r["rows"][0]["Player"])
-
+                _summary_rows.append({
+                    "Game": _r["label"], "Status": "⚠️ Error",
+                    "❌ Logic": "", "🔍 Investigate": "", "⚠️ ESPN gap": ""
+                })
             else:
-                # Build per-cause counts for expander label
                 _exp_rows  = _r["rows"]
-                _exp_logic = sum(1 for row in _exp_rows if row.get("Cause","") == "❌ Logic")
-                _exp_inv   = sum(1 for row in _exp_rows if row.get("Cause","") == "🔍 Investigate")
-                _exp_gap   = sum(1 for row in _exp_rows if row.get("Cause","") == "⚠️ ESPN gap")
-                _exp_parts = []
-                if _exp_logic: _exp_parts.append(f"❌ {_exp_logic} logic")
-                if _exp_inv:   _exp_parts.append(f"🔍 {_exp_inv} investigate")
-                if _exp_gap:   _exp_parts.append(f"⚠️ {_exp_gap} ESPN gap{'s' if _exp_gap!=1 else ''}")
-                _exp_label = " · ".join(_exp_parts) if _exp_parts else f"{len(_exp_rows)} mismatches"
-                with st.expander(
-                    f"{_r['label']}  ({_r['game_id']}) — {_exp_label}",
-                    expanded=False,
-                ):
-                    _mdf = pd.DataFrame(_r["rows"])
-                    # Split rows by cause for separate display
-                    _real_rows = _mdf[_mdf["Cause"].isin(["❌ Logic", "🔍 Investigate"])] if "Cause" in _mdf.columns else _mdf
-                    _gap_rows  = _mdf[_mdf["Cause"] == "⚠️ ESPN gap"] if "Cause" in _mdf.columns else pd.DataFrame()
+                _el = sum(1 for row in _exp_rows if row.get("Cause","") == "❌ Logic")
+                _ei = sum(1 for row in _exp_rows if row.get("Cause","") == "🔍 Investigate")
+                _eg = sum(1 for row in _exp_rows if row.get("Cause","") == "⚠️ ESPN gap")
+                _summary_rows.append({
+                    "Game": _r["label"],
+                    "Status": f"❌ {len(_exp_rows)} mismatch{'es' if len(_exp_rows)!=1 else ''}",
+                    "❌ Logic":       str(_el) if _el else "—",
+                    "🔍 Investigate": str(_ei) if _ei else "—",
+                    "⚠️ ESPN gap":    str(_eg) if _eg else "—",
+                })
+        if _summary_rows:
+            st.dataframe(
+                pd.DataFrame(_summary_rows),
+                use_container_width=True, hide_index=True,
+            )
 
-                    def _style_missing(df):
-                        return df.style.map(
-                            lambda v: "color:#ef4444;font-weight:700" if isinstance(v, str) and v.startswith("-")
-                            else ("color:#f59e0b;font-weight:700" if isinstance(v, str) and v.lstrip("+").lstrip("-").isdigit() and not v.startswith("-") else ""),
-                            subset=["Missing"],
-                        )
+        # ── Per-game detail expanders — failed games only, on demand ─────────
+        _failed_games = [_r for _r in _results if _r["passed"] is False]
+        _error_games  = [_r for _r in _results if _r["passed"] is None]
 
-                    if not _real_rows.empty:
-                        st.markdown(f"**🔍 Logic / Investigate — {len(_real_rows)} row(s):**")
-                        st.dataframe(_style_missing(_real_rows), use_container_width=True, hide_index=True)
+        if _failed_games or _error_games:
+            st.markdown("**Game detail — expand to inspect mismatches and debug data:**")
 
-                    if not _gap_rows.empty:
-                        with st.expander(f"⚠️ ESPN gap — {len(_gap_rows)} row(s) (measurement noise, not logic bugs)", expanded=False):
-                            st.caption("These rows are ±1–2 YDS differences between ESPN's Core API play-by-play and their official boxscore. Structurally unfixable — two ESPN systems measuring the same plays differently.")
-                            st.dataframe(_gap_rows, use_container_width=True, hide_index=True)
+        for _r in _error_games:
+            with st.expander(f"⚠️ {_r['label']}  ({_r['game_id']})", expanded=False):
+                st.warning(_r["rows"][0]["Player"])
 
-                    if _real_rows.empty and _gap_rows.empty:
-                        st.dataframe(_mdf, use_container_width=True, hide_index=True)
+        for _r in _failed_games:
+            _exp_rows  = _r["rows"]
+            _exp_logic = sum(1 for row in _exp_rows if row.get("Cause","") == "❌ Logic")
+            _exp_inv   = sum(1 for row in _exp_rows if row.get("Cause","") == "🔍 Investigate")
+            _exp_gap   = sum(1 for row in _exp_rows if row.get("Cause","") == "⚠️ ESPN gap")
+            _exp_parts = []
+            if _exp_logic: _exp_parts.append(f"❌ {_exp_logic} logic")
+            if _exp_inv:   _exp_parts.append(f"🔍 {_exp_inv} investigate")
+            if _exp_gap:   _exp_parts.append(f"⚠️ {_exp_gap} ESPN gap{'s' if _exp_gap!=1 else ''}")
+            _exp_label = " · ".join(_exp_parts) if _exp_parts else f"{len(_exp_rows)} mismatches"
+            with st.expander(
+                f"{_r['label']}  ({_r['game_id']}) — {_exp_label}",
+                expanded=False,
+            ):
+                _mdf = pd.DataFrame(_r["rows"])
+                _real_rows = _mdf[_mdf["Cause"].isin(["❌ Logic", "🔍 Investigate"])] if "Cause" in _mdf.columns else _mdf
+                _gap_rows  = _mdf[_mdf["Cause"] == "⚠️ ESPN gap"] if "Cause" in _mdf.columns else pd.DataFrame()
 
-                    # ── Debug — loads automatically for mismatch games ────────
-                    import json as _dj, urllib.request as _dur, re as _dre2
-                    _dgid = _r["game_id"]
-                    if True:
-                        def _dfetch(url):
-                            _req = _dur.Request(url, headers={"User-Agent":"Mozilla/5.0","Accept":"application/json"})
-                            with _dur.urlopen(_req, timeout=15) as _rr:
-                                return _dj.loads(_rr.read())
+                def _style_missing(df):
+                    return df.style.map(
+                        lambda v: "color:#ef4444;font-weight:700" if isinstance(v, str) and v.startswith("-")
+                        else ("color:#f59e0b;font-weight:700" if isinstance(v, str) and v.lstrip("+").lstrip("-").isdigit() and not v.startswith("-") else ""),
+                        subset=["Missing"],
+                    )
 
-                        _DBASE = "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
-                        _D_ID  = _dre2.compile(r"/athletes/([0-9]+)")
-                        _D_TM  = _dre2.compile(r"/teams/([0-9]+)")
+                if not _real_rows.empty:
+                    st.markdown(f"**🔍 Logic / Investigate — {len(_real_rows)} row(s):**")
+                    st.dataframe(_style_missing(_real_rows), use_container_width=True, hide_index=True)
 
-                        with st.spinner("Fetching plays…"):
-                            try:
-                                _draw   = _dfetch(_DBASE + f"/events/{_dgid}/competitions/{_dgid}/plays?limit=400")
-                                _dplays = _draw.get("items", [])
-                                _dcount = _draw.get("count", 0)
-                            except Exception as _de2:
-                                st.error(f"Could not fetch plays: {_de2}")
-                                _dplays = []; _dcount = 0
+                if not _gap_rows.empty:
+                    with st.expander(f"⚠️ ESPN gap — {len(_gap_rows)} row(s) (measurement noise, not logic bugs)", expanded=False):
+                        st.caption("These rows are ±1–2 YDS differences between ESPN's Core API play-by-play and their official boxscore. Structurally unfixable — two ESPN systems measuring the same plays differently.")
+                        st.dataframe(_gap_rows, use_container_width=True, hide_index=True)
 
-                        from nfl.api import get_game_summary as _dgs3
-                        from nfl.stats import get_passing_stats as _dgps
+                if _real_rows.empty and _gap_rows.empty:
+                    st.dataframe(_mdf, use_container_width=True, hide_index=True)
 
-                        with st.spinner("Loading game summary…"):
-                            _dsum = _dgs3(_dgid) or {}
-                        _dbox = _dsum.get("boxscore", {})
+                # ── Debug panel — reads from pre-built session_state ─────────
+                # Data was built during processing loop (zero ESPN calls here)
+                _dgid     = _r["game_id"]
+                _dbg_key  = f"dbg_{_dgid}"
+                _dbg_data = st.session_state.get(_dbg_key, [])
+                if _dbg_data:
+                    _dbg_df = pd.DataFrame(_dbg_data)
+                    _sections = _dbg_df["section"].unique().tolist() if "section" in _dbg_df.columns else []
+                    for _sec in ["C1-name","C2-trick","C3-int","C4-offpen","C5-car","C6-neg"]:
+                        if _sec not in _sections: continue
+                        _sec_df = _dbg_df[_dbg_df["section"] == _sec].drop(columns=["game","game_id","section"], errors="ignore")
+                        _sec_labels = {
+                            "C1-name":   "C1 — Athlete ID not in roster",
+                            "C2-trick":  "C2 — Non-official passer role",
+                            "C3-int":    "C3 — INT plays",
+                            "C4-offpen": "C4 — Penalty plays",
+                            "C5-car":    "C5 — Carry counts",
+                            "C6-neg":    "C6 — Negative receiving plays",
+                        }
+                        st.markdown(f"**{_sec_labels.get(_sec, _sec)} — {len(_sec_df)} row(s):**")
+                        st.dataframe(_sec_df, use_container_width=True, hide_index=True)
+                else:
+                    st.caption("Debug data not available for this game.")
 
-                        _d_roster, _d_tid = set(), {}
-                        for _dtb in _dbox.get("players", []):
-                            for _dcat in _dtb.get("statistics", []):
-                                for _da in _dcat.get("athletes", []):
-                                    # F1: displayName lives on _da directly, not inside _da["athlete"]
-                                    _dn = (_da.get("displayName") or
-                                           _da.get("athlete", {}).get("displayName", ""))
-                                    if _dn: _d_roster.add(_dn)
-                        for _dtb in _dsum.get("boxscore", {}).get("teams", []):
-                            _dt = str(_dtb.get("team", {}).get("id", ""))
-                            _da2 = _dtb.get("team", {}).get("abbreviation", "")
-                            if _dt and _da2: _d_tid[_dt] = _da2
-
-                        def _d_team(ref):
-                            _m = _D_TM.search(ref or "")
-                            return _d_tid.get(_m.group(1), "") if _m else ""
-
-                        # F1: Build athlete_id → name from boxscore
-                        # displayName is on _da directly; athlete.$ref carries the ID
-                        _d_names = {}
-                        for _dtb in _dbox.get("players", []):
-                            for _dcat in _dtb.get("statistics", []):
-                                for _da in _dcat.get("athletes", []):
-                                    _da_ref  = _da.get("athlete", {}).get("$ref", "")
-                                    _da_aid  = (_D_ID.search(_da_ref) or type("",(),{"group":lambda s,n:""})()).group(1)
-                                    _da_name = (_da.get("displayName") or
-                                                _da.get("athlete", {}).get("displayName", ""))
-                                    if _da_aid and _da_name:
-                                        _d_names[_da_aid] = _da_name
-                        # Fill stat-role IDs not in boxscore — zero API calls, instant.
-                        # Boxscore has no inline displayName so we use [ID:xxx] as placeholder.
-                        # The reconciliation mismatches are unaffected by this debug label.
-                        _STAT_ROLES_DBG = {"passer", "receiver", "rusher", "sackedBy"}
-                        for _dp in _dplays:
-                            for _dpt in _dp.get("participants", []):
-                                if _dpt.get("type") not in _STAT_ROLES_DBG:
-                                    continue
-                                _dref = _dpt.get("athlete", {}).get("$ref", "")
-                                _daid = (_D_ID.search(_dref) or type("",(),{"group":lambda s,n:""})()).group(1)
-                                if _daid and _daid not in _d_names:
-                                    _d_names[_daid] = f"[ID:{_daid}]"
-
-                        # ── C1: stale/wrong athlete names ───────────────────
-                        _c1 = [{"athlete_id":aid, "resolved_name":name, "role":
-                                 next((p.get("type","") for pl in _dplays for p in pl.get("participants",[])
-                                       if (_D_ID.search(p.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1)==aid),"?")}
-                                for aid,name in _d_names.items() if name and name not in _d_roster]
-                        if _c1:
-                            st.markdown(f"**C1 — {len(_c1)} athlete ID(s) not in game roster (stale cache):**")
-                            st.dataframe(pd.DataFrame(_c1), use_container_width=True, hide_index=True)
-
-                        # ── C2: non-QB passer roles ──────────────────────────
-                        _c2 = []
-                        try:
-                            _doff = _dgps(_dgid)
-                            if _doff is not None and not _doff.empty and "Player" in _doff.columns:
-                                _dop = set(_doff["Player"].str.split().str[-1].str.lower())
-                                _c2 = []
-                                for _dp in _dplays:
-                                    for _dpt in _dp.get("participants",[]):
-                                        if _dpt.get("type") != "passer": continue
-                                        _daid2 = (_D_ID.search(_dpt.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1)
-                                        _dn2   = _d_names.get(_daid2, "")
-                                        _dl2   = _dn2.split(".")[-1].strip().lower() if "." in _dn2 else _dn2.split()[-1].lower() if _dn2 else ""
-                                        if _dl2 and _dl2 not in _dop:
-                                            _c2.append({"passer":_dn2, "play_type":(_dp.get("type",{}).get("text","") or "").lower(), "yds":_dp.get("statYardage",0), "text":str(_dp.get("text",""))[:80]})
-                                if _c2:
-                                    st.markdown(f"**C2 — {len(_c2)} play(s) with non-official passer role (RC-TRICK):**")
-                                    st.dataframe(pd.DataFrame(_c2), use_container_width=True, hide_index=True)
-                        except Exception as _e: st.error(f"C2: {_e}")
-
-                        # ── C3: INT plays missing passer credit ──────────────
-                        _c3 = []
-                        for _dp in _dplays:
-                            if (_dp.get("type",{}).get("text","") or "").lower() != "pass interception return": continue
-                            _droles = {p.get("type","") for p in _dp.get("participants",[])}
-                            _dtxt   = str(_dp.get("text",""))
-                            _dim    = _dre2.search(r"(?:\([^)]*\)\s*)?([A-Z]\.[A-Za-z\-']+(?:\s+(?:Jr|Sr|II|III|IV)\.?)?)\s+pass", _dtxt)
-                            _pid    = next(((_D_ID.search(p.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1) for p in _dp.get("participants",[]) if p.get("type")=="passer"),"")
-                            _mismatch = "passer" not in _droles and bool(_dim)
-                            _c3.append({"Q":f"Q{(_dp.get('period') or {}).get('number','?')}",
-                                        "passer_role":"✅ YES" if "passer" in _droles else "❌ NO",
-                                        "psr_id":_pid or "—",
-                                        "text_parse":_dim.group(1) if _dim else "❌ MISS",
-                                        "bucket_split":"⚠️ YES — fix needed" if _mismatch else "✅ OK",
-                                        "text":_dtxt[:90]})
-                        if _c3:
-                            _c3_bad = sum(1 for r in _c3 if "⚠️" in r["bucket_split"])
-                            st.markdown(f"**C3 — {len(_c3)} INT play(s) · {_c3_bad} with bucket split (RC-INT):**")
-                            st.dataframe(pd.DataFrame(_c3), use_container_width=True, hide_index=True)
-
-                        # ── C4: offensive penalty plays not being skipped ────
-                        _c4 = []
-                        for _dp in _dplays:
-                            if not _dp.get("isPenalty") or _dp.get("scoringPlay"): continue
-                            _droles = {p.get("type","") for p in _dp.get("participants",[])}
-                            if not (_droles & {"passer","receiver","rusher"}): continue
-                            _dtxt  = (str(_dp.get("text","")) or "").upper()
-                            _dpos1 = _d_team(_dp.get("team",{}).get("$ref",""))
-                            _dpos2 = ""
-                            for _dpt in _dp.get("participants",[]):
-                                if _dpt.get("type") in ("passer","rusher","receiver"):
-                                    _dtm = _D_TM.search(_dpt.get("athlete",{}).get("$ref",""))
-                                    if _dtm:
-                                        _dpos2 = _d_tid.get(_dtm.group(1),"")
-                                        if _dpos2: break
-                            _dpu  = _dpos1 or _dpos2
-                            _dpm  = _dre2.search(r"PENALTY ON ([A-Z]{2,3})[^A-Z]", _dtxt)
-                            _dpt2 = _dpm.group(1) if _dpm else "—"
-                            _dmatch = _dpt2 == _dpu if (_dpu and _dpt2 != "—") else None
-                            _skip_status = ("✅ skipped (off. pen)" if _dmatch else
-                                            ("✅ counted (def. pen)" if _dmatch is False else
-                                             "⚠️ counted — pos_team unknown"))
-                            _c4.append({"Q":f"Q{(_dp.get('period') or {}).get('number','?')}",
-                                        "player":next((_d_names.get((_D_ID.search(_dpt.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1),"?") for _dpt in _dp.get("participants",[]) if _dpt.get("type") in ("passer","rusher","receiver")),"?"),
-                                        "yds":_dp.get("statYardage",0),
-                                        "pos_team":_dpu or "❌ unknown",
-                                        "pen_team":_dpt2,
-                                        "result":_skip_status,
-                                        "text":str(_dp.get("text",""))[:80]})
-                        if _c4:
-                            _c4_bad = sum(1 for r in _c4 if "counted" in r["result"])
-                            st.markdown(f"**C4 — {len(_c4)} isPenalty play(s) · {_c4_bad} incorrectly counted (RC-OFFPEN):**")
-                            st.dataframe(pd.DataFrame(_c4), use_container_width=True, hide_index=True)
-                        else:
-                            st.success("C4 — No offensive penalty plays.")
-
-                        # ── C5: rusher carries per player ────────────────────
-                        _c5f  = st.text_input("C5 filter by player name", key=f"c5f_{_dgid}", placeholder="e.g. Etienne, Kelce")
-                        _c5s  = {}
-                        _c5_bad = []
-                        for _dp in _dplays:
-                            for _dpt in _dp.get("participants",[]):
-                                if _dpt.get("type") != "rusher": continue
-                                _daid = (_D_ID.search(_dpt.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1)
-                                _dn   = _d_names.get(_daid, "?")
-                                if _c5f and _c5f.lower() not in _dn.lower(): continue
-                                _dptype = (_dp.get("type",{}).get("text","") or "").lower()
-                                _dskip  = _dptype in {"end period","end of half","end of game","timeout","coin toss","kickoff","punt","penalty","uncategorized","field goal good","field goal missed","extra point good","safety",""}
-                                _counted = not _dskip
-                                _c5s.setdefault(_dn, {"our_CAR":0, "skipped_plays":0})
-                                if _counted: _c5s[_dn]["our_CAR"] += 1
-                                else:
-                                    _c5s[_dn]["skipped_plays"] += 1
-                                    _c5_bad.append({"Q":f"Q{(_dp.get('period') or {}).get('number','?')}","rusher":_dn,"play_type":_dptype,"yds":_dp.get("statYardage",0),"text":str(_dp.get("text",""))[:80]})
-                        if _c5s:
-                            st.markdown(f"**C5 — Carry counts (compare our_CAR to official boxscore):**")
-                            st.dataframe(pd.DataFrame([{"rusher":n,"our_CAR":d["our_CAR"],"skipped":d["skipped_plays"]} for n,d in sorted(_c5s.items())]), use_container_width=True, hide_index=True)
-                            if _c5_bad:
-                                with st.expander(f"{len(_c5_bad)} skipped rusher play(s) — may be missing carries"):
-                                    st.dataframe(pd.DataFrame(_c5_bad), use_container_width=True, hide_index=True)
-                        else:
-                            st.info("C5 — No rusher plays (try clearing filter).")
-
-                        # ── C6: negative receiving plays ─────────────────────
-                        _c6 = []
-                        for _dp in _dplays:
-                            if _dp.get("statYardage",0) >= 0: continue
-                            if "receiver" not in {p.get("type","") for p in _dp.get("participants",[])}: continue
-                            _dyds,_dpen,_dsc = _dp.get("statYardage",0),_dp.get("isPenalty",False),_dp.get("scoringPlay",False)
-                            _dn = next((_d_names.get((_D_ID.search(p.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1),"?") for p in _dp.get("participants",[]) if p.get("type")=="receiver"),"?")
-                            _skipped_now = _dpen and not _dsc
-                            _would_skip_extended = _dyds < -10 and not _dsc
-                            _c6.append({"Q":f"Q{(_dp.get('period') or {}).get('number','?')}","receiver":_dn,"yds":_dyds,
-                                        "isPenalty":_dpen,
-                                        "counted_now":"❌ yes — wrong" if not _skipped_now else "✅ skipped",
-                                        "fix_would_skip":"✅ yes" if _would_skip_extended else "❌ no",
-                                        "text":str(_dp.get("text",""))[:80]})
-                        if _c6:
-                            _c6_bad = sum(1 for r in _c6 if "wrong" in r["counted_now"])
-                            st.markdown(f"**C6 — {len(_c6)} negative receiving play(s) · {_c6_bad} incorrectly counted:**")
-                            st.dataframe(pd.DataFrame(_c6), use_container_width=True, hide_index=True)
-
-                        # ── Store debug in session state for bulk download ────
-                        _dbg_key = f"dbg_{_dgid}"
-                        _dbg_store = []
-                        def _rows_with_game(rows, section):
-                            return [{"game": _r["label"], "game_id": _dgid,
-                                     "section": section, **row} for row in rows]
-                        if _c1:  _dbg_store.extend(_rows_with_game(_c1,  "C1-name"))
-                        if _c2:  _dbg_store.extend(_rows_with_game(_c2,  "C2-trick"))
-                        if _c3:  _dbg_store.extend(_rows_with_game(_c3,  "C3-int"))
-                        if _c4:  _dbg_store.extend(_rows_with_game(_c4,  "C4-offpen"))
-                        if _c5s: _dbg_store.extend([{"game": _r["label"], "game_id": _dgid,
-                                                      "section": "C5-car", "rusher": n,
-                                                      "our_CAR": d["our_CAR"],
-                                                      "skipped": d["skipped_plays"]}
-                                                     for n, d in sorted(_c5s.items())])
-                        if _c6:  _dbg_store.extend(_rows_with_game(_c6,  "C6-neg"))
-                        st.session_state[_dbg_key] = _dbg_store
-
-        # ── CSV download — always visible, disabled when no data ─────────────
-        _all_rows = []
 # ══ END RECONCILE ══════════════════════════════════════════════════════════════
