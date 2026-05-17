@@ -227,8 +227,8 @@ for k, v in {
     "selected_game":       None,
     "selected_date":       None,
     "selected_date_games": [],
-    "cal_year":            et_now().year,
-    "cal_month":           et_now().month,
+    "cal_year":            (_et_init := et_now()).year,
+    "cal_month":           _et_init.month,
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -238,11 +238,7 @@ MONTH_NAMES = ["January","February","March","April","May","June",
 
 # ── Header ────────────────────────────────────────────────────────────────────
 
-_hdr1, _hdr2 = st.columns([5, 2.5])
-with _hdr1:
-    st.markdown("## 🏈 NFL Box Scores")
-with _hdr2:
-    pass  # navigation buttons are placed inside each view
+st.markdown("## 🏈 NFL Box Scores")
 st.divider()
 
 # ── Data loaders ──────────────────────────────────────────────────────────────
@@ -1369,6 +1365,17 @@ elif st.session_state.view == "boxscore":
         error_rows = []
         graded = []
         _ftd_deferred = []  # first TD props to grade after player_found_in_game is defined
+
+        # Compile combine/multi-player patterns once before the loop (not per prop line)
+        _COMBINE_STAT_RE = _re.compile(
+            r'(\d+\.?\d*)\+?\s*(passing tds?|pass tds?|rushing tds?|rush tds?|receiving tds?|rec tds?|tds?|touchdowns?|passing yards?|rushing yards?|receiving yards?|rec yards?|rec yds?|rush yards?|rush yds?|completions?|passes?|receptions?)', _re.I)
+        _OR_RE   = _re.compile(r'^(.+?)\s+or\s+(.+?)\s+to\s+(?:record|have|score)', _re.I)
+        _EACH_RE = _re.compile(r'^(?:both\s+)?(.+?)\s+and\s+(.+?)\s+to\s+each\s+(?:complete|record|have|score)', _re.I)
+        _CMB5_RE = _re.compile(r'^(.+?),\s+(.+?),\s+(.+?),\s+(.+?),?\s+and\s+(.+?)\s+to\s+combine', _re.I)
+        _CMB4_RE = _re.compile(r'^(.+?),\s+(.+?),\s+(.+?),?\s+and\s+(.+?)\s+to\s+combine', _re.I)
+        _CMB3_RE = _re.compile(r'^(.+?),\s+(.+?),?\s+and\s+(.+?)\s+to\s+combine', _re.I)
+        _CMB2_RE = _re.compile(r'^(.+?)\s+and\s+(.+?)\s+to\s+combine', _re.I)
+
         try:
             for i, line in enumerate(clean_lines):
                 # Skip team/game market lines — handled separately below
@@ -1465,15 +1472,6 @@ elif st.session_state.view == "boxscore":
                 # "Bo Nix or Dak Prescott to record 400+ Passing Yards"
                 # "Both Bo Nix and Dak Prescott to Each Complete 25+ Passes"
                 # "CeeDee Lamb, Courtland Sutton, and George Pickens to Combine for 4+ TDs"
-                _COMBINE_STAT_RE = _re.compile(
-                    r'(\d+\.?\d*)\+?\s*(passing tds?|pass tds?|rushing tds?|rush tds?|receiving tds?|rec tds?|tds?|touchdowns?|passing yards?|rushing yards?|receiving yards?|rec yards?|rec yds?|rush yards?|rush yds?|completions?|passes?|receptions?)', _re.I)
-                _OR_RE      = _re.compile(r'^(.+?)\s+or\s+(.+?)\s+to\s+(?:record|have|score)', _re.I)
-                _EACH_RE    = _re.compile(r'^(?:both\s+)?(.+?)\s+and\s+(.+?)\s+to\s+each\s+(?:complete|record|have|score)', _re.I)
-                _CMB5_RE    = _re.compile(r'^(.+?),\s+(.+?),\s+(.+?),\s+(.+?),?\s+and\s+(.+?)\s+to\s+combine', _re.I)
-                _CMB4_RE    = _re.compile(r'^(.+?),\s+(.+?),\s+(.+?),?\s+and\s+(.+?)\s+to\s+combine', _re.I)
-                _CMB3_RE    = _re.compile(r'^(.+?),\s+(.+?),?\s+and\s+(.+?)\s+to\s+combine', _re.I)
-                _CMB2_RE    = _re.compile(r'^(.+?)\s+and\s+(.+?)\s+to\s+combine', _re.I)
-
                 _cm = _COMBINE_STAT_RE.search(line)
                 if _cm:
                     _thr = float(_cm.group(1))
@@ -1774,12 +1772,6 @@ elif st.session_state.view == "boxscore":
                 return float(pd.to_numeric(_row_r.get(col, 0), errors='coerce') or 0) if not match.empty else 0.0
             except Exception:
                 return 0.0
-            match = _find_player(player, category, period_key)
-            _row_r = match.iloc[0]
-            if col == 'COMP' and 'C/ATT' in _row_r.index:
-                try: return float(str(_row_r['C/ATT']).split('/')[0])
-                except: return 0.0
-            return float(pd.to_numeric(_row_r.get(col, 0), errors='coerce') or 0) if not match.empty else 0.0
 
         def grade_prop(prop: dict) -> dict:
             player    = prop.get("player","")
@@ -1874,18 +1866,16 @@ elif st.session_state.view == "boxscore":
                 "receptions":      ("receiving", "REC"),
                 "receiving yards": ("receiving", "YDS"),
                 "receiving yds":   ("receiving", "YDS"),
-                "completions":      ("passing",    "COMP"),
-                "completion":       ("passing",    "COMP"),
-                "completed passes": ("passing",    "COMP"),
-                "receiving tds":    ("receiving",  "TD"),
-                "receiving td":     ("receiving",  "TD"),
-                "rec tds":          ("receiving",  "TD"),
-                "rec td":           ("receiving",  "TD"),
-                "receiving td":    ("receiving", "TD"),
+                "completions":     ("passing",   "COMP"),
+                "completion":      ("passing",   "COMP"),
+                "completed passes":("passing",   "COMP"),
                 "receiving tds":   ("receiving", "TD"),
-                    "sack":            ("defense",   "SACKS"),
-                    "sacks":           ("defense",   "SACKS"),
-                    "record a sack":   ("defense",   "SACKS"),
+                "receiving td":    ("receiving", "TD"),
+                "rec tds":         ("receiving", "TD"),
+                "rec td":          ("receiving", "TD"),
+                "sack":            ("defense",   "SACKS"),
+                "sacks":           ("defense",   "SACKS"),
+                "record a sack":   ("defense",   "SACKS"),
             }
             category, col = None, None
             for key, val in stat_map.items():
@@ -2363,6 +2353,14 @@ elif st.session_state.view == "boxscore":
             if "Team" not in rows.columns: return rows.shape[0] > 0
             return rows["Team"].str.upper().eq(team_abbr.upper()).any()
 
+        # Compile each-team validation patterns once before the loop (not per team prop line)
+        _EACH_PATTERNS = [
+            _re_t.compile(r'^each team to score \d+\+? tds? in each quarter$', _re_t.I),
+            _re_t.compile(r'^each team to score \d+\+? tds? & \d+\+? fgs? in each half$', _re_t.I),
+            _re_t.compile(r'^each team to score \d+\+? rushing tds? & \d+\+? passing tds?$', _re_t.I),
+            _re_t.compile(r'^each team to score \d+\+? rushing tds? & \d+\+? passing tds? in each half$', _re_t.I),
+        ]
+
         for i, line in enumerate(clean_lines):
             # ── No Touchdown in Game ──────────────────────────────────────────
             if _NO_TD_RE.match(line):
@@ -2653,8 +2651,7 @@ elif st.session_state.view == "boxscore":
                 won = False
                 _kr_detail = "No kickoff return TD on opening play"
                 try:
-                    from nfl.api import get_core_plays as _gcp
-                    _core_plays = _gcp(game_id)
+                    _core_plays = data.get("core_plays", [])
                     # Skip non-play entries — Coin Toss = type.id 70
                     _first_real = next(
                         (p for p in _core_plays
@@ -2680,13 +2677,6 @@ elif st.session_state.view == "boxscore":
                 continue
 
             # Validate each-team markets against allowed patterns (N+ is flexible)
-            import re as _re_em
-            _EACH_PATTERNS = [
-                _re_em.compile(r'^each team to score \d+\+? tds? in each quarter$', _re_em.I),
-                _re_em.compile(r'^each team to score \d+\+? tds? & \d+\+? fgs? in each half$', _re_em.I),
-                _re_em.compile(r'^each team to score \d+\+? rushing tds? & \d+\+? passing tds?$', _re_em.I),
-                _re_em.compile(r'^each team to score \d+\+? rushing tds? & \d+\+? passing tds? in each half$', _re_em.I),
-            ]
             is_each = "each team" in line.lower() or "both teams" in line.lower()
             if is_each and not any(p.match(line.strip()) for p in _EACH_PATTERNS):
                 team_graded.append({"Prop": line, "Data": "Market format not supported",
@@ -2740,7 +2730,7 @@ elif st.session_state.view == "boxscore":
             def _sdf_types(team=None, period=None):
                 """Return list of TypeID strings from scoring_df, filtered by team and/or period."""
                 if scoring_df is None or scoring_df.empty: return []
-                df = scoring_df.copy()
+                df = scoring_df
                 if period:
                     if period == "1H":
                         if "Half" in df.columns:
@@ -2790,9 +2780,8 @@ elif st.session_state.view == "boxscore":
 
             if is_each and reqs[0][0] == "score":
                 # Each Team to Score in All Four Quarters
-                # Use linescore which has per-team per-quarter scores directly
-                from nfl.stats import build_linescore_df as _bls_t
-                _ls_t = _bls_t(game_id)
+                # Use linescore already fetched in load_all_stats
+                _ls_t = data.get("linescore", pd.DataFrame())
                 team_data_parts = []
                 for team in sorted_teams:
                     if _ls_t is not None and not _ls_t.empty and "Team" in _ls_t.columns:
