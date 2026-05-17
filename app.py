@@ -9,6 +9,7 @@ from datetime import datetime, date, timezone, timedelta
 import calendar as cal_mod
 
 from nfl.api import get_live_games
+from nfl.api import get_core_plays as _get_core_plays_for_debug
 from nfl.stats import (
     build_linescore_df,
     get_player_stats_by_period,
@@ -270,17 +271,18 @@ def fetch_games_for_month(year: int, month: int) -> list:
 @st.cache_data(ttl=30, show_spinner=False)
 def load_all_stats(game_id: str) -> dict:
     return {
-        "linescore": build_linescore_df(game_id),
-        "passing":   get_passing_stats(game_id),
-        "rushing":   get_rushing_stats(game_id),
-        "receiving": get_receiving_stats(game_id),
-        "defense":   get_defensive_stats(game_id),
-        "kicking":   get_kicking_stats(game_id),
-        "returning": get_returning_stats(game_id),
-        "team":      get_team_stats(game_id),
-        "scoring":   get_scoring_summary(game_id),
-        "pbp":       get_pbp_by_quarter(game_id),
-        "by_period":  get_player_stats_by_period(game_id),
+        "linescore":   build_linescore_df(game_id),
+        "passing":     get_passing_stats(game_id),
+        "rushing":     get_rushing_stats(game_id),
+        "receiving":   get_receiving_stats(game_id),
+        "defense":     get_defensive_stats(game_id),
+        "kicking":     get_kicking_stats(game_id),
+        "returning":   get_returning_stats(game_id),
+        "team":        get_team_stats(game_id),
+        "scoring":     get_scoring_summary(game_id),
+        "pbp":         get_pbp_by_quarter(game_id),
+        "by_period":   get_player_stats_by_period(game_id),
+        "core_plays":  _get_core_plays_for_debug(game_id),  # reused for debug CSV
     }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3106,50 +3108,197 @@ elif st.session_state.view == "reconcile":
             if _game_ids:
                 st.caption(f"Found **{len(_game_ids)} games** from {_date_start} to {_date_end}")
 
-            # ── Process games ─────────────────────────────────────────────────────
+            # ── Process games in weekly chunks ────────────────────────────────
             if not _game_ids:
                 st.error("No valid game IDs found.")
             else:
-                _results = []
-                _prog    = st.progress(0, text=f"Processing 0 / {len(_game_ids)} games…")
-                for _gi, _gid in enumerate(_game_ids):
-                    _prog.progress(_gi / len(_game_ids),
-                                   text=f"Processing game {_gi+1} / {len(_game_ids)}: {_gid}")
-                    try:
-                        _gdata = load_all_stats(_gid)
-                        _recon = get_reconciliation_status(_gdata, _gid)
-                        _ls    = _gdata.get("linescore", pd.DataFrame())
-                        _label = (f"{_ls.iloc[0]['Team']} @ {_ls.iloc[1]['Team']}"
-                                  if _ls is not None and not _ls.empty and "Team" in _ls.columns and len(_ls) >= 2
-                                  else _gid)
-                        if _recon["passed"]:
-                            _results.append({"game_id":_gid,"label":_label,"passed":True,"rows":[]})
-                        else:
-                            _mrows = []
-                            for _player, _cat, _col, _pbp, _official, _ in _recon["mismatches"]:
-                                _gap = _pbp - _official
-                                _abs = abs(_gap)
-                                _count_col = _col in ("ATT", "CAR", "REC", "INT", "TD")
-                                if _count_col and _abs >= 2:
-                                    _cause = "❌ Logic"
-                                elif _count_col and _abs == 1:
-                                    _cause = "🔍 Investigate"
-                                elif not _count_col and _abs <= 2:
-                                    _cause = "⚠️ ESPN gap"
-                                else:  # YDS/AVG gap > 2
-                                    _cause = "🔍 Investigate"
-                                _mrows.append({
-                                    "Game": _label, "Player": _player,
-                                    "Stat": _cat.capitalize(), "Col": _col,
-                                    "Q/H Total": _pbp, "Official": _official,
-                                    "Missing": str(_gap), "Cause": _cause,
-                                })
-                            _results.append({"game_id":_gid,"label":_label,"passed":False,"rows":_mrows})
-                    except Exception as _ge:
-                        _results.append({"game_id":_gid,"label":_gid,"passed":None,
-                                         "rows":[{"Game":_gid,"Player":f"Error: {str(_ge)[:60]}",
-                                                  "Stat":"","Col":"","Q/H Total":"","Official":"","Missing":""}]})
-                _prog.progress(1.0, text=f"Done — {len(_game_ids)} games processed.")
+                # Split game IDs into chunks of 16 (≈ one NFL week).
+                # Each chunk stays well below ESPN throttle threshold.
+                _CHUNK = 16
+                _chunks = [_game_ids[i:i+_CHUNK] for i in range(0, len(_game_ids), _CHUNK)]
+                _n_chunks   = len(_chunks)
+                _n_total    = len(_game_ids)
+                _results    = []
+                _done_games = 0
+
+                import re as _dbre, json as _dbj, urllib.request as _dbur
+                _DBRE_ID = _dbre.compile(r"/athletes/([0-9]+)")
+                _DBRE_TM = _dbre.compile(r"/teams/([0-9]+)")
+
+                _prog = st.progress(0, text=f"Starting — {_n_total} games across {_n_chunks} chunk{'s' if _n_chunks>1 else ''}…")
+
+                for _ci, _chunk in enumerate(_chunks):
+                    for _gi, _gid in enumerate(_chunk):
+                        _overall = _done_games + _gi
+                        _prog.progress(
+                            _overall / _n_total,
+                            text=f"Chunk {_ci+1}/{_n_chunks} · Game {_gi+1}/{len(_chunk)} · {_gid}"
+                        )
+                        try:
+                            _gdata = load_all_stats(_gid)
+                            _recon = get_reconciliation_status(_gdata, _gid)
+                            _ls    = _gdata.get("linescore", pd.DataFrame())
+                            _label = (f"{_ls.iloc[0]['Team']} @ {_ls.iloc[1]['Team']}"
+                                      if _ls is not None and not _ls.empty
+                                      and "Team" in _ls.columns and len(_ls) >= 2
+                                      else _gid)
+
+                            # ── Build mismatch rows ───────────────────────────
+                            if _recon["passed"]:
+                                _results.append({"game_id":_gid,"label":_label,"passed":True,"rows":[]})
+                            else:
+                                _mrows = []
+                                for _player, _cat, _col, _pbp, _official, _ in _recon["mismatches"]:
+                                    _gap = _pbp - _official
+                                    _abs = abs(_gap)
+                                    _count_col = _col in ("ATT", "CAR", "REC", "INT", "TD")
+                                    if _count_col and _abs >= 2:
+                                        _cause = "❌ Logic"
+                                    elif _count_col and _abs == 1:
+                                        _cause = "🔍 Investigate"
+                                    elif not _count_col and _abs <= 2:
+                                        _cause = "⚠️ ESPN gap"
+                                    else:
+                                        _cause = "🔍 Investigate"
+                                    _mrows.append({
+                                        "Game": _label, "Player": _player,
+                                        "Stat": _cat.capitalize(), "Col": _col,
+                                        "Q/H Total": _pbp, "Official": _official,
+                                        "Missing": str(_gap), "Cause": _cause,
+                                    })
+                                _results.append({"game_id":_gid,"label":_label,"passed":False,"rows":_mrows})
+
+                            # ── Build debug rows (C1–C6) from core_plays ─────
+                            # Uses plays already fetched in load_all_stats — zero extra ESPN calls.
+                            try:
+                                _dplays = _gdata.get("core_plays", [])
+                                _dsum   = _gdata.get("by_period", {})
+                                from nfl.api import get_game_summary as _dbgs
+                                from nfl.stats import get_passing_stats as _dbgps
+                                _dsmry  = _dbgs(_gid) or {}
+                                _dbox   = _dsmry.get("boxscore", {})
+                                _d_roster, _d_tid = set(), {}
+                                for _dtb in _dbox.get("players", []):
+                                    for _dcat in _dtb.get("statistics", []):
+                                        for _da in _dcat.get("athletes", []):
+                                            _dn = (_da.get("displayName") or
+                                                   _da.get("athlete", {}).get("displayName", ""))
+                                            if _dn: _d_roster.add(_dn)
+                                for _dtb in _dbox.get("teams", []):
+                                    _dt = str(_dtb.get("team", {}).get("id", ""))
+                                    _da2 = _dtb.get("team", {}).get("abbreviation", "")
+                                    if _dt and _da2: _d_tid[_dt] = _da2
+                                def _db_team(ref):
+                                    _m = _DBRE_TM.search(ref or "")
+                                    return _d_tid.get(_m.group(1), "") if _m else ""
+                                _d_names = {}
+                                for _dtb2 in _dbox.get("players", []):
+                                    for _dcat2 in _dtb2.get("statistics", []):
+                                        for _da3 in _dcat2.get("athletes", []):
+                                            _da_ref  = _da3.get("athlete", {}).get("$ref", "")
+                                            _da_aid  = (_DBRE_ID.search(_da_ref) or type("",(),{"group":lambda s,n:""})()).group(1)
+                                            _da_name = (_da3.get("displayName") or
+                                                        _da3.get("athlete", {}).get("displayName", ""))
+                                            if _da_aid and _da_name:
+                                                _d_names[_da_aid] = _da_name
+                                for _dp3 in _dplays:
+                                    for _dpt3 in _dp3.get("participants", []):
+                                        if _dpt3.get("type") not in {"passer","receiver","rusher","sackedBy"}: continue
+                                        _dref3 = _dpt3.get("athlete", {}).get("$ref", "")
+                                        _daid3 = (_DBRE_ID.search(_dref3) or type("",(),{"group":lambda s,n:""})()).group(1)
+                                        if _daid3 and _daid3 not in _d_names:
+                                            _d_names[_daid3] = f"[ID:{_daid3}]"
+                                # C1
+                                _c1 = [{"athlete_id":aid,"resolved_name":name,"role":
+                                         next((p.get("type","") for pl in _dplays for p in pl.get("participants",[])
+                                               if (_DBRE_ID.search(p.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1)==aid),"?")}
+                                        for aid,name in _d_names.items() if name and name not in _d_roster]
+                                # C2
+                                _c2 = []
+                                try:
+                                    _doff = _dbgps(_gid)
+                                    if _doff is not None and not _doff.empty and "Player" in _doff.columns:
+                                        _dop = set(_doff["Player"].str.split().str[-1].str.lower())
+                                        for _dp4 in _dplays:
+                                            for _dpt4 in _dp4.get("participants",[]):
+                                                if _dpt4.get("type") != "passer": continue
+                                                _daid4 = (_DBRE_ID.search(_dpt4.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1)
+                                                _dn4   = _d_names.get(_daid4, "")
+                                                _dl4   = _dn4.split(".")[-1].strip().lower() if "." in _dn4 else _dn4.split()[-1].lower() if _dn4 else ""
+                                                if _dl4 and _dl4 not in _dop:
+                                                    _c2.append({"passer":_dn4,"play_type":(_dp4.get("type",{}).get("text","") or "").lower(),"yds":_dp4.get("statYardage",0),"text":str(_dp4.get("text",""))[:80]})
+                                except Exception: pass
+                                # C3
+                                _c3 = []
+                                for _dp5 in _dplays:
+                                    if (_dp5.get("type",{}).get("text","") or "").lower() != "pass interception return": continue
+                                    _droles5 = {p.get("type","") for p in _dp5.get("participants",[])}
+                                    _dtxt5   = str(_dp5.get("text",""))
+                                    _dim5    = _dbre.search(r"(?:\([^)]*\)\s*)?([A-Z]\.[A-Za-z\-']+(?:\s+(?:Jr|Sr|II|III|IV)\.?)?)\s+pass", _dtxt5)
+                                    _pid5    = next(((_DBRE_ID.search(p.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1) for p in _dp5.get("participants",[]) if p.get("type")=="passer"),"")
+                                    _c3.append({"Q":f"Q{(_dp5.get('period') or {}).get('number','?')}","passer_role":"✅ YES" if "passer" in _droles5 else "❌ NO","psr_id":_pid5 or "—","text_parse":_dim5.group(1) if _dim5 else "❌ MISS","bucket_split":"⚠️ YES — fix needed" if "passer" not in _droles5 and bool(_dim5) else "✅ OK","text":_dtxt5[:90]})
+                                # C4
+                                _c4 = []
+                                for _dp6 in _dplays:
+                                    if not _dp6.get("isPenalty") or _dp6.get("scoringPlay"): continue
+                                    _droles6 = {p.get("type","") for p in _dp6.get("participants",[])}
+                                    if not (_droles6 & {"passer","receiver","rusher"}): continue
+                                    _dtxt6  = (str(_dp6.get("text","")) or "").upper()
+                                    _dpos6a = _db_team(_dp6.get("team",{}).get("$ref",""))
+                                    _dpos6b = ""
+                                    for _dpt6 in _dp6.get("participants",[]):
+                                        if _dpt6.get("type") in ("passer","rusher","receiver"):
+                                            _dtm6 = _DBRE_TM.search(_dpt6.get("athlete",{}).get("$ref",""))
+                                            if _dtm6:
+                                                _dpos6b = _d_tid.get(_dtm6.group(1),"")
+                                                if _dpos6b: break
+                                    _dpu6  = _dpos6a or _dpos6b
+                                    _dpm6  = _dbre.search(r"PENALTY ON ([A-Z]{2,3})[^A-Z]", _dtxt6)
+                                    _dpt6b = _dpm6.group(1) if _dpm6 else "—"
+                                    _dmatch6 = _dpt6b == _dpu6 if (_dpu6 and _dpt6b != "—") else None
+                                    _c4.append({"Q":f"Q{(_dp6.get('period') or {}).get('number','?')}","player":next((_d_names.get((_DBRE_ID.search(_dpt6c.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1),"?") for _dpt6c in _dp6.get("participants",[]) if _dpt6c.get("type") in ("passer","rusher","receiver")),"?"),"yds":_dp6.get("statYardage",0),"pos_team":_dpu6 or "❌ unknown","pen_team":_dpt6b,"result":"✅ skipped (off. pen)" if _dmatch6 else ("✅ counted (def. pen)" if _dmatch6 is False else "⚠️ counted — pos_team unknown"),"text":str(_dp6.get("text",""))[:80]})
+                                # C5
+                                _c5s = {}
+                                for _dp7 in _dplays:
+                                    for _dpt7 in _dp7.get("participants",[]):
+                                        if _dpt7.get("type") != "rusher": continue
+                                        _daid7  = (_DBRE_ID.search(_dpt7.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1)
+                                        _dn7    = _d_names.get(_daid7, "?")
+                                        _dptype7= (_dp7.get("type",{}).get("text","") or "").lower()
+                                        _dskip7 = _dptype7 in {"end period","end of half","end of game","timeout","coin toss","kickoff","punt","penalty","uncategorized","field goal good","field goal missed","extra point good","safety",""}
+                                        _c5s.setdefault(_dn7, {"our_CAR":0,"skipped_plays":0})
+                                        if not _dskip7: _c5s[_dn7]["our_CAR"] += 1
+                                        else:           _c5s[_dn7]["skipped_plays"] += 1
+                                # C6
+                                _c6 = []
+                                for _dp8 in _dplays:
+                                    if _dp8.get("statYardage",0) >= 0: continue
+                                    if "receiver" not in {p.get("type","") for p in _dp8.get("participants",[])}: continue
+                                    _dyds8,_dpen8,_dsc8 = _dp8.get("statYardage",0),_dp8.get("isPenalty",False),_dp8.get("scoringPlay",False)
+                                    _dn8 = next((_d_names.get((_DBRE_ID.search(p.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1),"?") for p in _dp8.get("participants",[]) if p.get("type")=="receiver"),"?")
+                                    _c6.append({"Q":f"Q{(_dp8.get('period') or {}).get('number','?')}","receiver":_dn8,"yds":_dyds8,"isPenalty":_dpen8,"counted_now":"❌ yes — wrong" if not (_dpen8 and not _dsc8) else "✅ skipped","fix_would_skip":"✅ yes" if _dyds8 < -10 and not _dsc8 else "❌ no","text":str(_dp8.get("text",""))[:80]})
+                                # Store
+                                def _rwg(rows, section):
+                                    return [{"game":_label,"game_id":_gid,"section":section,**row} for row in rows]
+                                _dbg_store = []
+                                if _c1: _dbg_store.extend(_rwg(_c1,"C1-name"))
+                                if _c2: _dbg_store.extend(_rwg(_c2,"C2-trick"))
+                                if _c3: _dbg_store.extend(_rwg(_c3,"C3-int"))
+                                if _c4: _dbg_store.extend(_rwg(_c4,"C4-offpen"))
+                                if _c5s: _dbg_store.extend([{"game":_label,"game_id":_gid,"section":"C5-car","rusher":n,"our_CAR":d["our_CAR"],"skipped":d["skipped_plays"]} for n,d in sorted(_c5s.items())])
+                                if _c6: _dbg_store.extend(_rwg(_c6,"C6-neg"))
+                                st.session_state[f"dbg_{_gid}"] = _dbg_store
+                            except Exception:
+                                pass  # debug build failure is non-critical
+
+                        except Exception as _ge:
+                            _results.append({"game_id":_gid,"label":_gid,"passed":None,
+                                             "rows":[{"Game":_gid,"Player":f"Error: {str(_ge)[:60]}",
+                                                      "Stat":"","Col":"","Q/H Total":"","Official":"","Missing":""}]})
+
+                    _done_games += len(_chunk)
+
+                _prog.progress(1.0, text=f"Done — {_n_total} game{'s' if _n_total!=1 else ''} across {_n_chunks} chunk{'s' if _n_chunks!=1 else ''} processed.")
                 st.session_state.recon_results = _results
 
     # ── Display results ───────────────────────────────────────────────────────
