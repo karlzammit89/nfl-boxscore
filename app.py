@@ -429,11 +429,34 @@ if st.session_state.view == "calendar":
     st.caption("Cells with text = has games  ·  🔴 = live game  ·  Red border = today")
 
     st.divider()
+    st.markdown("""
+    <style>
+    .recon-nav-btn button[data-testid="stBaseButton-secondary"] {
+        background:    transparent                       !important;
+        border:        0.5px solid rgba(128,128,128,0.4) !important;
+        box-shadow:    none                              !important;
+        color:         inherit                           !important;
+        height:        auto                              !important;
+        min-height:    unset                             !important;
+        margin-top:    0                                 !important;
+        padding:       6px 14px                          !important;
+        cursor:        pointer                           !important;
+        width:         100%                              !important;
+        display:       inline-flex                       !important;
+        position:      static                            !important;
+        z-index:       auto                              !important;
+        opacity:       1                                 !important;
+        border-radius: 8px                               !important;
+    }
+    </style>
+    <div class="recon-nav-btn">
+    """, unsafe_allow_html=True)
     _recon_col, _ = st.columns([2.5, 7])
     with _recon_col:
         if st.button("🔍 Multi-Game Reconciliation", use_container_width=True, key="btn_recon_cal"):
             st.session_state.view = "reconcile"
             st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -529,11 +552,13 @@ elif st.session_state.view == "day":
                 st.rerun()
 
     st.divider()
+    st.markdown('<div class="recon-nav-btn">', unsafe_allow_html=True)
     _recon_col, _ = st.columns([2.5, 7])
     with _recon_col:
         if st.button("🔍 Multi-Game Reconciliation", use_container_width=True, key="btn_recon_day"):
             st.session_state.view = "reconcile"
             st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
