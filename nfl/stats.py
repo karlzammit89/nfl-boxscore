@@ -904,14 +904,9 @@ def get_player_stats_by_period(game_id: str) -> dict:
             if sck:
                 d = sacking[eff_period][sck]; d["Team"] = team or d["Team"]
                 d["sacks"] += 1
-            if psr:
-                d = passing[eff_period][psr]; d["Team"] = team or d["Team"]
-                d["att"] += 1
-                # ESPN's official passing YDS are GROSS (sacks not subtracted).
-                # Do not add negative sack yards — that would undercount vs official.
-                # ATT+1 is the only stat credited on a sack play.
-                _play_log[(psr, "passing")].append(
-                    (eff_period, 0, text_str, False))
+            # ESPN's official passing ATT and YDS both exclude sacks.
+            # Do not credit ATT or YDS on sack plays — they are not
+            # counted as pass attempts in ESPN's box score display.
 
         # ── Fumble Recovery (type_id=9 or ptype) ─────────────────────────────
         elif type_id == "9" or ptype in {"fumble recovery (own)", "fumble recovery (opponent)"}:
@@ -1138,6 +1133,9 @@ def get_player_stats_by_period(game_id: str) -> dict:
                         m[k] = m.get(k, 0) + d[k]
         return merged
 
+    # Recompute all_periods AFTER count reconciliation — the reconciliation loops
+    # may have created new period entries in the defaultdicts via direct access.
+    # Computing here ensures every period with data appears in the result dict.
     all_periods = sorted(set(
         list(passing.keys()) + list(rushing.keys()) +
         list(receiving.keys()) + list(sacking.keys())))
