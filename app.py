@@ -218,11 +218,7 @@ _hdr1, _hdr2 = st.columns([5, 2.5])
 with _hdr1:
     st.markdown("## 🏈 NFL Box Scores")
 with _hdr2:
-    st.markdown("<div style='margin-top:14px'>", unsafe_allow_html=True)
-    if st.session_state.view != "reconcile":
-        if st.button("🔍 Multi-Game Reconciliation", use_container_width=True, key="btn_reconcile_nav"):
-            st.session_state.view = "reconcile"
-            st.rerun()
+    pass  # navigation buttons are placed inside each view
 st.divider()
 
 # ── Data loaders ──────────────────────────────────────────────────────────────
@@ -283,6 +279,13 @@ if st.session_state.view == "calendar":
     games_by_date: dict = {}
     for g in month_games:
         games_by_date.setdefault(et_date_str(g["date"]), []).append(g)
+
+    # Multi-Game Reconciliation button
+    _recon_col, _ = st.columns([2.5, 7])
+    with _recon_col:
+        if st.button("🔍 Multi-Game Reconciliation", use_container_width=True, key="btn_recon_cal"):
+            st.session_state.view = "reconcile"
+            st.rerun()
 
     # ── Month / Year picker — native st.selectbox, no buttons needed ────────
     # Selectboxes trigger instant reruns on change with no page flash,
@@ -446,6 +449,13 @@ elif st.session_state.view == "day":
         st.session_state.view = "calendar"
         st.rerun()
 
+    # Multi-Game Reconciliation button
+    _recon_col, _ = st.columns([2.5, 7])
+    with _recon_col:
+        if st.button("🔍 Multi-Game Reconciliation", use_container_width=True, key="btn_recon_day"):
+            st.session_state.view = "reconcile"
+            st.rerun()
+
     try:
         d_obj      = date.fromisoformat(ds)
         date_label = d_obj.strftime("%A, %B %-d %Y")
@@ -545,7 +555,7 @@ elif st.session_state.view == "boxscore":
     except Exception:
         date_label = "Schedule"
 
-    b1, b2, b3, _ = st.columns([1.5, 1.6, 1.3, 5])
+    b1, b2, b3, b4, _ = st.columns([1.5, 1.6, 1.3, 2.5, 2.5])
     with b1:
         if st.button("← Calendar", use_container_width=True):
             st.session_state.view = "calendar"
@@ -557,6 +567,10 @@ elif st.session_state.view == "boxscore":
     with b3:
         if st.button("🔄 Refresh", use_container_width=True):
             st.cache_data.clear()
+            st.rerun()
+    with b4:
+        if st.button("🔍 Multi-Game Reconciliation", use_container_width=True, key="btn_recon_box"):
+            st.session_state.view = "reconcile"
             st.rerun()
 
     away  = game["away"]; home = game["home"]
@@ -3093,7 +3107,7 @@ elif st.session_state.view == "reconcile":
                                 elif _count_col and _abs == 1:
                                     _cause = "🔍 Investigate"
                                 elif not _count_col and _abs <= 2:
-                                    _cause = "🟡 ESPN gap"
+                                    _cause = "⚠️ ESPN gap"
                                 else:  # YDS/AVG gap > 2
                                     _cause = "🔍 Investigate"
                                 _mrows.append({
@@ -3125,13 +3139,13 @@ elif st.session_state.view == "reconcile":
             _all_mrows = [row for r in _results if not r["passed"] for row in r["rows"]]
             _n_logic   = sum(1 for row in _all_mrows if row.get("Cause","") == "❌ Logic")
             _n_invest  = sum(1 for row in _all_mrows if row.get("Cause","") == "🔍 Investigate")
-            _n_espngap = sum(1 for row in _all_mrows if row.get("Cause","") == "🟡 ESPN gap")
+            _n_espngap = sum(1 for row in _all_mrows if row.get("Cause","") == "⚠️ ESPN gap")
             _parts = []
             if _n_logic:  _parts.append(f"❌ {_n_logic} logic bug{'s' if _n_logic!=1 else ''}")
             if _n_invest: _parts.append(f"🔍 {_n_invest} to investigate")
-            if _n_espngap:_parts.append(f"🟡 {_n_espngap} ESPN gap{'s' if _n_espngap!=1 else ''}")
+            if _n_espngap:_parts.append(f"⚠️ {_n_espngap} ESPN gap{'s' if _n_espngap!=1 else ''}")
             _summary = " · ".join(_parts) if _parts else f"{_n_miss} mismatches"
-            st.error(f"{_n_fail}/{len(_results)} games have gaps · {_summary} · ✅ {_n_pass} passed"
+            st.error(f"{_n_pass}/{len(_results)} games passed · {_summary} · ✅ {_n_pass} game{'s' if _n_pass!=1 else ''} passed"
                      + (f" · ⚠️ {_n_err} errors" if _n_err else ""))
 
         # ── Per-game results (collapsed by default) ───────────────────────────
@@ -3148,11 +3162,11 @@ elif st.session_state.view == "reconcile":
                 _exp_rows  = _r["rows"]
                 _exp_logic = sum(1 for row in _exp_rows if row.get("Cause","") == "❌ Logic")
                 _exp_inv   = sum(1 for row in _exp_rows if row.get("Cause","") == "🔍 Investigate")
-                _exp_gap   = sum(1 for row in _exp_rows if row.get("Cause","") == "🟡 ESPN gap")
+                _exp_gap   = sum(1 for row in _exp_rows if row.get("Cause","") == "⚠️ ESPN gap")
                 _exp_parts = []
                 if _exp_logic: _exp_parts.append(f"❌ {_exp_logic} logic")
                 if _exp_inv:   _exp_parts.append(f"🔍 {_exp_inv} investigate")
-                if _exp_gap:   _exp_parts.append(f"🟡 {_exp_gap} ESPN gap{'s' if _exp_gap!=1 else ''}")
+                if _exp_gap:   _exp_parts.append(f"⚠️ {_exp_gap} ESPN gap{'s' if _exp_gap!=1 else ''}")
                 _exp_label = " · ".join(_exp_parts) if _exp_parts else f"{len(_exp_rows)} mismatches"
                 with st.expander(
                     f"{_r['label']}  ({_r['game_id']}) — {_exp_label}",
@@ -3161,7 +3175,7 @@ elif st.session_state.view == "reconcile":
                     _mdf = pd.DataFrame(_r["rows"])
                     # Split rows by cause for separate display
                     _real_rows = _mdf[_mdf["Cause"].isin(["❌ Logic", "🔍 Investigate"])] if "Cause" in _mdf.columns else _mdf
-                    _gap_rows  = _mdf[_mdf["Cause"] == "🟡 ESPN gap"] if "Cause" in _mdf.columns else pd.DataFrame()
+                    _gap_rows  = _mdf[_mdf["Cause"] == "⚠️ ESPN gap"] if "Cause" in _mdf.columns else pd.DataFrame()
 
                     def _style_missing(df):
                         return df.style.map(
@@ -3175,7 +3189,7 @@ elif st.session_state.view == "reconcile":
                         st.dataframe(_style_missing(_real_rows), use_container_width=True, hide_index=True)
 
                     if not _gap_rows.empty:
-                        with st.expander(f"🟡 ESPN data gaps — {len(_gap_rows)} row(s) (measurement noise, not logic bugs)", expanded=False):
+                        with st.expander(f"⚠️ ESPN gap — {len(_gap_rows)} row(s) (measurement noise, not logic bugs)", expanded=False):
                             st.caption("These rows are ±1–2 YDS differences between ESPN's Core API play-by-play and their official boxscore. Structurally unfixable — two ESPN systems measuring the same plays differently.")
                             st.dataframe(_gap_rows, use_container_width=True, hide_index=True)
 
@@ -3425,11 +3439,10 @@ elif st.session_state.view == "reconcile":
                     _dk = f"dbg_{_r['game_id']}"
                     if _dk in st.session_state:
                         _all_dbg.extend(st.session_state[_dk])
-                if _all_dbg:
-                    st.download_button("📥 Download Debug CSV",
-                                       data=pd.DataFrame(_all_dbg).to_csv(index=False),
-                                       file_name="reconciliation_debug.csv",
-                                       mime="text/csv", key="debug_dl")
-                else:
-                    st.caption("Debug CSV available after games load above.")
+                _dbg_ready = bool(_all_dbg)
+                st.download_button("📥 Download Debug CSV",
+                                   data=pd.DataFrame(_all_dbg).to_csv(index=False) if _dbg_ready else "",
+                                   file_name="reconciliation_debug.csv",
+                                   mime="text/csv", key="debug_dl",
+                                   disabled=not _dbg_ready or (_n_fail == 0 and _n_err == 0))
 # ══ END RECONCILE ══════════════════════════════════════════════════════════════
