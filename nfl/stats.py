@@ -1,3 +1,55 @@
+"""
+nfl/stats.py
+------------
+Parse raw ESPN boxscore data into clean, structured DataFrames
+split by quarter and half. This is the accuracy-critical layer.
+
+ESPN's boxscore provides cumulative stats per player, not per-quarter
+player stats (that granularity requires play-by-play parsing).
+Quarter-level team totals come from linescores.
+Per-player quarter splits are derived by parsing drives + plays.
+
+Change log:
+  - Play classification switched from type.text → type.id where confirmed:
+      3=PassIncompletion, 5=Rush, 7=Sack, 8=Penalty, 9=FumbleRecoveryOwn,
+      24=PassReception, 67=PassingTouchdown
+  - Spike detection: type_id=3 same as incompletion; text parse confirmed required
+  - Off-pen pass guard added (type_id=24 & type_id=3): mirrors _is_off_pen_rush
+  - Def-pen pass reception: uses text-parsed yards (not statYardage which includes penalty advance)
+  - New type_id=8 handler: credits text-parsed actual yards for off-pen march-back plays
+  - "penalty" removed from _SKIP_TYPES (now has its own handler)
+  - Sack handler uses type_id=7; fumble recovery uses type_id=9 with ptype fallback
+  - 6 penalty-handling fixes derived from NFL Guide for Statisticians 2025:
+      1. Receiver-present guard on type_id=8 (NFL §Penalty Plays Rule 1):
+         off-pen rushes/scrambles enforced from previous spot are nullified
+      2. type_id=67 (passing TDs) text-parses yards when isPenalty=True
+         (statYardage may be net field gain, not actual play yards)
+      3. Off-pen reception with dead-ball/declined penalty counts normally
+         (NFL §Rule 2A + declined-penalty rule)
+      4. Universal text-parse fallback for type_id=24 normal receptions
+         (verifies statYardage; defensive only, no behavior change unless match)
+      5. Strips "X reported in as eligible. [Direct snap to Y.]" prefix in
+         all text-parse helpers
+      6. Skips scoring-summary duplicate entries
+         ("Player N Yd pass from QB (Kicker Kick)" format)
+      7. type_id=5 def-pen rush with dead-ball/declined foul (NFL §Rule 2A):
+         credit actual rush yards from text (or 0 on "no gain"), not statYardage
+         which includes the penalty distance.
+      8. type_id=24 off-pen reception with statYardage > 0 (NFL §Rule 2B):
+         credit statYardage as "yards to spot of foul" when the offensive penalty
+         is enforced downfield. ESPN encodes the spot-of-foul value in statYardage.
+      9. type_id=8 handler rewritten with text-based off-pen detection:
+         _is_off_pen_from_text() extracts "PENALTY on TEAM" from play.text
+         and compares against possessing team abbreviation (penaltyTeam.$ref
+         is absent on type_id=8 plays so _is_off_pen() always returned False).
+         Off-pen pass/scramble: ATT+1, 0 yards.
+         Off-pen rush: 0 everything.
+         Def-pen with receiver: text-parsed yards to psr+rcv (Change 1 retained).
+     10. type_id=5 off-pen rush: CAR+1 AND text-parsed yards.
+         Confirmed from live data: ESPN credits actual rush yards on off-pen rushes
+         (zeroing yards caused -16 gap for Sanders).
+"""
+
 import pandas as pd
 from typing import Optional
 import sys as _sys, os as _os
