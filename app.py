@@ -3125,6 +3125,39 @@ elif st.session_state.view == "reconcile":
                 st.session_state.recon_running     = True
                 st.rerun()
 
+    # ── Always-visible download buttons (greyed when no data) ────────────────
+    # Rendered BEFORE the chunk processing block so they appear during active runs
+    _recon_res = st.session_state.recon_results or []
+    _has_any   = bool(_recon_res)
+    _pre_rows, _pre_dbg = [], []
+    if _has_any:
+        _pre_n_fail = sum(1 for r in _recon_res if r["passed"] is False)
+        _pre_n_err  = sum(1 for r in _recon_res if r["passed"] is None)
+        for _r in _recon_res:
+            if _r["rows"]: _pre_rows.extend(_r["rows"])
+            elif _r["passed"]: _pre_rows.append({"Game":_r["label"],"Player":"✅ Passed","Stat":"","Col":"","Q/H Total":"","Official":"","Missing":""})
+            _dk = f"dbg_{_r['game_id']}"
+            if _dk in st.session_state: _pre_dbg.extend(st.session_state[_dk])
+        _has_mis = bool(_pre_rows) and (_pre_n_fail > 0 or _pre_n_err > 0)
+        _has_dbg = bool(_pre_dbg) and (_pre_n_fail > 0 or _pre_n_err > 0)
+    else:
+        _has_mis = _has_dbg = False
+
+    st.divider()
+    _pdl1, _pdl2 = st.columns(2, gap="small")
+    with _pdl1:
+        st.download_button("📥 Download Mismatches CSV",
+                           data=pd.DataFrame(_pre_rows).to_csv(index=False) if _has_mis else "",
+                           file_name="reconciliation_results.csv",
+                           mime="text/csv", key="recon_dl_top",
+                           disabled=not _has_mis)
+    with _pdl2:
+        st.download_button("📥 Download Debug CSV",
+                           data=pd.DataFrame(_pre_dbg).to_csv(index=False) if _has_dbg else "",
+                           file_name="reconciliation_debug.csv",
+                           mime="text/csv", key="debug_dl_top",
+                           disabled=not _has_dbg)
+
     # ── Process next chunk (fires on each rerun while running) ───────────────
     if st.session_state.get("recon_running") and st.session_state.get("recon_chunks"):
         _chunks     = st.session_state.recon_chunks
@@ -3308,38 +3341,6 @@ elif st.session_state.view == "reconcile":
                 st.session_state.recon_running = False
                 _prog.progress(1.0, text=f"Done — {_n_total} game{'s' if _n_total!=1 else ''} across {_n_chunks} chunk{'s' if _n_chunks!=1 else ''} processed.")
                 st.rerun()
-
-    # ── Always-visible download buttons (greyed when no data) ────────────────
-    _recon_res = st.session_state.recon_results or []
-    _has_any   = bool(_recon_res)
-    _pre_rows, _pre_dbg = [], []
-    if _has_any:
-        _pre_n_fail = sum(1 for r in _recon_res if r["passed"] is False)
-        _pre_n_err  = sum(1 for r in _recon_res if r["passed"] is None)
-        for _r in _recon_res:
-            if _r["rows"]: _pre_rows.extend(_r["rows"])
-            elif _r["passed"]: _pre_rows.append({"Game":_r["label"],"Player":"✅ Passed","Stat":"","Col":"","Q/H Total":"","Official":"","Missing":""})
-            _dk = f"dbg_{_r['game_id']}"
-            if _dk in st.session_state: _pre_dbg.extend(st.session_state[_dk])
-        _has_mis = bool(_pre_rows) and (_pre_n_fail > 0 or _pre_n_err > 0)
-        _has_dbg = bool(_pre_dbg) and (_pre_n_fail > 0 or _pre_n_err > 0)
-    else:
-        _has_mis = _has_dbg = False
-
-    st.divider()
-    _pdl1, _pdl2 = st.columns(2, gap="small")
-    with _pdl1:
-        st.download_button("📥 Download Mismatches CSV",
-                           data=pd.DataFrame(_pre_rows).to_csv(index=False) if _has_mis else "",
-                           file_name="reconciliation_results.csv",
-                           mime="text/csv", key="recon_dl_top",
-                           disabled=not _has_mis)
-    with _pdl2:
-        st.download_button("📥 Download Debug CSV",
-                           data=pd.DataFrame(_pre_dbg).to_csv(index=False) if _has_dbg else "",
-                           file_name="reconciliation_debug.csv",
-                           mime="text/csv", key="debug_dl_top",
-                           disabled=not _has_dbg)
 
     # ── Display results ───────────────────────────────────────────────────────
     if st.session_state.recon_results:
