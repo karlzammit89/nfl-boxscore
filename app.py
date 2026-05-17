@@ -579,7 +579,7 @@ elif st.session_state.view == "boxscore":
     except Exception:
         date_label = "Schedule"
 
-    b1, b2, b3, _ = st.columns([1.5, 1.6, 1.3, 7])
+    b1, b2, b3, _ = st.columns([1.5, 1.6, 1.3, 5.0])
     with b1:
         if st.button("← Calendar", use_container_width=True):
             st.session_state.view = "calendar"
