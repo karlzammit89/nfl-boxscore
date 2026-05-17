@@ -19,6 +19,19 @@ Change log:
   - New type_id=8 handler: credits text-parsed actual yards for off-pen march-back plays
   - "penalty" removed from _SKIP_TYPES (now has its own handler)
   - Sack handler uses type_id=7; fumble recovery uses type_id=9 with ptype fallback
+  - 6 penalty-handling fixes derived from NFL Guide for Statisticians 2025:
+      1. Receiver-present guard on type_id=8 (NFL §Penalty Plays Rule 1):
+         off-pen rushes/scrambles enforced from previous spot are nullified
+      2. type_id=67 (passing TDs) text-parses yards when isPenalty=True
+         (statYardage may be net field gain, not actual play yards)
+      3. Off-pen reception with dead-ball/declined penalty counts normally
+         (NFL §Rule 2A + declined-penalty rule)
+      4. Universal text-parse fallback for type_id=24 normal receptions
+         (verifies statYardage; defensive only, no behavior change unless match)
+      5. Strips "X reported in as eligible. [Direct snap to Y.]" prefix in
+         all text-parse helpers
+      6. Skips scoring-summary duplicate entries
+         ("Player N Yd pass from QB (Kicker Kick)" format)
 """
 
 import pandas as pd
@@ -593,6 +606,70 @@ def get_player_stats_by_period(game_id: str) -> dict:
         play_tid = _re.search(r"/teams/(\d+)", (play.get("team") or {}).get("$ref", ""))
         return bool(pen_tid and play_tid and pen_tid.group(1) == play_tid.group(1))
 
+    # ── Penalty / text helpers (Changes 3, 5, 6) ──────────────────────────────
+    # NFL Guide for Statisticians §Penalty Plays:
+    #   Rule 2A — Penalty enforced from dead ball spot → credit yards normally.
+    #   Declined penalty → record play in the usual manner.
+    # Dead-ball fouls happen AFTER the live play ends, so the live play counts.
+    # Keyword list is conservative — only unambiguous dead-ball fouls.
+    _DEAD_BALL_FOUL_KEYWORDS = (
+        "taunting",
+        "unsportsmanlike",
+        "excessive celebration",
+        "dead ball",
+        "late hit",
+    )
+
+    def _has_dead_ball_or_declined(text: str) -> bool:
+        """True if the penalty associated with the play is dead-ball or declined."""
+        if not text:
+            return False
+        t = text.lower()
+        if "declined" in t and "penalty" in t:
+            return True
+        return any(kw in t for kw in _DEAD_BALL_FOUL_KEYWORDS)
+
+    # Strip "X reported in as eligible. [Direct snap to Y.]" prefix before yards regex.
+    # Prevents the prefix's player name from interfering with future text-based parsing.
+    _ELIG_PREFIX_RE = _re.compile(
+        r"^.*?reported\s+in\s+as\s+eligible\.\s+(?:Direct\s+snap\s+to\s+\S+\.\s+)?",
+        _re.I,
+    )
+
+    def _strip_elig_prefix(text: str) -> str:
+        if not text:
+            return ""
+        return _ELIG_PREFIX_RE.sub("", text)
+
+    # Scoring-summary duplicates ("Player N Yd pass from QB (Kicker Kick)") are
+    # entries that mirror real plays — must be skipped to prevent double counting.
+    # Core API plays endpoint normally does not include these, but defending here
+    # against any future endpoint mixing.
+    _SCORING_SUMMARY_RE = _re.compile(
+        r"^\s*(?:[A-Z][A-Za-z\.\-']+\s+){1,3}\d+\s+Yd\s+(?:pass|run|return|Fumble|Interception)\b",
+    )
+
+    def _is_scoring_summary_duplicate(text: str) -> bool:
+        if not text:
+            return False
+        return bool(_SCORING_SUMMARY_RE.match(text))
+
+    # Universal "for N yards" text-parse helper — strips eligibility prefix first
+    # (Change 5) so that prefixed plays parse correctly. Returns None if not found.
+    _YARDS_RE = _re.compile(r"for\s+(-?\d+)\s+yards?", _re.I)
+
+    def _text_parse_yards(text: str) -> Optional[int]:
+        if not text:
+            return None
+        cleaned = _strip_elig_prefix(text)
+        m = _YARDS_RE.search(cleaned)
+        if not m:
+            return None
+        try:
+            return int(m.group(1))
+        except (TypeError, ValueError):
+            return None
+
     # ── Main play loop ────────────────────────────────────────────────────────
     _seen_ids = set()
 
@@ -609,6 +686,11 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
         # Skip non-stat play types using text (type_ids for these not yet confirmed)
         if ptype in _SKIP_TYPES:
+            continue
+
+        # Change 6: Skip scoring-summary duplicate entries (e.g. "Player N Yd pass from QB").
+        # These mirror real plays in the scoring_plays endpoint — counting them here would double.
+        if _is_scoring_summary_duplicate(play.get("text", "")):
             continue
 
         period = _safe_int((play.get("period") or {}).get("number", 0))
@@ -642,23 +724,31 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
         if type_id == "24":
             # ── Pass Reception (type_id confirmed) ───────────────────────────
-            # Three sub-cases based on penalty status:
-            #   a) Off-pen reception (penalized team = possessing team):
-            #      Play is nullified → skip ATT, COMP, REC, YDS entirely.
-            #   b) Def-pen reception (penalized team = defending team):
-            #      Valid completion but statYardage includes penalty advance distance.
-            #      Use text-parsed "for N yards" for actual receiving/passing yards.
-            #   c) Normal (no penalty): statYardage = actual yards, count normally.
+            # Four sub-cases based on penalty status:
+            #   a) Off-pen reception with dead-ball/declined penalty (Change 3):
+            #      Live play counted normally; penalty applied separately per NFL §2A.
+            #      Credit ATT/COMP/REC and statYardage (which equals actual yards here).
+            #   b) Off-pen reception with live-ball foul (Rule 1): nullified, no stats.
+            #   c) Def-pen reception: valid completion but statYardage includes penalty
+            #      advance distance. Use text-parsed "for N yards" for actual yards.
+            #   d) Normal (no penalty): statYardage = actual yards, count normally.
             _off_pen = _is_off_pen(play)
+            _text    = play.get("text", "") or ""
             if _off_pen:
-                # Offensive penalty nullifies the play: no stats credited
-                pass
+                # Change 3: detect dead-ball/declined penalty → play counts normally
+                if _has_dead_ball_or_declined(_text):
+                    if psr:
+                        d = passing[period][psr]; d["Team"] = team or d["Team"]
+                        d["att"] += 1; d["comp"] += 1; d["yds"] += stat_yds
+                    if rcv:
+                        rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
+                        rd["rec"] += 1; rd["yds"] += stat_yds
+                # else: standard live-ball off-pen → nullified (NFL Rule 1), no stats
             elif play.get("isPenalty"):
                 # Defensive penalty: statYardage = net field gain (catch + penalty yds)
                 # Use text-parsed yards for box-score-accurate individual stats
-                _rec_text = play.get("text", "") or ""
-                _rec_yd_m = _re.search(r"for\s+(-?\d+)\s+yards?", _rec_text, _re.I)
-                _actual_rec_yds = _safe_int(_rec_yd_m.group(1)) if _rec_yd_m else stat_yds
+                _txt_yds = _text_parse_yards(_text)
+                _actual_rec_yds = _txt_yds if _txt_yds is not None else stat_yds
                 if psr:
                     d = passing[period][psr]; d["Team"] = team or d["Team"]
                     d["att"] += 1; d["comp"] += 1; d["yds"] += _actual_rec_yds
@@ -666,13 +756,17 @@ def get_player_stats_by_period(game_id: str) -> dict:
                     rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
                     rd["rec"] += 1; rd["yds"] += _actual_rec_yds
             else:
-                # Normal reception: statYardage = actual yards
+                # Normal reception: statYardage = actual yards.
+                # Change 4: belt-and-suspenders — verify with text-parse but fall back
+                # to statYardage if text does not match (defensive, no regression).
+                _txt_yds = _text_parse_yards(_text)
+                _final_yds = _txt_yds if (_txt_yds is not None and _txt_yds == stat_yds) else stat_yds
                 if psr:
                     d = passing[period][psr]; d["Team"] = team or d["Team"]
-                    d["att"] += 1; d["comp"] += 1; d["yds"] += stat_yds
+                    d["att"] += 1; d["comp"] += 1; d["yds"] += _final_yds
                 if rcv:
                     rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
-                    rd["rec"] += 1; rd["yds"] += stat_yds
+                    rd["rec"] += 1; rd["yds"] += _final_yds
 
         elif type_id == "3":
             # ── Pass Incompletion (type_id confirmed) ────────────────────────
@@ -698,12 +792,19 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
         elif type_id == "67":
             # ── Passing Touchdown (type_id confirmed) ────────────────────────
+            # Change 2: when isPenalty=True, statYardage may represent net field gain
+            # rather than actual play yards. Text-parse "for N yards" in that case.
+            if play.get("isPenalty"):
+                _txt_yds = _text_parse_yards(play.get("text", "") or "")
+                _td_yds = _txt_yds if _txt_yds is not None else stat_yds
+            else:
+                _td_yds = stat_yds
             if psr:
                 d = passing[period][psr]; d["Team"] = team or d["Team"]
-                d["att"] += 1; d["comp"] += 1; d["yds"] += stat_yds; d["td"] += 1
+                d["att"] += 1; d["comp"] += 1; d["yds"] += _td_yds; d["td"] += 1
             if rcv:
                 rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
-                rd["rec"] += 1; rd["yds"] += stat_yds; rd["td"] += 1
+                rd["rec"] += 1; rd["yds"] += _td_yds; rd["td"] += 1
 
         elif type_id == "7" or ptype in {"sack", "sack opp fumble recovery"}:
             # ── Sack (type_id=7 confirmed; ptype fallback for sack-fumble variant) ─
@@ -719,28 +820,25 @@ def get_player_stats_by_period(game_id: str) -> dict:
             # statYardage semantics for type_id=8:
             #   < 0 : off-pen march-back distance (e.g., -10 for holding)
             #         → actual yards are in play text "for N yards"
-            #         → ESPN box score credits actual yards to passer/receiver/rusher
-            #         → NO ATT/COMP/REC/CAR increment (play is nullified)
             #   > 0 : defensive penalty ball advance (e.g., DPI +15)
             #         → no individual player stat credits per NFL rules
             #   = 0 : pre-snap or declined penalty → no stats
-            if stat_yds < 0:
-                _pen_text = play.get("text", "") or ""
-                _pen_yd_m = _re.search(r"for\s+(-?\d+)\s+yards?", _pen_text, _re.I)
-                if _pen_yd_m:
-                    _actual_yds = _safe_int(_pen_yd_m.group(1))
+            #
+            # Change 1: Receiver-present guard.
+            # Per NFL Guide §Penalty Plays Rule 1, off-pen plays enforced from previous
+            # spot (rushes/scrambles behind LOS) are nullified — no stats credited.
+            # ESPN credits yards only when a pass-and-catch occurred (receiver participant
+            # present). Pure rush/scramble off-pen plays must NOT credit yards.
+            if stat_yds < 0 and rcv:
+                _txt_yds = _text_parse_yards(play.get("text", "") or "")
+                if _txt_yds is not None:
                     # Credit yards but not counts (ATT/COMP/REC/CAR stay unchanged)
                     if psr:
                         d = passing[period][psr]; d["Team"] = team or d["Team"]
-                        d["yds"] += _actual_yds
-                    if rcv:
-                        rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
-                        rd["yds"] += _actual_yds
-                    if rsh and not psr:
-                        # Pure rush play with no pass (scramble, run): credit to rusher
-                        d = rushing[period][rsh]; d["Team"] = team or d["Team"]
-                        d["yds"] += _actual_yds
-            # statYardage >= 0: def-pen advance or pre-snap → no individual stats
+                        d["yds"] += _txt_yds
+                    rd = receiving[period][rcv]; rd["Team"] = team or rd["Team"]
+                    rd["yds"] += _txt_yds
+            # else: pure rush/scramble off-pen OR positive statYardage → no individual stats
 
         elif type_id == "5" or ptype in {"rush", "scramble", "rushing touchdown"}:
             # ── Rush (type_id=5 confirmed; ptype fallback for rushing TD & scramble) ─
