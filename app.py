@@ -188,6 +188,25 @@ st.markdown("""
     border-bottom: 1px solid rgba(128,128,128,0.15);
     margin-bottom: 10px;
 }
+
+/* Multi-Game Reconciliation nav button — type='primary' keeps it exempt
+   from the secondary-button blanket-hide rule used for calendar day cells.
+   This rule restores its appearance to match standard nav button style.   */
+button[data-testid="stBaseButton-primary"] {
+    background:    transparent                        !important;
+    border:        0.5px solid rgba(128,128,128,0.4)  !important;
+    box-shadow:    none                               !important;
+    color:         inherit                            !important;
+    opacity:       1                                  !important;
+    height:        auto                               !important;
+    min-height:    unset                              !important;
+    margin-top:    0                                  !important;
+    padding:       6px 14px                           !important;
+    cursor:        pointer                            !important;
+    border-radius: 8px                                !important;
+    font-size:     0.875rem                           !important;
+    font-weight:   400                                !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -429,34 +448,15 @@ if st.session_state.view == "calendar":
     st.caption("Cells with text = has games  ·  🔴 = live game  ·  Red border = today")
 
     st.divider()
-    st.markdown("""
-    <style>
-    .recon-nav-btn button[data-testid="stBaseButton-secondary"] {
-        background:    transparent                       !important;
-        border:        0.5px solid rgba(128,128,128,0.4) !important;
-        box-shadow:    none                              !important;
-        color:         inherit                           !important;
-        height:        auto                              !important;
-        min-height:    unset                             !important;
-        margin-top:    0                                 !important;
-        padding:       6px 14px                          !important;
-        cursor:        pointer                           !important;
-        width:         100%                              !important;
-        display:       inline-flex                       !important;
-        position:      static                            !important;
-        z-index:       auto                              !important;
-        opacity:       1                                 !important;
-        border-radius: 8px                               !important;
-    }
-    </style>
-    <div class="recon-nav-btn">
-    """, unsafe_allow_html=True)
+    # type='primary' gives stBaseButton-primary testid — exempt from the
+    # secondary-button blanket-hide rule above. CSS in global block restores
+    # its appearance to match the standard nav button style.
     _recon_col, _ = st.columns([2.5, 7])
     with _recon_col:
-        if st.button("🔍 Multi-Game Reconciliation", use_container_width=True, key="btn_recon_cal"):
+        if st.button("🔍 Multi-Game Reconciliation", use_container_width=True,
+                     key="btn_recon_cal", type="primary"):
             st.session_state.view = "reconcile"
             st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -552,13 +552,12 @@ elif st.session_state.view == "day":
                 st.rerun()
 
     st.divider()
-    st.markdown('<div class="recon-nav-btn">', unsafe_allow_html=True)
     _recon_col, _ = st.columns([2.5, 7])
     with _recon_col:
-        if st.button("🔍 Multi-Game Reconciliation", use_container_width=True, key="btn_recon_day"):
+        if st.button("🔍 Multi-Game Reconciliation", use_container_width=True,
+                     key="btn_recon_day", type="primary"):
             st.session_state.view = "reconcile"
             st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -594,7 +593,8 @@ elif st.session_state.view == "boxscore":
             st.cache_data.clear()
             st.rerun()
     with b4:
-        if st.button("🔍 Multi-Game Reconciliation", use_container_width=True, key="btn_recon_box"):
+        if st.button("🔍 Multi-Game Reconciliation", use_container_width=True,
+                     key="btn_recon_box", type="primary"):
             st.session_state.view = "reconcile"
             st.rerun()
 
