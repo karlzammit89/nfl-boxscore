@@ -1609,10 +1609,71 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
 
     by_period = result.get("by_period", result)
 
+    # Build a name→aid map from the boxscore so we can fall back to "[ID:AID]"
+    # keys when _resolve_athlete returned None (Supabase unavailable) and the
+    # accumulator used "[ID:XXXX]" format instead of the player's real name.
+    import re as _re_rcn
+    _AID_REF_RE = _re_rcn.compile(r"/athletes/([0-9]+)")
+    _name_to_aid_rcn: dict = {}
+    try:
+        _summary_rcn = get_game_summary(game_id)
+        for _tb in (_summary_rcn or {}).get("boxscore", {}).get("players", []):
+            for _cat in _tb.get("statistics", []):
+                for _ae in _cat.get("athletes", []):
+                    _ath = _ae.get("athlete", {})
+                    _nm  = _ath.get("displayName", "") or ""
+                    _ref = _ath.get("$ref", "") or ""
+                    _m   = _AID_REF_RE.search(_ref)
+                    if _nm and _m:
+                        _name_to_aid_rcn[_nm] = _m.group(1)
+    except Exception:
+        pass
+
     valid_periods = ["Q1","Q2","Q3","Q4","OT"]
     extra_ot = [k for k in by_period if k.startswith("OT") and k not in valid_periods]
     check_periods = ["Q1","Q2","Q3","Q4"] + extra_ot + (["OT"] if "OT" in by_period else [])
     mismatches = []
+
+    def _get_col_with_id_fallback(df, player, col):
+        """Get a column value, falling back to [ID:AID] key if name match fails."""
+        val = _get_col(df, player, col)
+        if val != 0:
+            return val
+        # Name match returned 0 — could be a real 0 or a failed match.
+        # Try [ID:AID] key directly if we can find the aid for this player name.
+        aid = _name_to_aid_rcn.get(player)
+        if not aid:
+            return 0
+        id_key = f"[ID:{aid}]"
+        if "Player" not in df.columns:
+            return 0
+        id_row = df[df["Player"] == id_key]
+        if id_row.empty:
+            return 0
+        try:
+            return int(pd.to_numeric(id_row.iloc[0].get(col, 0), errors="coerce") or 0)
+        except Exception:
+            return 0
+
+    def _get_att_with_id_fallback(df, player):
+        """Get ATT value, falling back to [ID:AID] key if name match fails."""
+        val = _get_att(df, player)
+        if val != 0:
+            return val
+        aid = _name_to_aid_rcn.get(player)
+        if not aid:
+            return 0
+        id_key = f"[ID:{aid}]"
+        if "Player" not in df.columns:
+            return 0
+        id_row = df[df["Player"] == id_key]
+        if id_row.empty:
+            return 0
+        ca = str(id_row.iloc[0].get("C/ATT", "0/0"))
+        try:
+            return int(ca.split("/")[1])
+        except Exception:
+            return 0
 
     def _sum_col_across_periods(cat, player, col):
         total = 0
@@ -1620,7 +1681,7 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
             df = by_period.get(p, {}).get(cat)
             if df is None or df.empty:
                 continue
-            total += _get_col(df, player, col)
+            total += _get_col_with_id_fallback(df, player, col)
         return total
 
     def _sum_att_across_periods(cat, player):
@@ -1629,7 +1690,7 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
             df = by_period.get(p, {}).get(cat)
             if df is None or df.empty:
                 continue
-            total += _get_att(df, player)
+            total += _get_att_with_id_fallback(df, player)
         return total
 
     for cat, cols in [
