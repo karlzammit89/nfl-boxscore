@@ -484,13 +484,14 @@ def get_player_stats_by_period(game_id: str) -> dict:
                all text corrections, emit RECONCILIATION_FAILED rather than guess.
                Game total is always shown; quarters are withheld only on failure.
 
-    Return contract (unchanged):
+    Return contract:
       {
         "Q1": {"passing": df, "rushing": df, "receiving": df, "defense": df},
         "Q2": ..., "Q3": ..., "Q4": ...,
         "1H": ..., "2H": ..., "OT": ...,
         "Full Game": ...,
-        "reconciliation_failed": {player: {cat: reason}}  # only when L4 fails
+        "reconciliation_failed": {player: {cat: reason}}    # rare — L4 couldn't reconcile
+        "residual_applied":      {player: {cat: {period: residual_yds}}}  # ➰ indicator
       }
     """
     import re as _re
@@ -616,6 +617,36 @@ def get_player_stats_by_period(game_id: str) -> dict:
     _YARDS_RE = _re.compile(r"for\s+(-?\d+)\s+yards?", _re.I)
     _NO_GAIN  = _re.compile(r"\bno\s+gain\b", _re.I)
     _NULLIFY  = _re.compile(r"TOUCHDOWN\s+NULLIFIED|No\s+Play", _re.I)
+
+    # Broader TD invalidation: TOUCHDOWN combined with NULLIFIED/REVERSED/Replay/No Play
+    # (Fix 2: TD detection — replay-reviewed TDs that were reversed)
+    _TD_INVALID = _re.compile(
+        r"NULLIFIED|REVERSED|No\s+Play|TOUCHDOWN[^.]*\.\s*The\s+Replay",
+        _re.I,
+    )
+
+    # Off-pen detection from play text (Fix 1: identify off-pen plays)
+    # Examples: "PENALTY on PHI-J.Smith, Holding", "PENALTY on PHI, Holding"
+    _PEN_ON_RE = _re.compile(r"PENALTY\s+on\s+([A-Z]{2,3})", _re.I)
+    _ESPN_ABBR_ALIASES = {
+        "CLV": "CLE", "WAS": "WSH", "HST": "HOU",
+        "ARZ": "ARI", "BLT": "BAL", "LA":  "LAR",
+    }
+
+    def _is_off_pen_text(text: str, pos_team: str) -> bool:
+        """Detect offensive penalty from play text: PENALTY on TEAM == possessing team."""
+        if not text or not pos_team:
+            return False
+        m = _PEN_ON_RE.search(str(text))
+        if not m:
+            return False
+        pen = _ESPN_ABBR_ALIASES.get(m.group(1).upper(), m.group(1).upper())
+        pos = _ESPN_ABBR_ALIASES.get(str(pos_team).upper(), str(pos_team).upper())
+        return pen == pos
+
+    def _td_invalid(text: str) -> bool:
+        """Return True if play text indicates TD was nullified/reversed/replay-reviewed."""
+        return bool(text) and bool(_TD_INVALID.search(str(text)))
 
     def _text_yds(text: str):
         """Return text-parsed yards, 0 for 'no gain', None if unparseable."""
@@ -798,12 +829,20 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
         type_id = str(play.get("type", {}).get("id", "") or "")
 
+        # ── Fix 1: Off-pen detection ──────────────────────────────────────────
+        # An off-pen play (penalty on possessing team) where the penalty is
+        # accepted nullifies the play's stats per NFL/ESPN box-score rules.
+        # No ATT, COMP, YDS, REC, CAR, TD credited.
+        play_is_off_pen = is_pen and _is_off_pen_text(text_str, team)
+
         # ── Layer 2: route each play type to correct accumulator ──────────────
 
         # ── Pass Reception (type_id=24) ───────────────────────────────────────
         if type_id == "24":
             if not psr:
                 continue
+            if play_is_off_pen:
+                continue   # Fix 1: off-pen reception → no stat credit
             yds_to_credit, _ = _credited_yds_for_play(play, stat_yds)
             d = passing[eff_period][psr];  d["Team"] = team or d["Team"]
             r = receiving[eff_period][rcv] if rcv else None
@@ -814,7 +853,8 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 r["Team"] = team or r["Team"]
                 r["rec"] += 1
                 r["yds"] += yds_to_credit
-            if _re.search(r"touchdown", text_str, _re.I):
+            # Fix 2: Skip TD credit if play was NULLIFIED/REVERSED/Replay-reversed
+            if _re.search(r"touchdown", text_str, _re.I) and not _td_invalid(text_str):
                 d["td"] += 1
                 if r is not None:
                     r["td"] += 1
@@ -841,18 +881,24 @@ def get_player_stats_by_period(game_id: str) -> dict:
         elif type_id == "67":
             if not psr:
                 continue
+            if play_is_off_pen:
+                continue   # Fix 1: off-pen TD play → no stat credit
             yds_to_credit, _ = _credited_yds_for_play(play, stat_yds)
             d = passing[eff_period][psr];  d["Team"] = team or d["Team"]
             r = receiving[eff_period][rcv] if rcv else None
             d["att"]  += 1
             d["comp"] += 1
             d["yds"]  += yds_to_credit
-            d["td"]   += 1
+            # Fix 2: Skip TD credit if play was NULLIFIED/REVERSED/Replay-reversed
+            td_valid = not _td_invalid(text_str)
+            if td_valid:
+                d["td"] += 1
             if r is not None:
                 r["Team"] = team or r["Team"]
                 r["rec"] += 1
                 r["yds"] += yds_to_credit
-                r["td"]  += 1
+                if td_valid:
+                    r["td"]  += 1
             _play_log[(psr, "passing")].append(
                 (eff_period, yds_to_credit, text_str, is_pen))
             if rcv:
@@ -861,20 +907,19 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
         # ── Penalty (type_id=8) ───────────────────────────────────────────────
         elif type_id == "8":
-            # Only credit pass ATT for off-pen pass plays.
-            # Yards are handled by Layer 2 in the reception/rush branches above
-            # (they arrive as type_id=24/5). This branch covers the case where
-            # only a penalty play record exists (no corresponding reception play).
+            # Fix 1: ESPN's official passing ATT/YDS exclude all off-pen pass plays.
+            # When a penalty on the offense voids the play, ESPN credits NOTHING.
+            # Only def-pen plays (penalty on defense) credit stats — handled here.
             tl = text_str.lower()
             _t8_pass  = "pass" in tl
             _t8_scr   = "scrambles" in tl
-            if stat_yds < 0 and psr and (_t8_pass or _t8_scr):
-                # Off-pen pass/scramble: ATT+1 only, no yards (yards nullified)
-                d = passing[eff_period][psr]; d["Team"] = team or d["Team"]
-                d["att"] += 1
-                _play_log[(psr, "passing")].append((eff_period, 0, text_str, True))
+            # Fix 1: Off-pen pass plays credit NOTHING. ESPN's official ATT/YDS
+            # exclude these. Only def-pen plays credit stats here.
+            if play_is_off_pen:
+                pass   # skip — no credit for off-pen pass plays
             elif stat_yds < 0 and rcv and _t8_pass and not _t8_scr:
-                # Def-pen pass with receiver: text-parsed yards
+                # Def-pen pass with receiver: text-parsed yards (ATT/COMP arrive
+                # via the separate type_id=24 play record for the same down)
                 yds_to_credit, _ = _credited_yds_for_play(play, stat_yds)
                 if psr:
                     d = passing[eff_period][psr]; d["Team"] = team or d["Team"]
@@ -890,11 +935,15 @@ def get_player_stats_by_period(game_id: str) -> dict:
         elif type_id == "5" or ptype in {"rush", "scramble", "rushing touchdown"}:
             if not rsh:
                 continue
+            if play_is_off_pen:
+                continue   # Fix 1: off-pen rush → no stat credit
             d = rushing[eff_period][rsh]; d["Team"] = team or d["Team"]
             yds_to_credit, _ = _credited_yds_for_play(play, stat_yds)
             d["car"] += 1
             d["yds"] += yds_to_credit
-            if ptype == "rushing touchdown" or _re.search(r"touchdown", text_str, _re.I):
+            # Fix 2: Skip TD credit if play was NULLIFIED/REVERSED/Replay-reversed
+            if (ptype == "rushing touchdown" or
+                _re.search(r"touchdown", text_str, _re.I)) and not _td_invalid(text_str):
                 d["td"] += 1
             _play_log[(rsh, "rushing")].append(
                 (eff_period, yds_to_credit, text_str, is_pen))
@@ -946,12 +995,25 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
     # ── Layer 4: smart reconciliation ────────────────────────────────────────
     # For each player×category: check attributed_sum vs Layer1 official total.
-    # If gap ≠ 0, scan play log for penalty plays with text_yds ≠ credited_yds
-    # and apply corrections in-place to the play's own period.
-    # If gap persists after all corrections, emit RECONCILIATION_FAILED for
-    # that player×category (quarters withheld; game total still shown via Full Game).
+    #
+    # The hybrid guarantee: Q/H Total = Official for every player×category.
+    # This is enforced by a 4-step process per player×category:
+    #
+    #   Step A: Text-parse corrections — if a play's credited yards ≠ text yards,
+    #           replace credited with text value (catches missing parse cases).
+    #   Step B: Residual yards mode (Fix 5) — if a gap remains, apply the
+    #           residual to the quarter with the highest yardage. The corrected
+    #           quarter is marked with the ➰ indicator in residual_applied[].
+    #   Step C: Zero phantom credits (Fix 3) — if a player has accumulator
+    #           stats but no official_totals entry for that category, force
+    #           every period's value to 0 for that player×category.
+    #   Step D: Add missing players (Fix 4) — if a player has an official_totals
+    #           entry but never appeared in the accumulator, create entries
+    #           with the official totals assigned to a single best-guess period.
 
     reconciliation_failed = {}   # {player: {cat: reason_str}}
+    residual_applied = {}        # {player: {cat: {period: residual_yds}}}  → ➰ indicator
+
     # Regex to extract numeric ID from "[ID:4045163]" fallback names
     _ID_KEY_RE = _re.compile(r"\[ID:(\d+)\]")
 
@@ -960,6 +1022,22 @@ def get_player_stats_by_period(game_id: str) -> dict:
         "rushing":   (rushing,   "yds"),
         "receiving": (receiving, "yds"),
     }
+
+    def _record_residual(player, cat, period, amount):
+        """Track residual yards application for the ➰ indicator."""
+        if player not in residual_applied:
+            residual_applied[player] = {}
+        if cat not in residual_applied[player]:
+            residual_applied[player][cat] = {}
+        residual_applied[player][cat][period] = (
+            residual_applied[player][cat].get(period, 0) + amount
+        )
+
+    def _valid_quarter_periods(periods):
+        """Return only Q1–Q4 periods (1–4) — excludes OT (5+) and period=0.
+        Used by Fix 6 to keep count corrections inside Q1–Q4 buckets so they
+        appear in both Full Game AND the Q-sum displayed in reconciliation."""
+        return [p for p in periods if 1 <= p <= 4]
 
     for cat, (acc, yds_key) in cat_accumulators.items():
         # Iterate the accumulators (keyed by resolved name or "[ID:XXXX]")
@@ -977,8 +1055,16 @@ def get_player_stats_by_period(game_id: str) -> dict:
             player_totals = official_totals.get(aid, {}) if aid else {}
             if not player_totals:
                 player_totals = official_totals.get(player, {})
+
+            # ── Fix 3: Zero phantom credits ───────────────────────────────────
+            # Player has accumulator stats but no boxscore entry for this category.
+            # Force every period's value to 0 (overrides any phantom credits).
             if cat not in player_totals:
+                for p in list(acc.keys()):
+                    if player in acc[p]:
+                        acc[p][player]["yds"] = 0
                 continue
+
             off = player_totals[cat]
             official_yds = off.get("yds", 0)
 
@@ -992,7 +1078,7 @@ def get_player_stats_by_period(game_id: str) -> dict:
             if gap == 0:
                 continue
 
-            # ── Layer 4a: scan play log for text-correctable mismatches ───────
+            # ── Step A: scan play log for text-correctable mismatches ────────
             plays_for_player = _play_log.get((player, cat), [])
             for idx, (period, credited, text, was_pen) in enumerate(plays_for_player):
                 if gap == 0:
@@ -1016,16 +1102,114 @@ def get_player_stats_by_period(game_id: str) -> dict:
             if gap == 0:
                 continue
 
-            # ── Layer 4b: gap remains → RECONCILIATION_FAILED ─────────────────
-            # Do NOT touch any quarter values. Mark this stat as failed.
-            if player not in reconciliation_failed:
-                reconciliation_failed[player] = {}
-            reconciliation_failed[player][cat] = (
-                f"attributed={attributed_yds}, official={official_yds}, "
-                f"remaining_gap={gap}"
-            )
+            # ── Step B (Fix 5): Residual mode ────────────────────────────────
+            # Apply remaining gap to the quarter with the highest yardage
+            # (deterministic, transparent — flagged with ➰ indicator).
+            valid_periods = _valid_quarter_periods(list(acc.keys()))
+            if valid_periods:
+                # Pick quarter with most yds; ties go to earliest quarter
+                target_period = max(
+                    valid_periods,
+                    key=lambda p: (acc[p].get(player, {}).get("yds", 0), -p)
+                )
+            elif acc:
+                # No Q1–Q4 periods exist; use any available period
+                target_period = max(
+                    acc.keys(),
+                    key=lambda p: (acc[p].get(player, {}).get("yds", 0), -p)
+                )
+            else:
+                target_period = None
 
-    # ── Also reconcile CAR and REC counts ────────────────────────────────────
+            if target_period is not None:
+                acc[target_period][player]["yds"] = (
+                    acc[target_period][player].get("yds", 0) + gap
+                )
+                _record_residual(player, cat, target_period, gap)
+            else:
+                # No periods at all — emit RECONCILIATION_FAILED
+                if player not in reconciliation_failed:
+                    reconciliation_failed[player] = {}
+                reconciliation_failed[player][cat] = (
+                    f"attributed={attributed_yds}, official={official_yds}, "
+                    f"remaining_gap={gap}"
+                )
+
+    # ── Fix 4: Add missing players (in official_totals but not accumulator) ──
+    # For each player in official_totals: if they're missing from a category
+    # accumulator they should be in, create entries with the official totals
+    # assigned to the first period that has any plays (deterministic).
+    def _team_play_periods(team_abbr):
+        """Find a period that has any plays for the given team. Used as the
+        default attribution period for missing players."""
+        if not team_abbr:
+            return None
+        for p in sorted([k for k in passing.keys()
+                         if 1 <= k <= 4]):
+            for entry in passing[p].values():
+                if entry.get("Team") == team_abbr:
+                    return p
+        # Fallback: any Q1–Q4 period
+        for p in (1, 2, 3, 4):
+            if p in passing or p in rushing or p in receiving:
+                return p
+        return 1   # last resort
+
+    cat_specs = {
+        "passing":   (passing,   ["att", "comp", "yds", "td", "int"]),
+        "rushing":   (rushing,   ["car", "yds", "td"]),
+        "receiving": (receiving, ["rec", "yds", "td"]),
+    }
+
+    # We need to know each athlete's team. Build a quick athlete_id → team map
+    # from the boxscore.players block.
+    _aid_to_team = {}
+    for team_block in summary.get("boxscore", {}).get("players", []):
+        team_abbr = team_block.get("team", {}).get("abbreviation", "")
+        for category in team_block.get("statistics", []):
+            for athlete_entry in category.get("athletes", []):
+                ref = athlete_entry.get("athlete", {}).get("$ref", "")
+                mref = _re.search(r"/athletes/([0-9]+)", ref)
+                if mref:
+                    _aid_to_team.setdefault(mref.group(1), team_abbr)
+
+    for aid, player_totals in official_totals.items():
+        player_key = f"[ID:{aid}]"
+        # Also check if any accumulator key resolves to this aid via name lookup
+        # (when _resolve_athlete succeeded earlier we'd have a name, not [ID:...])
+        team_abbr = _aid_to_team.get(aid, "")
+
+        for cat, (acc, stat_keys) in cat_specs.items():
+            if cat not in player_totals:
+                continue
+            # Find a player key in any accumulator period that maps to this aid
+            existing_key = None
+            for p in acc:
+                for k in acc[p]:
+                    km = _ID_KEY_RE.search(k)
+                    if km and km.group(1) == aid:
+                        existing_key = k; break
+                    # Name-resolved: official_totals lookup found by name match
+                    if k in official_totals and official_totals[k] is player_totals:
+                        existing_key = k; break
+                if existing_key:
+                    break
+            if existing_key:
+                continue   # player already in accumulator → no action here
+
+            # Player is in official_totals but never accumulated. Add their stats.
+            target_p = _team_play_periods(team_abbr) or 1
+            entry = acc[target_p][player_key]
+            entry["Team"] = team_abbr or entry.get("Team", "")
+            for k in stat_keys:
+                official_v = player_totals[cat].get(k, 0)
+                if official_v:
+                    entry[k] = official_v
+
+    # ── Fix 6: Count reconciliation (CAR/REC/ATT/COMP/INT/TD) ────────────────
+    # Constrain best_period to Q1–Q4 so the correction appears in the displayed
+    # Q-sum. Fixes the "Full Game shows 4 but Q/H sums to 3" class of bugs.
+
     for cat, count_key, acc in [
         ("rushing",   "car", rushing),
         ("receiving", "rec", receiving),
@@ -1040,6 +1224,10 @@ def get_player_stats_by_period(game_id: str) -> dict:
             if not player_totals:
                 player_totals = official_totals.get(player, {})
             if cat not in player_totals:
+                # Fix 3 also applies to counts: zero out phantom counts
+                for p in list(acc.keys()):
+                    if player in acc[p]:
+                        acc[p][player][count_key] = 0
                 continue
             official_count = player_totals[cat].get(count_key, 0)
             attributed_count = sum(
@@ -1049,19 +1237,37 @@ def get_player_stats_by_period(game_id: str) -> dict:
             diff = official_count - attributed_count
             if diff == 0:
                 continue
-            best_period = None
-            best_yds = -1
-            for p in acc:
-                yds = acc[p].get(player, {}).get("yds", 0)
-                if yds > best_yds:
-                    best_yds  = yds
-                    best_period = p
-            if best_period is not None:
-                acc[best_period][player][count_key] = (
-                    acc[best_period][player].get(count_key, 0) + diff
+            # Fix 6: prefer Q1–Q4 periods so correction appears in displayed Q-sum.
+            # Direction-aware: when INCREMENTING (diff>0), pick max-yds period;
+            # when DECREMENTING (diff<0), pick min-yds period — this prevents
+            # erasing legitimate plays by subtracting counts from busy quarters.
+            valid_periods = _valid_quarter_periods(list(acc.keys()))
+            candidate_periods = valid_periods if valid_periods else list(acc.keys())
+            if not candidate_periods:
+                # No periods at all — create Q1 entry
+                acc[1][player][count_key] = max(0, official_count)
+                continue
+            if diff > 0:
+                best_period = max(
+                    candidate_periods,
+                    key=lambda p: (acc[p].get(player, {}).get("yds", 0), -p)
                 )
+            else:
+                # Subtract from period with LEAST yds (likely a phantom entry).
+                # Only consider periods where the player ACTUALLY has an entry,
+                # to avoid creating new (negative) phantom entries.
+                player_periods = [p for p in candidate_periods if player in acc[p]]
+                if not player_periods:
+                    player_periods = candidate_periods   # fallback
+                best_period = min(
+                    player_periods,
+                    key=lambda p: (acc[p].get(player, {}).get("yds", 0), p)
+                )
+            acc[best_period][player][count_key] = (
+                acc[best_period][player].get(count_key, 0) + diff
+            )
 
-    # Also reconcile ATT/COMP/TD/INT for passing
+    # Reconcile ATT/COMP/TD/INT for passing
     all_pass_players = set()
     for p in passing:
         all_pass_players.update(passing[p].keys())
@@ -1072,6 +1278,11 @@ def get_player_stats_by_period(game_id: str) -> dict:
         if not player_totals:
             player_totals = official_totals.get(player, {})
         if "passing" not in player_totals:
+            # Fix 3 for passing counts
+            for p in list(passing.keys()):
+                if player in passing[p]:
+                    for k in ("att", "comp", "int", "td"):
+                        passing[p][player][k] = 0
             continue
         for count_key in ("att", "comp", "int", "td"):
             official_count = player_totals["passing"].get(count_key, 0)
@@ -1082,17 +1293,73 @@ def get_player_stats_by_period(game_id: str) -> dict:
             diff = official_count - attributed_count
             if diff == 0:
                 continue
-            best_period = None
-            best_yds = -1
-            for p in passing:
-                yds = passing[p].get(player, {}).get("yds", 0)
-                if yds > best_yds:
-                    best_yds   = yds
-                    best_period = p
-            if best_period is not None:
-                passing[best_period][player][count_key] = (
-                    passing[best_period][player].get(count_key, 0) + diff
+            # Fix 6: constrain to Q1–Q4, direction-aware
+            valid_periods = _valid_quarter_periods(list(passing.keys()))
+            candidate_periods = valid_periods if valid_periods else list(passing.keys())
+            if not candidate_periods:
+                passing[1][player][count_key] = max(0, official_count)
+                continue
+            if diff > 0:
+                best_period = max(
+                    candidate_periods,
+                    key=lambda p: (passing[p].get(player, {}).get("yds", 0), -p)
                 )
+            else:
+                # Subtract from existing entry — avoid creating phantoms
+                player_periods = [p for p in candidate_periods if player in passing[p]]
+                if not player_periods:
+                    player_periods = candidate_periods
+                best_period = min(
+                    player_periods,
+                    key=lambda p: (passing[p].get(player, {}).get("yds", 0), p)
+                )
+            passing[best_period][player][count_key] = (
+                passing[best_period][player].get(count_key, 0) + diff
+            )
+
+    # Reconcile TD for rushing and receiving (Fix 6 also covers TD counts)
+    for cat, acc in [("rushing", rushing), ("receiving", receiving)]:
+        all_players = set()
+        for p in acc:
+            all_players.update(acc[p].keys())
+        for player in all_players:
+            m = _ID_KEY_RE.search(player)
+            aid = m.group(1) if m else None
+            player_totals = official_totals.get(aid, {}) if aid else {}
+            if not player_totals:
+                player_totals = official_totals.get(player, {})
+            if cat not in player_totals:
+                continue   # already zeroed above
+            official_td = player_totals[cat].get("td", 0)
+            attributed_td = sum(
+                acc[p].get(player, {}).get("td", 0)
+                for p in acc
+            )
+            diff = official_td - attributed_td
+            if diff == 0:
+                continue
+            valid_periods = _valid_quarter_periods(list(acc.keys()))
+            candidate_periods = valid_periods if valid_periods else list(acc.keys())
+            if not candidate_periods:
+                acc[1][player]["td"] = max(0, official_td)
+                continue
+            if diff > 0:
+                best_period = max(
+                    candidate_periods,
+                    key=lambda p: (acc[p].get(player, {}).get("yds", 0), -p)
+                )
+            else:
+                # Subtract from existing entry — avoid creating phantoms
+                player_periods = [p for p in candidate_periods if player in acc[p]]
+                if not player_periods:
+                    player_periods = candidate_periods
+                best_period = min(
+                    player_periods,
+                    key=lambda p: (acc[p].get(player, {}).get("yds", 0), p)
+                )
+            acc[best_period][player]["td"] = (
+                acc[best_period][player].get("td", 0) + diff
+            )
 
     # ── DataFrame builders (unchanged signatures) ─────────────────────────────
     def to_sack_df(acc):
@@ -1179,6 +1446,12 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
     if reconciliation_failed:
         result["reconciliation_failed"] = reconciliation_failed
+
+    if residual_applied:
+        # Fix 5: residual indicator — UI can display ➰ for quarters whose
+        # yards were adjusted by residual reconciliation (no specific play
+        # could be identified as the source of the gap).
+        result["residual_applied"] = residual_applied
 
     _reconcile(result, game_id)
     return result
