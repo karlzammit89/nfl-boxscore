@@ -695,15 +695,21 @@ def get_player_stats_by_period(game_id: str) -> dict:
     # ── Layer 1: official totals from boxscore players block ──────────────────
     # ESPN's boxscore.players contains the same stats as statistics/0, already
     # fetched as part of get_game_summary. We read them here to lock game totals.
-    def _read_official_totals(summary: dict) -> dict:
+    def _read_official_totals(summary: dict):
         """
-        Returns {athlete_id: {cat: {stat: value}}} from boxscore.players.
-        Keyed by athlete_id (numeric string from $ref) so it works regardless
-        of whether _resolve_athlete returns a display name or "[ID:XXXX]".
+        Returns (totals, name_to_aid, aid_to_name, aid_to_team):
+          totals       — {athlete_id: {cat: {stat: value}}}
+          name_to_aid  — {display_name: athlete_id}  ← used for Layer 4 lookup
+                         when _resolve_athlete returned a name (not [ID:XXXX])
+          aid_to_name  — {athlete_id: display_name}  ← for Fix 4 player creation
+          aid_to_team  — {athlete_id: team_abbr}     ← for Fix 4 team attribution
         cat ∈ {"passing", "rushing", "receiving"}
         stat keys: passing→{att,comp,yds,td,int}  rushing→{car,yds,td}  receiving→{rec,yds,td}
         """
-        totals = {}
+        totals      = {}
+        name_to_aid = {}
+        aid_to_name = {}
+        aid_to_team = {}
         _aid_re = _re.compile(r"/athletes/([0-9]+)")
         cat_map = {
             "passing":   {"C/ATT": "c_att", "YDS": "yds", "TD": "td", "INT": "int"},
@@ -711,6 +717,7 @@ def get_player_stats_by_period(game_id: str) -> dict:
             "receiving": {"REC": "rec",     "YDS": "yds", "TD": "td"},
         }
         for team_block in summary.get("boxscore", {}).get("players", []):
+            team_abbr = team_block.get("team", {}).get("abbreviation", "")
             for category in team_block.get("statistics", []):
                 cat_name = category.get("name", "").lower()
                 if cat_name not in cat_map:
@@ -727,6 +734,13 @@ def get_player_stats_by_period(game_id: str) -> dict:
                     if not m:
                         continue
                     aid = m.group(1)
+                    # Build reverse maps for name-keyed lookups (Layer 4) and Fix 4
+                    display_name = athlete.get("displayName", "") or ""
+                    if display_name:
+                        name_to_aid.setdefault(display_name, aid)
+                        aid_to_name.setdefault(aid, display_name)
+                    if team_abbr:
+                        aid_to_team.setdefault(aid, team_abbr)
                     if aid not in totals:
                         totals[aid] = {}
                     if cat_name not in totals[aid]:
@@ -744,9 +758,16 @@ def get_player_stats_by_period(game_id: str) -> dict:
                                     )
                             except Exception:
                                 pass
-        return totals
+        return totals, name_to_aid, aid_to_name, aid_to_team
 
-    official_totals = _read_official_totals(summary)
+    official_totals, _name_to_aid, _aid_to_name, _aid_to_team_boxscore = _read_official_totals(summary)
+
+    # Runtime name→aid map: populated as _resolve_athlete returns names during the
+    # play loop. Bridges the gap between Supabase-resolved names (e.g., "Jalen Hurts")
+    # and ESPN boxscore display names (e.g., "J. Hurts") which may differ for the
+    # same athlete_id. Without this, Layer 4 lookup fails for every player whose
+    # Supabase cached name differs from the boxscore display name.
+    _resolved_name_to_aid = {}
 
     # ── Stat accumulators ─────────────────────────────────────────────────────
     # Per-period, per-player: {period: {player_name: stat_dict}}
@@ -820,6 +841,10 @@ def get_player_stats_by_period(game_id: str) -> dict:
             name = _resolve_athlete(aid)
             if not name:
                 name = f"[ID:{aid}]"   # fallback — never drop a play due to name failure
+            # Record this name↔aid binding so Layer 4 can look up the player
+            # by whatever name the accumulator stored (Supabase, ESPN boxscore,
+            # or [ID:XXXX] fallback — all map back to the same aid).
+            _resolved_name_to_aid[name] = aid
             roles[role] = name
 
         psr = roles.get("passer")
@@ -1017,6 +1042,38 @@ def get_player_stats_by_period(game_id: str) -> dict:
     # Regex to extract numeric ID from "[ID:4045163]" fallback names
     _ID_KEY_RE = _re.compile(r"\[ID:(\d+)\]")
 
+    def _resolve_player_lookup(player_key):
+        """
+        Given an accumulator key (may be a display name like 'Jalen Hurts'
+        or a fallback like '[ID:4040715]'), return (athlete_id, player_totals).
+
+        Tries (in order):
+          1. Extract numeric ID from '[ID:XXXX]' format
+          2. Runtime _resolved_name_to_aid map (built during the play loop
+             from _resolve_athlete returns — works for Supabase names that
+             differ from ESPN boxscore displayNames)
+          3. _name_to_aid (boxscore displayName → aid)
+          4. Treat the key itself as an aid
+        Returns (aid_or_None, totals_dict_possibly_empty).
+        """
+        # 1. Try [ID:XXXX] pattern
+        m = _ID_KEY_RE.search(player_key)
+        if m:
+            aid = m.group(1)
+            return aid, official_totals.get(aid, {})
+        # 2. Runtime name (Supabase or whatever _resolve_athlete returned)
+        aid = _resolved_name_to_aid.get(player_key)
+        if aid:
+            return aid, official_totals.get(aid, {})
+        # 3. ESPN boxscore displayName
+        aid = _name_to_aid.get(player_key)
+        if aid:
+            return aid, official_totals.get(aid, {})
+        # 4. Last resort: treat key itself as aid
+        if player_key in official_totals:
+            return player_key, official_totals[player_key]
+        return None, {}
+
     cat_accumulators = {
         "passing":   (passing,   "yds"),
         "rushing":   (rushing,   "yds"),
@@ -1047,14 +1104,8 @@ def get_player_stats_by_period(game_id: str) -> dict:
             all_players.update(acc[p].keys())
 
         for player in all_players:
-            # Extract athlete_id from player key
-            m = _ID_KEY_RE.search(player)
-            aid = m.group(1) if m else None
-
-            # Look up official totals: try by athlete_id first, then by name
-            player_totals = official_totals.get(aid, {}) if aid else {}
-            if not player_totals:
-                player_totals = official_totals.get(player, {})
+            # Unified lookup: handles both [ID:XXXX] keys AND name-resolved keys
+            aid, player_totals = _resolve_player_lookup(player)
 
             # ── Fix 3: Zero phantom credits ───────────────────────────────────
             # Player has accumulator stats but no boxscore entry for this category.
@@ -1161,37 +1212,42 @@ def get_player_stats_by_period(game_id: str) -> dict:
         "receiving": (receiving, ["rec", "yds", "td"]),
     }
 
-    # We need to know each athlete's team. Build a quick athlete_id → team map
-    # from the boxscore.players block.
-    _aid_to_team = {}
-    for team_block in summary.get("boxscore", {}).get("players", []):
-        team_abbr = team_block.get("team", {}).get("abbreviation", "")
-        for category in team_block.get("statistics", []):
-            for athlete_entry in category.get("athletes", []):
-                ref = athlete_entry.get("athlete", {}).get("$ref", "")
-                mref = _re.search(r"/athletes/([0-9]+)", ref)
-                if mref:
-                    _aid_to_team.setdefault(mref.group(1), team_abbr)
+    # Build aid → resolved_name reverse map for Fix 4 to use the SAME name
+    # convention the accumulator used. If _resolve_athlete returned "Jalen Hurts"
+    # for some other play, use that; otherwise fall back to boxscore name.
+    _aid_to_resolved_name = {}
+    for nm, a in _resolved_name_to_aid.items():
+        _aid_to_resolved_name.setdefault(a, nm)
 
     for aid, player_totals in official_totals.items():
-        player_key = f"[ID:{aid}]"
-        # Also check if any accumulator key resolves to this aid via name lookup
-        # (when _resolve_athlete succeeded earlier we'd have a name, not [ID:...])
-        team_abbr = _aid_to_team.get(aid, "")
+        # Prefer the name the play loop actually used (Supabase-resolved),
+        # then ESPN boxscore display name, finally [ID:XXXX] fallback.
+        resolved_name = _aid_to_resolved_name.get(aid, "")
+        box_name      = _aid_to_name.get(aid, "")
+        player_key    = resolved_name or box_name or f"[ID:{aid}]"
+        team_abbr     = _aid_to_team_boxscore.get(aid, "")
 
         for cat, (acc, stat_keys) in cat_specs.items():
             if cat not in player_totals:
                 continue
-            # Find a player key in any accumulator period that maps to this aid
+            # Find an existing accumulator entry for this athlete_id.
+            # An accumulator key may be:
+            #   - "[ID:XXXX]"        → extract aid
+            #   - Supabase name      → matches resolved_name
+            #   - ESPN boxscore name → matches box_name
             existing_key = None
             for p in acc:
                 for k in acc[p]:
                     km = _ID_KEY_RE.search(k)
                     if km and km.group(1) == aid:
-                        existing_key = k; break
-                    # Name-resolved: official_totals lookup found by name match
-                    if k in official_totals and official_totals[k] is player_totals:
-                        existing_key = k; break
+                        existing_key = k
+                        break
+                    if resolved_name and k == resolved_name:
+                        existing_key = k
+                        break
+                    if box_name and k == box_name:
+                        existing_key = k
+                        break
                 if existing_key:
                     break
             if existing_key:
@@ -1218,11 +1274,7 @@ def get_player_stats_by_period(game_id: str) -> dict:
         for p in acc:
             all_players.update(acc[p].keys())
         for player in all_players:
-            m = _ID_KEY_RE.search(player)
-            aid = m.group(1) if m else None
-            player_totals = official_totals.get(aid, {}) if aid else {}
-            if not player_totals:
-                player_totals = official_totals.get(player, {})
+            aid, player_totals = _resolve_player_lookup(player)
             if cat not in player_totals:
                 # Fix 3 also applies to counts: zero out phantom counts
                 for p in list(acc.keys()):
@@ -1272,11 +1324,7 @@ def get_player_stats_by_period(game_id: str) -> dict:
     for p in passing:
         all_pass_players.update(passing[p].keys())
     for player in all_pass_players:
-        m = _ID_KEY_RE.search(player)
-        aid = m.group(1) if m else None
-        player_totals = official_totals.get(aid, {}) if aid else {}
-        if not player_totals:
-            player_totals = official_totals.get(player, {})
+        aid, player_totals = _resolve_player_lookup(player)
         if "passing" not in player_totals:
             # Fix 3 for passing counts
             for p in list(passing.keys()):
@@ -1323,11 +1371,7 @@ def get_player_stats_by_period(game_id: str) -> dict:
         for p in acc:
             all_players.update(acc[p].keys())
         for player in all_players:
-            m = _ID_KEY_RE.search(player)
-            aid = m.group(1) if m else None
-            player_totals = official_totals.get(aid, {}) if aid else {}
-            if not player_totals:
-                player_totals = official_totals.get(player, {})
+            aid, player_totals = _resolve_player_lookup(player)
             if cat not in player_totals:
                 continue   # already zeroed above
             official_td = player_totals[cat].get("td", 0)
