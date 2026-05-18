@@ -280,7 +280,9 @@ def fetch_games_for_month(year: int, month: int) -> list:
     return all_games
 
 @st.cache_data(ttl=30, show_spinner=False)
-def load_all_stats(game_id: str) -> dict:
+def load_all_stats(game_id: str, _v: int = 3) -> dict:
+    """Load all stats for a game. _v is a cache-bust version — increment when
+    the return dict shape changes so Streamlit discards old cached results."""
     return {
         "linescore":   build_linescore_df(game_id),
         "passing":     get_passing_stats(game_id),
@@ -660,7 +662,7 @@ elif st.session_state.view == "boxscore":
 
     # Linescore box score
     with st.spinner("Loading box score…"):
-        data = load_all_stats(game_id)
+        data = load_all_stats(game_id, _v=3)
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
@@ -3214,7 +3216,7 @@ elif st.session_state.view == "reconcile":
                     text=f"Chunk {_ci+1}/{_n_chunks} · Game {_gi+1}/{len(_chunk)} · {_gid}"
                 )
                 try:
-                    _gdata = load_all_stats(_gid)
+                    _gdata = load_all_stats(_gid, _v=3)
                     _recon = get_reconciliation_status(_gdata, _gid)
                     _ls    = _gdata.get("linescore", pd.DataFrame())
                     _label = (f"{_ls.iloc[0]['Team']} @ {_ls.iloc[1]['Team']}"
