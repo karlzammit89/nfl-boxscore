@@ -3229,13 +3229,14 @@ elif st.session_state.view == "reconcile":
                         _results.append({"game_id":_gid,"label":_label,"passed":True,"rows":[]})
                     else:
                         _mrows = []
-                        for _player, _cat, _col, _pbp, _official, _ in _recon["mismatches"]:
+                        for _player, _cat, _col, _pbp, _official, _, _reason in _recon["mismatches"]:
                             _gap = _pbp - _official
                             _mrows.append({
                                 "Game": _label, "Player": _player,
                                 "Stat": _cat.capitalize(), "Col": _col,
                                 "Q/H Total": _pbp, "Official": _official,
                                 "Missing": str(_gap),
+                                "Reason": _reason,
                             })
                         _results.append({"game_id":_gid,"label":_label,"passed":False,"rows":_mrows})
 
@@ -3380,14 +3381,21 @@ elif st.session_state.view == "reconcile":
         _summary_rows = []
         for _r in _results:
             if _r["passed"] is True:
-                _summary_rows.append({"Game": _r["label"], "Status": "✅ Passed", "Mismatches": ""})
+                _summary_rows.append({"Game": _r["label"], "Status": "✅ Passed",
+                                       "🔴 Code": "", "🟡 ESPN": "", "🔵 Unknown": ""})
             elif _r["passed"] is None:
-                _summary_rows.append({"Game": _r["label"], "Status": "⚠️ Error",  "Mismatches": ""})
+                _summary_rows.append({"Game": _r["label"], "Status": "⚠️ Error",
+                                       "🔴 Code": "", "🟡 ESPN": "", "🔵 Unknown": ""})
             else:
+                _n_code    = sum(1 for _rw in _r["rows"] if _rw.get("Reason","").startswith("🔴"))
+                _n_espn    = sum(1 for _rw in _r["rows"] if _rw.get("Reason","").startswith("🟡"))
+                _n_unknown = sum(1 for _rw in _r["rows"] if _rw.get("Reason","").startswith("🔵"))
                 _summary_rows.append({
-                    "Game": _r["label"],
-                    "Status": f"❌ {len(_r['rows'])} mismatch{'es' if len(_r['rows'])!=1 else ''}",
-                    "Mismatches": len(_r["rows"]),
+                    "Game":        _r["label"],
+                    "Status":      f"❌ {len(_r['rows'])} mismatch{'es' if len(_r['rows'])!=1 else ''}",
+                    "🔴 Code":    _n_code    or "",
+                    "🟡 ESPN":    _n_espn    or "",
+                    "🔵 Unknown": _n_unknown or "",
                 })
         if _summary_rows:
             st.dataframe(
@@ -3415,14 +3423,56 @@ elif st.session_state.view == "reconcile":
                 _mdf = pd.DataFrame(_exp_rows)
 
                 def _style_missing(df):
+                    _cols = [c for c in ["Missing"] if c in df.columns]
+                    if not _cols:
+                        return df.style
                     return df.style.map(
                         lambda v: "color:#ef4444;font-weight:700" if isinstance(v, str) and v.startswith("-")
                         else ("color:#22c55e;font-weight:700" if isinstance(v, str) and v.lstrip("+").isdigit() else ""),
-                        subset=["Missing"],
+                        subset=_cols,
                     )
 
+                _display_cols = ["Player","Stat","Col","Q/H Total","Official","Missing"]
+
                 if not _mdf.empty:
-                    st.dataframe(_style_missing(_mdf), use_container_width=True, hide_index=True)
+                    # Split into three sections by reason tag
+                    _code_rows    = _mdf[_mdf["Reason"].str.startswith("🔴", na=False)]
+                    _espn_rows    = _mdf[_mdf["Reason"].str.startswith("🟡", na=False)]
+                    _unknwn_rows  = _mdf[_mdf["Reason"].str.startswith("🔵", na=False)]
+
+                    if not _code_rows.empty:
+                        st.markdown(
+                            f"**🔴 CODE — {len(_code_rows)} row{'s' if len(_code_rows)!=1 else ''}**  "
+                            f"<span style='color:#94a3b8;font-size:0.8em'>"
+                            f"Attribution logic credited something ESPN excludes — fixable in code</span>",
+                            unsafe_allow_html=True,
+                        )
+                        st.dataframe(
+                            _style_missing(_code_rows[_display_cols].reset_index(drop=True)),
+                            use_container_width=True, hide_index=True,
+                        )
+
+                    if not _espn_rows.empty:
+                        with st.expander(
+                            f"🟡 ESPN DATA — {len(_espn_rows)} row{'s' if len(_espn_rows)!=1 else ''}"
+                            f"  (ESPN PBP and boxscore disagree — not fixable in code)",
+                            expanded=False,
+                        ):
+                            st.dataframe(
+                                _style_missing(_espn_rows[_display_cols].reset_index(drop=True)),
+                                use_container_width=True, hide_index=True,
+                            )
+
+                    if not _unknwn_rows.empty:
+                        with st.expander(
+                            f"🔵 UNKNOWN — {len(_unknwn_rows)} row{'s' if len(_unknwn_rows)!=1 else ''}"
+                            f"  (ID lookup returned 0 — stats likely attributed under a different key)",
+                            expanded=False,
+                        ):
+                            st.dataframe(
+                                _style_missing(_unknwn_rows[_display_cols].reset_index(drop=True)),
+                                use_container_width=True, hide_index=True,
+                            )
 
                 # ── Debug panel ───────────────────────────────────────────────
                 _dgid     = _r["game_id"]
