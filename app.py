@@ -792,7 +792,7 @@ elif st.session_state.view == "boxscore":
     else:
         st.error("❌ Reconciliation Failed — Some plays are missing in the Quarter/Half splits.")
         _rows = []
-        for player, cat, col, pbp, official, _ in _recon["mismatches"]:
+        for player, cat, col, pbp, official, _, _reason in _recon["mismatches"]:
             diff = pbp - official
             _rows.append({
                 "Player":     player,
@@ -801,6 +801,7 @@ elif st.session_state.view == "boxscore":
                 "Q/H Total":  pbp,
                 "Game Total": official,
                 "Missing":    str(diff),
+                "Reason":     _reason,
             })
         _mdf = pd.DataFrame(_rows)
         st.dataframe(
@@ -3343,9 +3344,10 @@ elif st.session_state.view == "reconcile":
                         pass  # debug build failure is non-critical
 
                 except Exception as _ge:
-                    _results.append({"game_id":_gid,"label":_gid,"passed":None,
-                                     "rows":[{"Game":_gid,"Player":f"Error: {str(_ge)[:60]}",
-                                              "Stat":"","Col":"","Q/H Total":"","Official":"","Missing":""}]})
+                    _err_label = _label if "_label" in dir() and _label else _gid
+                    _results.append({"game_id":_gid,"label":_err_label,"passed":None,
+                                     "rows":[{"Game":_err_label,"Player":f"Error: {str(_ge)[:60]}",
+                                              "Stat":"","Col":"","Q/H Total":"","Official":"","Missing":"","Reason":""}]})
 
             # Chunk done — save accumulated results and advance index
             st.session_state.recon_results_acc = _results
