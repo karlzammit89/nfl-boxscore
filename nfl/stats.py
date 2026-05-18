@@ -786,6 +786,34 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
     official_totals, _name_to_aid, _aid_to_name, _aid_to_team_boxscore = _read_official_totals(summary)
 
+    # ── DIAGNOSTIC — remove after one production run ──────────────────────────
+    try:
+        import streamlit as _st_d
+        if not _st_d.session_state.get("_diag2_shown"):
+            _st_d.session_state["_diag2_shown"] = True
+            _d_lines = [f"**🔍 Stats diagnostic for `{game_id}`**"]
+            _d_lines.append(f"- `official_totals` aids: `{list(official_totals.keys())[:6]}`")
+            _d_lines.append(f"- `_name_to_aid` sample: `{dict(list(_name_to_aid.items())[:4])}`")
+            _d_lines.append(f"- `_aid_to_name` sample: `{dict(list(_aid_to_name.items())[:4])}`")
+            _bp = summary.get("boxscore", {}).get("players", [])
+            _d_lines.append(f"- boxscore.players blocks: `{len(_bp)}`")
+            if _bp:
+                _first_block = _bp[0]
+                _cats = _first_block.get("statistics", [])
+                _d_lines.append(f"- first block team: `{_first_block.get('team',{}).get('abbreviation','?')}` · categories: `{[c.get('name') for c in _cats]}`")
+                if _cats:
+                    _first_cat = _cats[0]
+                    _aths = _first_cat.get("athletes", [])
+                    _d_lines.append(f"- first category `{_first_cat.get('name')}` · athletes: `{len(_aths)}`")
+                    if _aths:
+                        _a0 = _aths[0].get("athlete", {})
+                        _d_lines.append(f"- first athlete: `{_a0.get('displayName')}` · ref: `{_a0.get('$ref','')[-40:]}`")
+                        _d_lines.append(f"- first athlete stats: `{_aths[0].get('stats', [])}`")
+            _st_d.warning("\n".join(_d_lines))
+    except Exception:
+        pass
+    # ── END DIAGNOSTIC ────────────────────────────────────────────────────────
+
     # Runtime name→aid map: populated as _resolve_athlete returns names during the
     # play loop. Bridges the gap between Supabase-resolved names (e.g., "Jalen Hurts")
     # and ESPN boxscore display names (e.g., "J. Hurts") which may differ for the
