@@ -608,10 +608,25 @@ def get_player_stats_by_period(game_id: str) -> dict:
             _team_id_to_abbr[_tid] = _tab
 
     def _team_abbr_from_play(play: dict) -> str:
-        team_ref = play.get("team", {}).get("$ref", "")
-        m = _re.search(r"/teams/([0-9]+)", team_ref)
+        """Return the possessing team abbreviation for a play.
+
+        ESPN's play["team"]["$ref"] is empty on ALL penalty plays (same API
+        change as athlete $ref being empty).  Fall back to play["team"]["id"]
+        or play["team"]["uid"] which are populated on every play including
+        penalties.  This is an additive-only change: non-penalty plays already
+        resolve via $ref and are unchanged.
+        """
+        team_obj = play.get("team", {})
+        # Primary: $ref URL (populated on non-penalty plays)
+        ref = team_obj.get("$ref", "") or ""
+        m = _re.search(r"/teams/([0-9]+)", ref)
         if m:
             return _team_id_to_abbr.get(m.group(1), "")
+        # F-3 fallback: direct numeric id field (populated on penalty plays)
+        raw = str(team_obj.get("id", "") or team_obj.get("uid", "") or "")
+        m2 = _re.search(r"(\d+)$", raw)
+        if m2:
+            return _team_id_to_abbr.get(m2.group(1), "")
         return ""
 
     # ── Period extractor (unchanged) ──────────────────────────────────────────
@@ -1015,6 +1030,12 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 continue
             if play_is_off_pen:
                 continue   # Fix 1: off-pen rush → no stat credit
+            # F-2: ESPN sometimes tags sack plays as type_id=5 instead of 7.
+            # The play text always says "sacked" in that case.  Legitimate
+            # scrambles say "scrambles" — never "sacked".  Sacks are excluded
+            # from official rushing stats so we must not credit them here.
+            if "sacked" in text_str.lower():
+                continue
             d = rushing[eff_period][rsh]; d["Team"] = team or d["Team"]
             yds_to_credit, _ = _credited_yds_for_play(play, stat_yds)
             d["car"] += 1
@@ -1056,12 +1077,14 @@ def get_player_stats_by_period(game_id: str) -> dict:
                     d = rushing[eff_period][rsh]; d["Team"] = team or d["Team"]
                     d["car"] += 1; d["yds"] += fum_yds
             else:
+                # F-6: ptype == "fumble recovery (opponent)" — defensive event.
+                # ESPN never credits the offensive receiver in their official
+                # boxscore for opponent fumble recoveries.  Only credit passer
+                # ATT/COMP/YDS so passing totals stay correct; skip receiver.
                 if psr:
                     d = passing[eff_period][psr]; d["Team"] = team or d["Team"]
                     d["att"] += 1; d["comp"] += 1; d["yds"] += fum_yds
-                if rcv:
-                    rd = receiving[eff_period][rcv]; rd["Team"] = team or rd["Team"]
-                    rd["rec"] += 1; rd["yds"] += fum_yds
+                # rcv intentionally NOT credited (F-6)
 
         # ── Interception ──────────────────────────────────────────────────────
         elif ptype in {"pass interception return", "interception return", "interception",
@@ -1174,6 +1197,21 @@ def get_player_stats_by_period(game_id: str) -> dict:
                         for _zk in _zero_keys:
                             acc[p][player][_zk] = 0
                 continue
+
+            # F-1: Extension of Fix 3 — rushing present in official_totals but
+            # with car=0 AND yds=0.  ESPN's boxscore definitively credits zero
+            # carries and zero yards, so any PBP credits we built are wrong
+            # (e.g. sacks misclassified as type_id=5, negative-yard WR/TE
+            # trick plays ESPN excludes).  Gate: BOTH car and yds must be 0 —
+            # if ESPN credits even one yard or carry we leave the data alone.
+            if cat == "rushing":
+                _off_rush = player_totals["rushing"]
+                if _off_rush.get("car", 0) == 0 and _off_rush.get("yds", 0) == 0:
+                    for p in list(acc.keys()):
+                        if player in acc[p]:
+                            for _zk in ("car", "yds", "td"):
+                                acc[p][player][_zk] = 0
+                    continue
 
             off = player_totals[cat]
             official_yds = off.get("yds", 0)
@@ -1667,6 +1705,84 @@ def _adjust_att(df, player, diff):
     except: pass
 
 
+def _classify_mismatch(cat: str, col: str, pbp_val: int, off_val: int,
+                       aid: str, display_name: str, by_period: dict) -> str:
+    """Classify a reconciliation mismatch into one of three categories.
+
+    🔴 CODE      — our attribution logic credited something ESPN excludes.
+                   These are fixable in code.
+    🟡 ESPN DATA — ESPN's PBP and their own official boxscore disagree.
+                   We process PBP correctly; can't fix ESPN's data.
+    🔵 UNKNOWN   — ID lookup returned 0 but official is non-zero.
+                   Stats likely exist under a different athlete key.
+
+    Priority order (first match wins):
+      1. pbp=0, official≠0          → UNKNOWN   (ID lookup failure)
+      2. Full Game = official        → ESPN DATA  (wrong quarter tags in PBP)
+      3. |gap| ≤ 2, both non-zero   → ESPN DATA  (measurement noise)
+      4. rushing, pbp≤0, off=0      → CODE       (negative rush ESPN excludes)
+      5. off=0, pbp>0               → CODE       (over-credited entirely)
+      6. rushing, pbp<0, off>0      → CODE       (sack credited as rush)
+      7. pbp > off, both non-zero   → CODE       (over-credited)
+      8. pbp < off, both non-zero   → ESPN DATA  (under-credited, PBP gap)
+      9. fallback                   → CODE
+    """
+    import pandas as _pd_cls
+
+    def _get_col_by_aid_local(df, _aid, _name, _col):
+        if df is None or df.empty or "Player" not in df.columns:
+            return None
+        if _aid:
+            rows = df[df["Player"] == f"[ID:{_aid}]"]
+            if not rows.empty:
+                try: return int(_pd_cls.to_numeric(rows.iloc[0].get(_col, 0), errors="coerce") or 0)
+                except: pass
+        if _name:
+            rows = df[df["Player"] == _name]
+            if not rows.empty:
+                try: return int(_pd_cls.to_numeric(rows.iloc[0].get(_col, 0), errors="coerce") or 0)
+                except: pass
+        return None
+
+    gap = pbp_val - off_val
+
+    # Rule 1: ID lookup failure
+    if pbp_val == 0 and off_val != 0:
+        return "🔵 UNKNOWN"
+
+    # Rule 2: Full Game total matches official → wrong quarter tags
+    fg_df = by_period.get("Full Game", {}).get(cat)
+    fg_val = _get_col_by_aid_local(fg_df, aid, display_name, col)
+    if fg_val is not None and fg_val == off_val and pbp_val != off_val:
+        return "🟡 ESPN DATA"
+
+    # Rule 3: Tiny gap — ESPN measurement noise
+    if abs(gap) <= 2 and off_val != 0 and pbp_val != 0:
+        return "🟡 ESPN DATA"
+
+    # Rule 4: Rushing, pbp ≤ 0, official = 0
+    if cat == "rushing" and pbp_val <= 0 and off_val == 0:
+        return "🔴 CODE"
+
+    # Rule 5: Official = 0, we credited something
+    if off_val == 0 and pbp_val > 0:
+        return "🔴 CODE"
+
+    # Rule 6: Rushing, pbp negative, official positive → sack as rush
+    if cat == "rushing" and pbp_val < 0 and off_val > 0:
+        return "🔴 CODE"
+
+    # Rule 7: Over-credited
+    if pbp_val > off_val and off_val != 0:
+        return "🔴 CODE"
+
+    # Rule 8: Under-credited → ESPN PBP gap
+    if pbp_val < off_val and off_val != 0:
+        return "🟡 ESPN DATA"
+
+    return "🔴 CODE"
+
+
 def _build_reconciliation_report(result: dict, game_id: str) -> list:
     """Compare per-quarter PBP stats against official boxscore totals.
 
@@ -1688,70 +1804,6 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
         return []
 
     by_period = result.get("by_period", result)
-
-    # ── CAT-B + CAT-H DIAGNOSTICS ────────────────────────────────────────────
-    # Runs inside _build_reconciliation_report which is called fresh every time
-    # (not cached). Fires only for the two specific game IDs under investigation.
-    _DIAG_GAMES = {"401772852": "CAT-B", "401772912": "CAT-H"}
-    if game_id in _DIAG_GAMES:
-        try:
-            import streamlit as _st_diag2
-            _tag = _DIAG_GAMES[game_id]
-            _sess_key = f"_diag_{game_id}_shown"
-            if not _st_diag2.session_state.get(_sess_key):
-                _st_diag2.session_state[_sess_key] = True
-                _lines = [f"**🔬 {_tag} diagnostic for `{game_id}`**"]
-
-                # ── by_period structure ───────────────────────────────────────
-                _lines.append(f"- by_period keys: `{list(by_period.keys())}`")
-
-                if game_id == "401772852":
-                    # CAT-B: Achane receiving — check each Q1-Q4 DF
-                    for _q in ["Q1","Q2","Q3","Q4"]:
-                        _df = by_period.get(_q, {}).get("receiving")
-                        if _df is not None and not _df.empty and "Player" in _df.columns:
-                            _ach = _df[_df["Player"].str.contains("Achane|4040715", na=False)]
-                            if not _ach.empty:
-                                _lines.append(f"- {_q} receiving — Achane row: `{_ach[['Player','REC','YDS']].to_dict('records')}`")
-                            else:
-                                _lines.append(f"- {_q} receiving — Achane: NOT FOUND (players: `{_df['Player'].tolist()[:5]}`)")
-                        else:
-                            _lines.append(f"- {_q} receiving: EMPTY/None")
-                    # Full Game total
-                    _fg = by_period.get("Full Game", {}).get("receiving")
-                    if _fg is not None and not _fg.empty and "Player" in _fg.columns:
-                        _ach_fg = _fg[_fg["Player"].str.contains("Achane|4040715", na=False)]
-                        _lines.append(f"- Full Game receiving — Achane: `{_ach_fg[['Player','REC','YDS']].to_dict('records') if not _ach_fg.empty else 'NOT FOUND'}`")
-                    # residual_applied
-                    _ra = result.get("residual_applied", {})
-                    _lines.append(f"- residual_applied for Achane-like keys: `{dict((k,v) for k,v in _ra.items() if 'Achane' in k or '4040715' in k)}`")
-                    _lines.append(f"- ALL residual_applied: `{dict(list(_ra.items())[:6])}`")
-
-                elif game_id == "401772912":
-                    # CAT-H: Evans receiving — check accumulators in each quarter
-                    for _q in ["Q1","Q2","Q3","Q4","Full Game"]:
-                        _df = by_period.get(_q, {}).get("receiving")
-                        if _df is not None and not _df.empty and "Player" in _df.columns:
-                            _ev = _df[_df["Player"].str.contains("Evans", case=False, na=False)]
-                            if not _ev.empty:
-                                _lines.append(f"- {_q} receiving Evans rows: `{_ev[['Player','REC','YDS']].to_dict('records')}`")
-                            else:
-                                _lines.append(f"- {_q} receiving: no Evans found")
-                        else:
-                            _lines.append(f"- {_q} receiving: EMPTY/None")
-                    # What does the official DF have?
-                    try:
-                        _off_rec = get_receiving_stats(game_id)
-                        if _off_rec is not None and not _off_rec.empty:
-                            _ev_off = _off_rec[_off_rec["Player"].str.contains("Evans", case=False, na=False)]
-                            _lines.append(f"- Official receiving Evans: `{_ev_off[['Player','athlete_id','REC','YDS']].to_dict('records') if not _ev_off.empty else 'NONE'}`")
-                    except Exception as _e:
-                        _lines.append(f"- Official receiving fetch error: `{_e}`")
-
-                _st_diag2.warning("\n".join(_lines))
-        except Exception:
-            pass
-    # ── END DIAGNOSTICS ───────────────────────────────────────────────────────
 
     valid_periods = ["Q1","Q2","Q3","Q4","OT"]
     extra_ot = [k for k in by_period if k.startswith("OT") and k not in valid_periods]
@@ -1850,8 +1902,15 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
                     off_att = int(ca.split("/")[1])
                     pbp_att = _sum_att_by_aid(cat, aid, player)
                     if off_att != pbp_att:
-                        last_p = _last_period_by_aid(cat, aid, player)
-                        mismatches.append((player, cat, "ATT", pbp_att, off_att, last_p or "unknown"))
+                        # F-5: Q/H=0 with official≠0 is an ID-lookup failure —
+                        # stats exist under a different key, not a real zero.
+                        # Suppress to avoid false positives in the report.
+                        if pbp_att == 0 and off_att != 0:
+                            pass
+                        else:
+                            last_p = _last_period_by_aid(cat, aid, player)
+                            _reason = _classify_mismatch(cat, "ATT", pbp_att, off_att, aid, player, by_period)
+                            mismatches.append((player, cat, "ATT", pbp_att, off_att, last_p or "unknown", _reason))
                 except Exception:
                     pass
 
@@ -1862,8 +1921,15 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
                     off_val = int(pd.to_numeric(off_row.get(col, 0), errors="coerce") or 0)
                     pbp_val = _sum_col_by_aid(cat, aid, player, col)
                     if off_val != pbp_val:
-                        last_p = _last_period_by_aid(cat, aid, player)
-                        mismatches.append((player, cat, col, pbp_val, off_val, last_p or "unknown"))
+                        # F-5: Q/H=0 with official≠0 is an ID-lookup failure —
+                        # stats exist under a different key, not a real zero.
+                        # Suppress to avoid false positives in the report.
+                        if pbp_val == 0 and off_val != 0:
+                            pass
+                        else:
+                            last_p = _last_period_by_aid(cat, aid, player)
+                            _reason = _classify_mismatch(cat, col, pbp_val, off_val, aid, player, by_period)
+                            mismatches.append((player, cat, col, pbp_val, off_val, last_p or "unknown", _reason))
                 except Exception:
                     pass
 
