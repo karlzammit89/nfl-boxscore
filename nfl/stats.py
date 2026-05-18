@@ -1185,27 +1185,6 @@ def get_player_stats_by_period(game_id: str) -> dict:
             )
             gap = official_yds - attributed_yds
 
-            # ── CAT-B DIAGNOSTIC (game 401772852 only) ───────────────────────
-            if game_id == "401772852" and cat == "receiving" and gap != 0:
-                try:
-                    import streamlit as _st_catb
-                    _diag_b = [
-                        f"**🔬 CAT-B Layer4 trace — `{player}` receiving**",
-                        f"- official_yds=`{official_yds}` | attributed=`{attributed_yds}` | gap=`{gap}`",
-                        f"- play_log entries: `{len(_play_log.get((player, cat), []))}`",
-                    ]
-                    for _i, (_p, _cr, _tx, _wp) in enumerate(_play_log.get((player, cat), [])[:10]):
-                        _psd = _text_yds(_tx)
-                        _diag_b.append(f"  - play {_i+1}: period={_p} credited={_cr} was_pen={_wp} text_parse={_psd} | `{str(_tx)[:70]}`")
-                    _diag_b.append(f"- acc periods with player: `{[p for p in acc if player in acc[p]]}`")
-                    for _p2 in [p for p in acc if player in acc[p]]:
-                        _diag_b.append(f"  - period {_p2}: yds={acc[_p2][player].get('yds',0)} rec={acc[_p2][player].get('rec',0)}")
-                    if not _st_catb.session_state.get("_catb_shown"):
-                        _st_catb.session_state["_catb_shown"] = True
-                        _st_catb.warning("\n".join(_diag_b))
-                except Exception:
-                    pass
-            # ── END CAT-B DIAGNOSTIC ─────────────────────────────────────────
 
             if gap == 0:
                 continue
@@ -1287,37 +1266,6 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 return p
         return 1   # last resort
 
-    # ── CAT-H DIAGNOSTIC (game 401772912 only) ───────────────────────────────
-    # Fires before Fix 4/Fix 6 so we see raw accumulator after play loop + Layer 4 A/B.
-    if game_id == "401772912":
-        try:
-            import streamlit as _st_cath
-            _diag_h = ["**🔬 CAT-H raw receiving accumulator — TB @ CAR (pre-Fix4/Fix6)**"]
-            _all_rcv = set()
-            for _rp in receiving:
-                _all_rcv.update(receiving[_rp].keys())
-            _diag_h.append(f"- All receiving keys: `{sorted(_all_rcv)}`")
-            _evans_keys = [k for k in _all_rcv if "evans" in k.lower()]
-            _diag_h.append(f"- Evans keys: `{_evans_keys}`")
-            for _ek in _evans_keys:
-                _tot_rec = sum(receiving[_rp].get(_ek, {}).get("rec", 0) for _rp in receiving)
-                _tot_yds = sum(receiving[_rp].get(_ek, {}).get("yds", 0) for _rp in receiving)
-                _per = {_rp: f"rec={receiving[_rp][_ek].get('rec',0)} yds={receiving[_rp][_ek].get('yds',0)}"
-                        for _rp in sorted(receiving) if _ek in receiving[_rp]}
-                _diag_h.append(f"  **{_ek}**: total rec={_tot_rec} yds={_tot_yds} | periods={_per}")
-            _diag_h.append("- official_totals Evans entries:")
-            for _aid2, _ptots in official_totals.items():
-                _bn = _aid_to_name.get(_aid2, "")
-                if "evans" in _bn.lower():
-                    _diag_h.append(f"  aid={_aid2} name={_bn} receiving={_ptots.get('receiving', {})}")
-            _rna_evans = {k: v for k, v in _resolved_name_to_aid.items() if "evans" in k.lower()}
-            _diag_h.append(f"- _resolved_name_to_aid Evans: `{_rna_evans}`")
-            if not _st_cath.session_state.get("_cath_shown"):
-                _st_cath.session_state["_cath_shown"] = True
-                _st_cath.warning("\n".join(_diag_h))
-        except Exception:
-            pass
-    # ── END CAT-H DIAGNOSTIC ─────────────────────────────────────────────────
 
     cat_specs = {
         "passing":   (passing,   ["att", "comp", "yds", "td", "int"]),
@@ -1740,6 +1688,70 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
         return []
 
     by_period = result.get("by_period", result)
+
+    # ── CAT-B + CAT-H DIAGNOSTICS ────────────────────────────────────────────
+    # Runs inside _build_reconciliation_report which is called fresh every time
+    # (not cached). Fires only for the two specific game IDs under investigation.
+    _DIAG_GAMES = {"401772852": "CAT-B", "401772912": "CAT-H"}
+    if game_id in _DIAG_GAMES:
+        try:
+            import streamlit as _st_diag2
+            _tag = _DIAG_GAMES[game_id]
+            _sess_key = f"_diag_{game_id}_shown"
+            if not _st_diag2.session_state.get(_sess_key):
+                _st_diag2.session_state[_sess_key] = True
+                _lines = [f"**🔬 {_tag} diagnostic for `{game_id}`**"]
+
+                # ── by_period structure ───────────────────────────────────────
+                _lines.append(f"- by_period keys: `{list(by_period.keys())}`")
+
+                if game_id == "401772852":
+                    # CAT-B: Achane receiving — check each Q1-Q4 DF
+                    for _q in ["Q1","Q2","Q3","Q4"]:
+                        _df = by_period.get(_q, {}).get("receiving")
+                        if _df is not None and not _df.empty and "Player" in _df.columns:
+                            _ach = _df[_df["Player"].str.contains("Achane|4040715", na=False)]
+                            if not _ach.empty:
+                                _lines.append(f"- {_q} receiving — Achane row: `{_ach[['Player','REC','YDS']].to_dict('records')}`")
+                            else:
+                                _lines.append(f"- {_q} receiving — Achane: NOT FOUND (players: `{_df['Player'].tolist()[:5]}`)")
+                        else:
+                            _lines.append(f"- {_q} receiving: EMPTY/None")
+                    # Full Game total
+                    _fg = by_period.get("Full Game", {}).get("receiving")
+                    if _fg is not None and not _fg.empty and "Player" in _fg.columns:
+                        _ach_fg = _fg[_fg["Player"].str.contains("Achane|4040715", na=False)]
+                        _lines.append(f"- Full Game receiving — Achane: `{_ach_fg[['Player','REC','YDS']].to_dict('records') if not _ach_fg.empty else 'NOT FOUND'}`")
+                    # residual_applied
+                    _ra = result.get("residual_applied", {})
+                    _lines.append(f"- residual_applied for Achane-like keys: `{dict((k,v) for k,v in _ra.items() if 'Achane' in k or '4040715' in k)}`")
+                    _lines.append(f"- ALL residual_applied: `{dict(list(_ra.items())[:6])}`")
+
+                elif game_id == "401772912":
+                    # CAT-H: Evans receiving — check accumulators in each quarter
+                    for _q in ["Q1","Q2","Q3","Q4","Full Game"]:
+                        _df = by_period.get(_q, {}).get("receiving")
+                        if _df is not None and not _df.empty and "Player" in _df.columns:
+                            _ev = _df[_df["Player"].str.contains("Evans", case=False, na=False)]
+                            if not _ev.empty:
+                                _lines.append(f"- {_q} receiving Evans rows: `{_ev[['Player','REC','YDS']].to_dict('records')}`")
+                            else:
+                                _lines.append(f"- {_q} receiving: no Evans found")
+                        else:
+                            _lines.append(f"- {_q} receiving: EMPTY/None")
+                    # What does the official DF have?
+                    try:
+                        _off_rec = get_receiving_stats(game_id)
+                        if _off_rec is not None and not _off_rec.empty:
+                            _ev_off = _off_rec[_off_rec["Player"].str.contains("Evans", case=False, na=False)]
+                            _lines.append(f"- Official receiving Evans: `{_ev_off[['Player','athlete_id','REC','YDS']].to_dict('records') if not _ev_off.empty else 'NONE'}`")
+                    except Exception as _e:
+                        _lines.append(f"- Official receiving fetch error: `{_e}`")
+
+                _st_diag2.warning("\n".join(_lines))
+        except Exception:
+            pass
+    # ── END DIAGNOSTICS ───────────────────────────────────────────────────────
 
     valid_periods = ["Q1","Q2","Q3","Q4","OT"]
     extra_ot = [k for k in by_period if k.startswith("OT") and k not in valid_periods]
