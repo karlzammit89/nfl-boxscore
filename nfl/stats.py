@@ -752,12 +752,22 @@ def get_player_stats_by_period(game_id: str) -> dict:
                     stats_raw = athlete_entry.get("stats", [])
                     if not stats_raw:
                         continue
-                    # Key by athlete_id from $ref — works even when name resolution fails
-                    ref = athlete.get("$ref", "")
+                    # Extract athlete_id: try $ref first (old ESPN format),
+                    # then athlete.id / athlete.uid (new ESPN format where $ref is empty).
+                    ref = athlete.get("$ref", "") or ""
                     m   = _aid_re.search(ref)
-                    if not m:
+                    if m:
+                        aid = m.group(1)
+                    else:
+                        # $ref is empty or missing — try direct id fields
+                        raw_id = (athlete.get("id") or
+                                  athlete.get("uid", "") or
+                                  "")
+                        # uid format: "s:20~l:28~a:4431452" — extract numeric suffix
+                        uid_m = _re.search(r"(\d+)$", str(raw_id))
+                        aid = uid_m.group(1) if uid_m else ""
+                    if not aid:
                         continue
-                    aid = m.group(1)
                     # Build reverse maps for name-keyed lookups (Layer 4) and Fix 4
                     display_name = athlete.get("displayName", "") or ""
                     if display_name:
@@ -808,6 +818,7 @@ def get_player_stats_by_period(game_id: str) -> dict:
                     if _aths:
                         _a0 = _aths[0].get("athlete", {})
                         _d_lines.append(f"- first athlete: `{_a0.get('displayName')}` · ref: `{_a0.get('$ref','')[-40:]}`")
+                        _d_lines.append(f"- first athlete id: `{_a0.get('id')}` · uid: `{_a0.get('uid','')}`")
                         _d_lines.append(f"- first athlete stats: `{_aths[0].get('stats', [])}`")
             _st_d.warning("\n".join(_d_lines))
     except Exception:
@@ -1695,8 +1706,15 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
                     _nm  = _ath.get("displayName", "") or ""
                     _ref = _ath.get("$ref", "") or ""
                     _m   = _AID_REF_RE.search(_ref)
-                    if _nm and _m:
-                        _name_to_aid_rcn[_nm] = _m.group(1)
+                    if _m:
+                        _aid_rcn = _m.group(1)
+                    else:
+                        _raw = (str(_ath.get("id", "") or
+                                    _ath.get("uid", "") or ""))
+                        _uid_m = _re_rcn.search(r"(\d+)$", _raw)
+                        _aid_rcn = _uid_m.group(1) if _uid_m else ""
+                    if _nm and _aid_rcn:
+                        _name_to_aid_rcn[_nm] = _aid_rcn
     except Exception:
         pass
 
