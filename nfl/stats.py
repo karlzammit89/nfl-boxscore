@@ -1185,6 +1185,28 @@ def get_player_stats_by_period(game_id: str) -> dict:
             )
             gap = official_yds - attributed_yds
 
+            # ── CAT-B DIAGNOSTIC (game 401772852 only) ───────────────────────
+            if game_id == "401772852" and cat == "receiving" and gap != 0:
+                try:
+                    import streamlit as _st_catb
+                    _diag_b = [
+                        f"**🔬 CAT-B Layer4 trace — `{player}` receiving**",
+                        f"- official_yds=`{official_yds}` | attributed=`{attributed_yds}` | gap=`{gap}`",
+                        f"- play_log entries: `{len(_play_log.get((player, cat), []))}`",
+                    ]
+                    for _i, (_p, _cr, _tx, _wp) in enumerate(_play_log.get((player, cat), [])[:10]):
+                        _psd = _text_yds(_tx)
+                        _diag_b.append(f"  - play {_i+1}: period={_p} credited={_cr} was_pen={_wp} text_parse={_psd} | `{str(_tx)[:70]}`")
+                    _diag_b.append(f"- acc periods with player: `{[p for p in acc if player in acc[p]]}`")
+                    for _p2 in [p for p in acc if player in acc[p]]:
+                        _diag_b.append(f"  - period {_p2}: yds={acc[_p2][player].get('yds',0)} rec={acc[_p2][player].get('rec',0)}")
+                    if not _st_catb.session_state.get("_catb_shown"):
+                        _st_catb.session_state["_catb_shown"] = True
+                        _st_catb.warning("\n".join(_diag_b))
+                except Exception:
+                    pass
+            # ── END CAT-B DIAGNOSTIC ─────────────────────────────────────────
+
             if gap == 0:
                 continue
 
@@ -1264,6 +1286,38 @@ def get_player_stats_by_period(game_id: str) -> dict:
             if p in passing or p in rushing or p in receiving:
                 return p
         return 1   # last resort
+
+    # ── CAT-H DIAGNOSTIC (game 401772912 only) ───────────────────────────────
+    # Fires before Fix 4/Fix 6 so we see raw accumulator after play loop + Layer 4 A/B.
+    if game_id == "401772912":
+        try:
+            import streamlit as _st_cath
+            _diag_h = ["**🔬 CAT-H raw receiving accumulator — TB @ CAR (pre-Fix4/Fix6)**"]
+            _all_rcv = set()
+            for _rp in receiving:
+                _all_rcv.update(receiving[_rp].keys())
+            _diag_h.append(f"- All receiving keys: `{sorted(_all_rcv)}`")
+            _evans_keys = [k for k in _all_rcv if "evans" in k.lower()]
+            _diag_h.append(f"- Evans keys: `{_evans_keys}`")
+            for _ek in _evans_keys:
+                _tot_rec = sum(receiving[_rp].get(_ek, {}).get("rec", 0) for _rp in receiving)
+                _tot_yds = sum(receiving[_rp].get(_ek, {}).get("yds", 0) for _rp in receiving)
+                _per = {_rp: f"rec={receiving[_rp][_ek].get('rec',0)} yds={receiving[_rp][_ek].get('yds',0)}"
+                        for _rp in sorted(receiving) if _ek in receiving[_rp]}
+                _diag_h.append(f"  **{_ek}**: total rec={_tot_rec} yds={_tot_yds} | periods={_per}")
+            _diag_h.append("- official_totals Evans entries:")
+            for _aid2, _ptots in official_totals.items():
+                _bn = _aid_to_name.get(_aid2, "")
+                if "evans" in _bn.lower():
+                    _diag_h.append(f"  aid={_aid2} name={_bn} receiving={_ptots.get('receiving', {})}")
+            _rna_evans = {k: v for k, v in _resolved_name_to_aid.items() if "evans" in k.lower()}
+            _diag_h.append(f"- _resolved_name_to_aid Evans: `{_rna_evans}`")
+            if not _st_cath.session_state.get("_cath_shown"):
+                _st_cath.session_state["_cath_shown"] = True
+                _st_cath.warning("\n".join(_diag_h))
+        except Exception:
+            pass
+    # ── END CAT-H DIAGNOSTIC ─────────────────────────────────────────────────
 
     cat_specs = {
         "passing":   (passing,   ["att", "comp", "yds", "td", "int"]),
