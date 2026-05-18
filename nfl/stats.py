@@ -163,7 +163,11 @@ def _parse_player_stats(boxscore: dict, stat_category: str) -> list[dict]:
     Extract players from a specific stat category in ESPN boxscore.
     stat_category examples: 'passing', 'rushing', 'receiving', 'defensiveTotals'
     Returns list of dicts with player info + their stat keys/values.
+    Includes 'athlete_id' (numeric string) for ID-based reconciliation —
+    eliminates name-collision bugs when two players share the same abbreviation.
     """
+    import re as _re_ps
+    _AID_PS = _re_ps.compile(r"/athletes/([0-9]+)")
     players_data = []
     teams = boxscore.get("players", [])
 
@@ -186,11 +190,22 @@ def _parse_player_stats(boxscore: dict, stat_category: str) -> list[dict]:
                 if not stats_raw or all(s in ("--", "", "0/0") for s in stats_raw):
                     continue
 
+                # Extract athlete_id: $ref first (old ESPN), then id/uid (new ESPN).
+                _ref  = athlete.get("$ref", "") or ""
+                _m    = _AID_PS.search(_ref)
+                if _m:
+                    _aid = _m.group(1)
+                else:
+                    _raw = str(athlete.get("id", "") or athlete.get("uid", "") or "")
+                    _um  = _re_ps.search(r"(\d+)$", _raw)
+                    _aid = _um.group(1) if _um else ""
+
                 row = {
-                    "Player":   athlete.get("displayName", "Unknown"),
-                    "Pos":      athlete.get("position", {}).get("abbreviation", ""),
-                    "Team":     team_abbr,
-                    "Team Full": team_name,
+                    "Player":     athlete.get("displayName", "Unknown"),
+                    "Pos":        athlete.get("position", {}).get("abbreviation", ""),
+                    "Team":       team_abbr,
+                    "Team Full":  team_name,
+                    "athlete_id": _aid,
                 }
 
                 for key, label, val in zip(keys, labels, stats_raw):
@@ -796,34 +811,6 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
     official_totals, _name_to_aid, _aid_to_name, _aid_to_team_boxscore = _read_official_totals(summary)
 
-    # ── DIAGNOSTIC — remove after one production run ──────────────────────────
-    try:
-        import streamlit as _st_d
-        if not _st_d.session_state.get("_diag2_shown"):
-            _st_d.session_state["_diag2_shown"] = True
-            _d_lines = [f"**🔍 Stats diagnostic for `{game_id}`**"]
-            _d_lines.append(f"- `official_totals` aids: `{list(official_totals.keys())[:6]}`")
-            _d_lines.append(f"- `_name_to_aid` sample: `{dict(list(_name_to_aid.items())[:4])}`")
-            _d_lines.append(f"- `_aid_to_name` sample: `{dict(list(_aid_to_name.items())[:4])}`")
-            _bp = summary.get("boxscore", {}).get("players", [])
-            _d_lines.append(f"- boxscore.players blocks: `{len(_bp)}`")
-            if _bp:
-                _first_block = _bp[0]
-                _cats = _first_block.get("statistics", [])
-                _d_lines.append(f"- first block team: `{_first_block.get('team',{}).get('abbreviation','?')}` · categories: `{[c.get('name') for c in _cats]}`")
-                if _cats:
-                    _first_cat = _cats[0]
-                    _aths = _first_cat.get("athletes", [])
-                    _d_lines.append(f"- first category `{_first_cat.get('name')}` · athletes: `{len(_aths)}`")
-                    if _aths:
-                        _a0 = _aths[0].get("athlete", {})
-                        _d_lines.append(f"- first athlete: `{_a0.get('displayName')}` · ref: `{_a0.get('$ref','')[-40:]}`")
-                        _d_lines.append(f"- first athlete id: `{_a0.get('id')}` · uid: `{_a0.get('uid','')}`")
-                        _d_lines.append(f"- first athlete stats: `{_aths[0].get('stats', [])}`")
-            _st_d.warning("\n".join(_d_lines))
-    except Exception:
-        pass
-    # ── END DIAGNOSTIC ────────────────────────────────────────────────────────
 
     # Runtime name→aid map: populated as _resolve_athlete returns names during the
     # play loop. Bridges the gap between Supabase-resolved names (e.g., "Jalen Hurts")
@@ -1679,6 +1666,16 @@ def _adjust_att(df, player, diff):
 
 
 def _build_reconciliation_report(result: dict, game_id: str) -> list:
+    """Compare per-quarter PBP stats against official boxscore totals.
+
+    Uses athlete_id as the primary key for all lookups — eliminates name-collision
+    bugs (e.g. two J. Williams in the same game) that plagued name-based matching.
+
+    Lookup priority for each official player:
+      1. [ID:{aid}] key in the accumulator DF (when Supabase was unavailable)
+      2. Supabase-resolved display name stored in the accumulator
+      3. ESPN boxscore displayName (same source as official DF)
+    """
     try:
         official = {
             "passing":   get_passing_stats(game_id),
@@ -1690,97 +1687,81 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
 
     by_period = result.get("by_period", result)
 
-
-    # Build a name→aid map from the boxscore so we can fall back to "[ID:AID]"
-    # keys when _resolve_athlete returned None (Supabase unavailable) and the
-    # accumulator used "[ID:XXXX]" format instead of the player's real name.
-    import re as _re_rcn
-    _AID_REF_RE = _re_rcn.compile(r"/athletes/([0-9]+)")
-    _name_to_aid_rcn: dict = {}
-    try:
-        _summary_rcn = get_game_summary(game_id)
-        for _tb in (_summary_rcn or {}).get("boxscore", {}).get("players", []):
-            for _cat in _tb.get("statistics", []):
-                for _ae in _cat.get("athletes", []):
-                    _ath = _ae.get("athlete", {})
-                    _nm  = _ath.get("displayName", "") or ""
-                    _ref = _ath.get("$ref", "") or ""
-                    _m   = _AID_REF_RE.search(_ref)
-                    if _m:
-                        _aid_rcn = _m.group(1)
-                    else:
-                        _raw = (str(_ath.get("id", "") or
-                                    _ath.get("uid", "") or ""))
-                        _uid_m = _re_rcn.search(r"(\d+)$", _raw)
-                        _aid_rcn = _uid_m.group(1) if _uid_m else ""
-                    if _nm and _aid_rcn:
-                        _name_to_aid_rcn[_nm] = _aid_rcn
-    except Exception:
-        pass
-
     valid_periods = ["Q1","Q2","Q3","Q4","OT"]
     extra_ot = [k for k in by_period if k.startswith("OT") and k not in valid_periods]
     check_periods = ["Q1","Q2","Q3","Q4"] + extra_ot + (["OT"] if "OT" in by_period else [])
     mismatches = []
 
-    def _get_col_with_id_fallback(df, player, col):
-        """Get a column value, falling back to [ID:AID] key if name match fails."""
-        val = _get_col(df, player, col)
-        if val != 0:
-            return val
-        # Name match returned 0 — could be a real 0 or a failed match.
-        # Try [ID:AID] key directly if we can find the aid for this player name.
-        aid = _name_to_aid_rcn.get(player)
-        if not aid:
-            return 0
-        id_key = f"[ID:{aid}]"
-        if "Player" not in df.columns:
-            return 0
-        id_row = df[df["Player"] == id_key]
-        if id_row.empty:
-            return 0
-        try:
-            return int(pd.to_numeric(id_row.iloc[0].get(col, 0), errors="coerce") or 0)
-        except Exception:
-            return 0
+    def _get_col_by_aid(df, aid, display_name, col):
+        """Sum a stat column for a player identified by athlete_id.
 
-    def _get_att_with_id_fallback(df, player):
-        """Get ATT value, falling back to [ID:AID] key if name match fails."""
-        val = _get_att(df, player)
-        if val != 0:
-            return val
-        aid = _name_to_aid_rcn.get(player)
-        if not aid:
+        Tries (in order):
+          1. [ID:{aid}] exact key  — used when Supabase was unavailable
+          2. display_name exact key — used when Supabase resolved a real name
+          3. _match_player fallback — last resort for edge cases
+        """
+        if df is None or df.empty or "Player" not in df.columns:
             return 0
-        id_key = f"[ID:{aid}]"
-        if "Player" not in df.columns:
-            return 0
-        id_row = df[df["Player"] == id_key]
-        if id_row.empty:
-            return 0
-        ca = str(id_row.iloc[0].get("C/ATT", "0/0"))
-        try:
-            return int(ca.split("/")[1])
-        except Exception:
-            return 0
+        # 1. ID key
+        if aid:
+            id_key = f"[ID:{aid}]"
+            id_rows = df[df["Player"] == id_key]
+            if not id_rows.empty:
+                try:
+                    return int(pd.to_numeric(id_rows.iloc[0].get(col, 0), errors="coerce") or 0)
+                except Exception:
+                    return 0
+        # 2. Display name exact match
+        if display_name:
+            nm_rows = df[df["Player"] == display_name]
+            if not nm_rows.empty:
+                try:
+                    return int(pd.to_numeric(nm_rows.iloc[0].get(col, 0), errors="coerce") or 0)
+                except Exception:
+                    return 0
+        # 3. Fuzzy fallback (handles abbreviation mismatches, suffixes etc.)
+        return _get_col(df, display_name, col) if display_name else 0
 
-    def _sum_col_across_periods(cat, player, col):
+    def _get_att_by_aid(df, aid, display_name):
+        """Same as _get_col_by_aid but for the C/ATT composite column."""
+        if df is None or df.empty or "Player" not in df.columns:
+            return 0
+        for key in ([f"[ID:{aid}]"] if aid else []) + ([display_name] if display_name else []):
+            rows = df[df["Player"] == key]
+            if not rows.empty:
+                ca = str(rows.iloc[0].get("C/ATT", "0/0"))
+                try:
+                    return int(ca.split("/")[1])
+                except Exception:
+                    return 0
+        return _get_att(df, display_name) if display_name else 0
+
+    def _sum_col_by_aid(cat, aid, display_name, col):
         total = 0
         for p in check_periods:
             df = by_period.get(p, {}).get(cat)
-            if df is None or df.empty:
-                continue
-            total += _get_col_with_id_fallback(df, player, col)
+            total += _get_col_by_aid(df, aid, display_name, col)
         return total
 
-    def _sum_att_across_periods(cat, player):
+    def _sum_att_by_aid(cat, aid, display_name):
         total = 0
         for p in check_periods:
             df = by_period.get(p, {}).get(cat)
-            if df is None or df.empty:
-                continue
-            total += _get_att_with_id_fallback(df, player)
+            total += _get_att_by_aid(df, aid, display_name)
         return total
+
+    def _last_period_by_aid(cat, aid, display_name):
+        """Find the last period that has data for this player by ID or name."""
+        for p in reversed(["Q1","Q2","Q3","Q4"]):
+            df = by_period.get(p, {}).get(cat)
+            if df is None or df.empty or "Player" not in df.columns:
+                continue
+            if aid and (f"[ID:{aid}]" in df["Player"].values or
+                        (display_name and display_name in df["Player"].values)):
+                return p
+            if display_name and not _match_player(df, display_name).empty:
+                return p
+        return None
 
     for cat, cols in [
         ("passing",   ["YDS","TD","INT"]),
@@ -1792,17 +1773,18 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
             continue
 
         for _, off_row in off_df.iterrows():
-            player = str(off_row.get("Player",""))
+            player = str(off_row.get("Player", ""))
+            aid    = str(off_row.get("athlete_id", "") or "")
             if not player:
                 continue
 
             if cat == "passing" and "C/ATT" in off_df.columns:
-                ca = str(off_row.get("C/ATT","0/0"))
+                ca = str(off_row.get("C/ATT", "0/0"))
                 try:
                     off_att = int(ca.split("/")[1])
-                    pbp_att = _sum_att_across_periods(cat, player)
+                    pbp_att = _sum_att_by_aid(cat, aid, player)
                     if off_att != pbp_att:
-                        last_p = _last_period(by_period, cat, player, ["Q1","Q2","Q3","Q4"])
+                        last_p = _last_period_by_aid(cat, aid, player)
                         mismatches.append((player, cat, "ATT", pbp_att, off_att, last_p or "unknown"))
                 except Exception:
                     pass
@@ -1812,9 +1794,9 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
                     continue
                 try:
                     off_val = int(pd.to_numeric(off_row.get(col, 0), errors="coerce") or 0)
-                    pbp_val = _sum_col_across_periods(cat, player, col)
+                    pbp_val = _sum_col_by_aid(cat, aid, player, col)
                     if off_val != pbp_val:
-                        last_p = _last_period(by_period, cat, player, ["Q1","Q2","Q3","Q4"])
+                        last_p = _last_period_by_aid(cat, aid, player)
                         mismatches.append((player, cat, col, pbp_val, off_val, last_p or "unknown"))
                 except Exception:
                     pass
