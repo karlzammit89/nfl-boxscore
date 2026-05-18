@@ -54,6 +54,11 @@ import pandas as pd
 from typing import Optional
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+
+# Module-level athlete name cache — persists across all game calls in a session.
+# Without this, every game resets the cache and re-queries Supabase + ESPN for
+# every athlete, causing rate-limit failures and [ID:XXXX] fallback keys.
+_ATHLETE_NAME_CACHE: dict = {}
 try:
     from .api import get_game_summary, get_linescore, get_scoring_plays, get_core_plays, get_athlete_displayname
 except ImportError:
@@ -516,13 +521,28 @@ def get_player_stats_by_period(game_id: str) -> dict:
     if not core_plays:
         return {}
 
-    # ── Athlete resolution (unchanged) ────────────────────────────────────────
+    # ── Athlete resolution ────────────────────────────────────────────────────
     _ID_RE = _re.compile(r"/athletes/([0-9]+)")
-    _name_cache = {}
+    # Use the module-level cache — shared across all game calls in this session.
+    # This prevents re-querying Supabase/ESPN for the same athlete in every game.
+    _name_cache = _ATHLETE_NAME_CACHE
 
-    def _resolve_athlete(athlete_id: str) -> str:
+    def _resolve_athlete(athlete_id: str, boxscore_name: str = "") -> str:
+        """Resolve athlete_id to a display name.
+
+        Lookup order (fastest/cheapest first):
+          1. Module-level _name_cache  — in-memory, survives across all games in session
+          2. Boxscore displayName      — free, already fetched, no extra API call
+          3. Supabase athletes table   — cached DB lookup
+          4. ESPN get_athlete_displayname — per-athlete API, rate-limited; last resort
+        """
         if athlete_id in _name_cache:
             return _name_cache[athlete_id]
+        # Fast path: use boxscore's own displayName when available.
+        # Eliminates ALL per-athlete ESPN calls for players active in the game.
+        if boxscore_name:
+            _name_cache[athlete_id] = boxscore_name
+            return boxscore_name
         _sb = None
         try:
             import streamlit as _st
@@ -629,8 +649,12 @@ def get_player_stats_by_period(game_id: str) -> dict:
     # Examples: "PENALTY on PHI-J.Smith, Holding", "PENALTY on PHI, Holding"
     _PEN_ON_RE = _re.compile(r"PENALTY\s+on\s+([A-Z]{2,3})", _re.I)
     _ESPN_ABBR_ALIASES = {
+        # Confirmed ESPN API alternates vs standard NFL abbreviations
         "CLV": "CLE", "WAS": "WSH", "HST": "HOU",
         "ARZ": "ARI", "BLT": "BAL", "LA":  "LAR",
+        "GBP": "GB",  "KCC": "KC",  "NOS": "NO",
+        "SFO": "SF",  "TBB": "TB",  "NEP": "NE",
+        "SDG": "LAC", "STL": "LAR", "OAK": "LV",
     }
 
     def _is_off_pen_text(text: str, pos_team: str) -> bool:
@@ -838,7 +862,10 @@ def get_player_stats_by_period(game_id: str) -> dict:
             aid  = _extract_id(ref)
             if not aid:
                 continue
-            name = _resolve_athlete(aid)
+            # Resolve name: boxscore displayName is the free first fallback.
+            # _name_to_aid was built from the boxscore so we can look up the name directly.
+            _boxscore_name = _aid_to_name.get(aid, "")
+            name = _resolve_athlete(aid, _boxscore_name)
             if not name:
                 name = f"[ID:{aid}]"   # fallback — never drop a play due to name failure
             # Record this name↔aid binding so Layer 4 can look up the player
@@ -1109,11 +1136,17 @@ def get_player_stats_by_period(game_id: str) -> dict:
 
             # ── Fix 3: Zero phantom credits ───────────────────────────────────
             # Player has accumulator stats but no boxscore entry for this category.
-            # Force every period's value to 0 (overrides any phantom credits).
+            # Force ALL per-period values to 0 (overrides any phantom credits).
             if cat not in player_totals:
+                _zero_keys = {
+                    "passing":   ("att", "comp", "yds", "td", "int"),
+                    "rushing":   ("car", "yds", "td"),
+                    "receiving": ("rec", "yds", "td"),
+                }.get(cat, ("yds",))
                 for p in list(acc.keys()):
                     if player in acc[p]:
-                        acc[p][player]["yds"] = 0
+                        for _zk in _zero_keys:
+                            acc[p][player][_zk] = 0
                 continue
 
             off = player_totals[cat]
@@ -1514,10 +1547,19 @@ def _reconcile(result: dict, game_id: str) -> None:
 
 
 def _last_period(result, cat, player, periods):
+    """Find the last period that has data for this player.
+    Searches by name first, then by [ID:AID] key as fallback (for when
+    Supabase was unavailable and accumulator used [ID:] keys).
+    """
+    import re as _re_lp
+    _AID_LP = _re_lp.compile(r"/athletes/([0-9]+)")
     for p in reversed(periods):
         df = result.get(p, {}).get(cat)
-        if df is not None and not df.empty and _in_df(df, player):
+        if df is None or df.empty:
+            continue
+        if _in_df(df, player):
             return p
+    # [ID:AID] fallback — build reverse map from boxscore if possible
     for h in ["2H","1H"]:
         df = result.get(h, {}).get(cat)
         if df is not None and not df.empty and _in_df(df, player):
