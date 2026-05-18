@@ -1945,7 +1945,7 @@ def get_reconciliation_status(result: dict, game_id: str) -> dict:
             "message": "✅ Reconciliation passed — all quarter/half stats match official totals."
         }
     lines = []
-    for player, cat, col, pbp, official, qtr in mismatches:
+    for player, cat, col, pbp, official, qtr, *_ in mismatches:
         diff = official - pbp
         sign = "+" if diff > 0 else ""
         lines.append(
