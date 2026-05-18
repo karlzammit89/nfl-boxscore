@@ -1651,29 +1651,6 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
 
     by_period = result.get("by_period", result)
 
-    # ── TEMPORARY DIAGNOSTIC — remove after one production run ───────────────
-    try:
-        import streamlit as _st_diag
-        _diag_lines = [f"**🔍 Recon diagnostic for `{game_id}`**"]
-        _diag_lines.append(f"- `result` keys: `{list(result.keys())[:8]}`")
-        _diag_lines.append(f"- `by_period` keys: `{list(by_period.keys())}`")
-        _q1_pass = by_period.get("Q1", {}).get("passing")
-        if _q1_pass is not None and not _q1_pass.empty:
-            _diag_lines.append(f"- Q1 passing players: `{_q1_pass['Player'].tolist()}`")
-            _diag_lines.append(f"- Q1 passing YDS: `{_q1_pass['YDS'].tolist()}`")
-        else:
-            _diag_lines.append(f"- Q1 passing: **EMPTY or None**")
-        _fg_pass = by_period.get("Full Game", {}).get("passing")
-        if _fg_pass is not None and not _fg_pass.empty:
-            _diag_lines.append(f"- Full Game passing players: `{_fg_pass['Player'].tolist()}`")
-        else:
-            _diag_lines.append(f"- Full Game passing: **EMPTY or None**")
-        if _st_diag.session_state.get("_recon_diag_shown", 0) < 1:
-            _st_diag.session_state["_recon_diag_shown"] = _st_diag.session_state.get("_recon_diag_shown", 0) + 1
-            _st_diag.warning("\n".join(_diag_lines))
-    except Exception:
-        pass
-    # ── END DIAGNOSTIC ────────────────────────────────────────────────────────
 
     # Build a name→aid map from the boxscore so we can fall back to "[ID:AID]"
     # keys when _resolve_athlete returned None (Supabase unavailable) and the
