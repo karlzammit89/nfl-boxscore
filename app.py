@@ -3397,6 +3397,10 @@ elif st.session_state.view == "reconcile":
                         if _c5s: _dbg_store.extend([{"game":_label,"game_id":_gid,"section":"C5-car","rusher":n,"our_CAR":d["our_CAR"],"skipped":d["skipped_plays"]} for n,d in sorted(_c5s.items())])
                         if _c6: _dbg_store.extend(_rwg(_c6,"C6-neg"))
                         st.session_state[f"dbg_{_gid}"] = _dbg_store
+                        # Store Hutchinson accumulator diagnostic if present
+                        _hd = (_gdata.get("by_period") or {}).get("_hutchinson_diag")
+                        if _hd:
+                            st.session_state[f"hutch_diag_{_gid}"] = _hd
                     except Exception:
                         pass  # debug build failure is non-critical
 
@@ -3546,5 +3550,40 @@ elif st.session_state.view == "reconcile":
                         st.dataframe(_sec_df, use_container_width=True, hide_index=True)
                 else:
                     st.caption("Debug data not available for this game.")
+
+                # ── Hutchinson accumulator diagnostic ─────────────────────────
+                _hd_key  = f"hutch_diag_{_dgid}"
+                _hd_data = st.session_state.get(_hd_key)
+                if _hd_data:
+                    with st.expander("🔬 Hutchinson accumulator diagnostic", expanded=False):
+                        import json as _json
+                        for _hd_aid, _hd_info in _hd_data.get("after_play_loop", {}).items():
+                            st.markdown(f"**Aid: {_hd_aid}** — boxscore name: `{_hd_info.get('boxscore_name')}` | resolved: `{_hd_info.get('resolved_name') or '—'}`")
+                            st.caption("Keys checked in accumulator:")
+                            st.code(", ".join(_hd_info.get("keys_checked", [])))
+                            st.caption("Snapshots AFTER play loop (before Layer 4):")
+                            for _hd_k, _hd_snap in _hd_info.get("snapshots", {}).items():
+                                _has_data = any(_hd_snap.get(c) for c in ("passing","rushing","receiving"))
+                                if _has_data:
+                                    st.markdown(f"`{_hd_k}`")
+                                    st.json(_hd_snap, expanded=True)
+                            if not any(
+                                any(_hd_info.get("snapshots", {}).get(_k, {}).get(c)
+                                    for c in ("passing","rushing","receiving"))
+                                for _k in _hd_info.get("keys_checked", [])
+                            ):
+                                st.warning("⚠️ No accumulator entries found for any key — player got zero direct credit in play loop")
+
+                        if _hd_data.get("official_totals"):
+                            st.caption("Official totals (from ESPN boxscore):")
+                            st.json(_hd_data["official_totals"], expanded=True)
+
+                        if _hd_data.get("layer4_decisions"):
+                            st.caption("Layer 4 residual decisions:")
+                            st.json(_hd_data["layer4_decisions"], expanded=True)
+
+                        if _hd_data.get("after_layer4"):
+                            st.caption("Snapshots AFTER Layer 4:")
+                            st.json(_hd_data["after_layer4"], expanded=True)
 
 # ══ END RECONCILE ══════════════════════════════════════════════════════════════
