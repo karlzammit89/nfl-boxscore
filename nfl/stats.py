@@ -866,22 +866,21 @@ def get_player_stats_by_period(game_id: str) -> dict:
         return stat_yds, False   # fallback to stat_yds; parseable=False flags L4 risk
 
     # ── Clock-consistency pre-pass ───────────────────────────────────────────
-    # ESPN's play["period"]["number"] is occasionally wrong on individual plays
-    # (confirmed across Oct/Nov/Dec dataset).  The game clock is the authoritative
-    # source: a period boundary has occurred between play[n-1] and play[n] if and
-    # only if clock[n] > clock[n-1] (the clock reset upward).  A play at 0:00
-    # still belongs to the current period — the NEXT play shows the reset.
+    # ESPN's play["period"]["number"] is occasionally wrong on individual plays.
+    # The game clock is the authoritative source: a period boundary has occurred
+    # between play[n-1] and play[n] if and only if clock[n] > clock[n-1]
+    # (the clock reset upward).  A play at 0:00 belongs to the current period —
+    # the next play shows the reset.
     #
-    # Rule:
-    #   is_boundary = clock[n] > clock[n-1]
-    #   period[n] ≠ period[n-1] AND NOT is_boundary → wrong tag, use period[n-1]
-    #   period[n] == period[n-1] AND is_boundary    → missed tag, use period[n-1]+1
+    # Correction rules (first match wins):
+    #   period tag changed, clock did NOT reset → wrong tag → use period[n-1]
+    #   period tag same,    clock DID    reset  → missed tag → use period[n-1]+1
     #
-    # Only fires when period tag contradicts clock.  Correct games (period and
-    # clock agree) are never touched → zero regression risk on passing games.
+    # Only fires when ESPN's tag contradicts the clock.  Games where all period
+    # tags are correct are never touched — zero regression risk.
 
-    def _clock_to_secs(clock_str: str) -> int:
-        """Parse 'MM:SS' to total seconds. Returns -1 on failure."""
+    def _clock_to_secs(clock_str):
+        """Parse 'MM:SS' → total seconds. Returns -1 on failure."""
         try:
             parts = str(clock_str).strip().split(":")
             if len(parts) == 2:
@@ -890,35 +889,31 @@ def get_player_stats_by_period(game_id: str) -> dict:
             pass
         return -1
 
-    _corrected_periods: dict[str, int] = {}  # play_id → corrected period
-    _prev_clock  = -1
-    _prev_period = -1
+    _corrected_periods = {}   # play_id → corrected period number
+    _prev_clock_secs   = -1
+    _prev_period       = -1
 
     for _cp in core_plays:
-        _cp_id  = _cp.get("id", "")
-        _cp_raw_period = _pbp_period(_cp)
-        if _cp_raw_period == 0:
+        _cp_id     = _cp.get("id", "")
+        _cp_raw    = _pbp_period(_cp)
+        if _cp_raw == 0:
             _corrected_periods[_cp_id] = 0
             continue
-
         _cp_clock = _clock_to_secs((_cp.get("clock") or {}).get("displayValue", ""))
-
-        if _prev_period == -1 or _prev_clock == -1 or _cp_clock == -1:
-            # No previous data or unparseable clock — accept ESPN's tag
-            _corrected_periods[_cp_id] = _cp_raw_period
+        if _prev_period == -1 or _prev_clock_secs == -1 or _cp_clock == -1:
+            _corrected_periods[_cp_id] = _cp_raw
         else:
-            _is_boundary = _cp_clock > _prev_clock  # clock went UP = reset
-            if _cp_raw_period != _prev_period and not _is_boundary:
-                # Period tag changed but clock did not reset → wrong tag
+            _boundary = _cp_clock > _prev_clock_secs   # clock went UP = reset
+            if _cp_raw != _prev_period and not _boundary:
+                # Period tag changed but no clock reset → wrong tag
                 _corrected_periods[_cp_id] = _prev_period
-            elif _cp_raw_period == _prev_period and _is_boundary:
-                # Clock reset but period tag didn't increment → missed boundary
+            elif _cp_raw == _prev_period and _boundary:
+                # Clock reset but period tag did not increment → missed boundary
                 _corrected_periods[_cp_id] = _prev_period + 1
             else:
-                _corrected_periods[_cp_id] = _cp_raw_period
-
-        _prev_clock  = _cp_clock
-        _prev_period = _corrected_periods[_cp_id]
+                _corrected_periods[_cp_id] = _cp_raw
+        _prev_clock_secs = _cp_clock
+        _prev_period     = _corrected_periods[_cp_id]
 
     # ── Main play loop ────────────────────────────────────────────────────────
     _seen_ids = set()
@@ -937,7 +932,7 @@ def get_player_stats_by_period(game_id: str) -> dict:
             continue
 
         # Layer 3: period=0 → skip; period≥5 → OT bucket
-        # Use clock-corrected period (pre-pass above) instead of raw ESPN tag.
+        # Use clock-corrected period from pre-pass above.
         period = _corrected_periods.get(play_id, _pbp_period(play))
         if period == 0:
             continue
@@ -1013,20 +1008,20 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 _play_log[(rcv, "receiving")].append(
                     (eff_period, yds_to_credit, text_str, is_pen))
 
-            # F-lateral: ESPN emits no participant for the lateral recipient —
-            # receiver=None on lateral plays (confirmed across full season).
-            # Parse the play text to credit both players correctly per NFL rules:
-            #   primary receiver → yards to lateral point
-            #   lateral recipient → yards gained after lateral (= total - primary)
-            # Falls back silently if text parse fails (primary already credited above).
+            # F-lateral: ESPN emits no participant for the lateral recipient
+            # (receiver=None confirmed across full season data).  Parse play
+            # text to split credit correctly per NFL rules:
+            #   primary receiver  → yards gained to the lateral point
+            #   lateral recipient → yards gained after the lateral
+            # Falls back silently if text parse fails — no change to credits.
             if rcv is None and "Lateral" in text_str:
-                # Pattern A: "for X yards. Lateral to A.Name" (normal case)
+                # Pattern A: "for X yards. Lateral to A.Name"
                 _lat_m = _re.search(
                     r"for\s+(-?\d+)\s+yards?\.\s+Lateral\s+to\s+"
                     r"([A-Z][a-z]?\.[A-Z][A-Za-z'\-]+)",
                     text_str, _re.I
                 )
-                # Pattern B: "for no gain. Lateral to A.Name" (0 yards to lateral point)
+                # Pattern B: "for no gain. Lateral to A.Name" (primary gets 0)
                 _lat_m2 = (None if _lat_m else _re.search(
                     r"for\s+no\s+gain\.\s+Lateral\s+to\s+"
                     r"([A-Z][a-z]?\.[A-Z][A-Za-z'\-]+)",
@@ -1038,54 +1033,37 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 elif _lat_m2:
                     _primary_yds   = 0
                     _lat_name_abbr = _lat_m2.group(1)
-                if _lat_m or _lat_m2:
-                    pass  # primary_yds and lat_name_abbr now set
-                if _lat_m or _lat_m2:
-                    _primary_yds   = _primary_yds
-                    _lateral_yds   = yds_to_credit - _primary_yds  # yards after lateral
-                    # Correct the primary receiver's yardage (already credited full total)
-                    # Find primary receiver by matching passer's completion above
-                    # We re-attribute: primary gets _primary_yds, not full yds_to_credit.
-                    # The primary was credited yds_to_credit via text parse above.
-                    # Adjust by the difference so we don't double-process the base credit.
-                    _primary_key = None
-                    for _pk, _pv in receiving[eff_period].items():
-                        # Find whichever receiver was just credited on this play
-                        # by matching name abbreviation in play text before "Lateral"
-                        _pre_lat = text_str[:_lat_m.start()]
-                        if _lat_name_abbr[:2] not in _pk and _pk in _pre_lat:
-                            _primary_key = _pk
-                            break
-                    # Simpler: look for receiver mentioned before "Lateral" in text
-                    _pre_m = _re.search(r"to\s+([A-Z][a-z]?\.[A-Z][A-Za-z'\-]+)",
-                                        text_str[:_lat_m.start()], _re.I)
+                else:
+                    _primary_yds = _lat_name_abbr = None
+
+                if _lat_name_abbr is not None:
+                    _lateral_yds = yds_to_credit - _primary_yds
+                    # Correct primary receiver: find the entry just credited above
+                    # by matching abbreviation from text before "Lateral"
+                    _pre_m = _re.search(
+                        r"to\s+([A-Z][a-z]?\.[A-Z][A-Za-z'\-]+)",
+                        text_str[:text_str.upper().find("LATERAL")], _re.I
+                    )
                     if _pre_m:
                         _primary_abbr = _pre_m.group(1)
-                        # Find accumulator key whose abbreviation matches
                         for _pk in list(receiving[eff_period].keys()):
                             _pk_parts = _pk.replace("[ID:", "").replace("]", "").split()
-                            _pk_abbr = (f"{_pk_parts[0][0]}.{_pk_parts[-1]}"
-                                        if len(_pk_parts) >= 2 else "")
+                            _pk_abbr  = (f"{_pk_parts[0][0]}.{_pk_parts[-1]}"
+                                         if len(_pk_parts) >= 2 else "")
                             if _pk_abbr == _primary_abbr or _primary_abbr in _pk:
-                                # Correct primary: reduce by lateral_yds
                                 if _lateral_yds != 0:
                                     receiving[eff_period][_pk]["yds"] -= _lateral_yds
-                                _primary_key = _pk
                                 break
                     # Credit lateral recipient
                     if _lateral_yds > 0:
-                        # Resolve lateral recipient name from abbreviation
-                        _lat_recv_key = None
                         for _rk in list(receiving[eff_period].keys()):
                             _rk_parts = _rk.replace("[ID:", "").replace("]", "").split()
-                            _rk_abbr = (f"{_rk_parts[0][0]}.{_rk_parts[-1]}"
-                                        if len(_rk_parts) >= 2 else "")
+                            _rk_abbr  = (f"{_rk_parts[0][0]}.{_rk_parts[-1]}"
+                                         if len(_rk_parts) >= 2 else "")
                             if _rk_abbr == _lat_name_abbr or _lat_name_abbr in _rk:
-                                _lat_recv_key = _rk
+                                receiving[eff_period][_rk]["rec"] += 1
+                                receiving[eff_period][_rk]["yds"] += _lateral_yds
                                 break
-                    if _lateral_yds > 0 and _lat_recv_key:
-                        receiving[eff_period][_lat_recv_key]["rec"] += 1
-                        receiving[eff_period][_lat_recv_key]["yds"] += _lateral_yds
 
         # ── Pass Incompletion (type_id=3) ─────────────────────────────────────
         elif type_id == "3":
@@ -1343,12 +1321,12 @@ def get_player_stats_by_period(game_id: str) -> dict:
                                 acc[p][player][_zk] = 0
                     continue
 
-            # F-CAT-NEW-A: same gate as F-1 applied to receiving.
-            # When ESPN's boxscore credits 0 receptions AND 0 yards for this
-            # player, any PBP receiving credits we built are wrong (text-parsed
-            # name collision, wrong participant $ref, or player not on active
-            # roster for this game).  Gate: BOTH rec and yds must be 0 — if
-            # ESPN credits even one yard or catch we leave the data alone.
+            # F-CAT-NEW-A: mirror of F-1 for receiving.
+            # When ESPN's official boxscore credits 0 receptions AND 0 yards,
+            # any PBP receiving credits are wrong (text-parsed name collision,
+            # wrong participant $ref in ESPN PBP, player not on active roster).
+            # Gate: BOTH rec and yds must be 0 — if ESPN credits even one yard
+            # or catch we leave the data alone.
             if cat == "receiving":
                 _off_recv = player_totals["receiving"]
                 if _off_recv.get("rec", 0) == 0 and _off_recv.get("yds", 0) == 0:
