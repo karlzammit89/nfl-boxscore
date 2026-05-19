@@ -3089,7 +3089,7 @@ elif st.session_state.view == "reconcile":
         st.rerun()
     if _is_done:
         st.caption("✅ Run complete — press **Clear** to reset before starting a new run.")
-        # ── Run summary detail block — Option B inline pills ──────────────────
+        # ── Run summary detail block — Option A stat cards ────────────────────
         _done_res     = st.session_state.recon_results or []
         _done_chunks  = st.session_state.recon_chunks or []
         _done_total   = sum(len(c) for c in _done_chunks)
@@ -3104,40 +3104,53 @@ elif st.session_state.view == "reconcile":
         _done_review  = sum(1 for row in _all_cause_rows if row.get("Cause","") == "🔍 Investigate")
         _done_noise   = sum(1 for row in _all_cause_rows if row.get("Cause","") == "⚠️ ESPN gap")
 
-        # Inline style constants — no CSS classes, guaranteed to render on Streamlit Cloud
-        _S_WRAP  = "background:#1e2129;border:1px solid #2d3139;border-radius:6px;padding:10px 14px;display:flex;flex-direction:column;gap:4px;font-size:12px;margin-top:4px;line-height:1.5"
-        _S_ROW   = "display:flex;align-items:center;gap:8px"
-        _S_KEY   = "color:#6b7280;font-size:11px;min-width:90px;flex-shrink:0"
-        _S_VAL   = "color:#e5e7eb"
-        _S_DIV   = "height:1px;background:#2d3139;margin:3px 0"
-        _S_PILL  = "display:inline-block;padding:1px 8px;border-radius:20px;font-size:11px;font-weight:500;margin-right:3px"
+        # Inline style constants — no CSS classes, guaranteed on Streamlit Cloud
+        _S_GRID = "display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:6px"
+        _S_CARD = "background:#1e2129;border:1px solid #2d3139;border-radius:6px;padding:10px 12px"
+        _S_NUM  = "font-size:20px;font-weight:700;margin:0 0 2px;line-height:1.2"
+        _S_LBL  = "font-size:11px;color:#6b7280;margin:0"
+        _S_SUB  = "font-size:11px;color:#9ca3af;margin-top:2px"
 
-        # Result pills
-        _res_pills = f'<span style="{_S_PILL};background:#14532d;color:#4ade80">✅ {_done_pass} passed ({_done_pct}%)</span>'
-        if _done_fail:
-            _res_pills += f'<span style="{_S_PILL};background:#450a0a;color:#f87171">❌ {_done_fail} failed</span>'
-        if _done_err:
-            _res_pills += f'<span style="{_S_PILL};background:#422006;color:#fb923c">⚠️ {_done_err} error{"s" if _done_err!=1 else ""}</span>'
+        # Card 1 — Games
+        _c1 = f"""<div style="{_S_CARD}">
+  <div style="{_S_NUM};color:#e5e7eb">{_done_total}</div>
+  <div style="{_S_LBL}">Games</div>
+  <div style="{_S_SUB}">{len(_done_chunks)} chunk{"s" if len(_done_chunks)!=1 else ""} · {_done_start} → {_done_end}</div>
+</div>"""
 
-        # Causes pills — only non-zero counts, row hidden if nothing to show
-        _causes_row = ""
-        if _done_logic or _done_review or _done_noise:
-            _c = ""
-            if _done_logic:
-                _c += f'<span style="{_S_PILL};background:#450a0a;color:#f87171">❗ {_done_logic} logic bug{"s" if _done_logic!=1 else ""}</span>'
-            if _done_review:
-                _c += f'<span style="{_S_PILL};background:#1e293b;color:#94a3b8">🔍 {_done_review} to review</span>'
-            if _done_noise:
-                _c += f'<span style="{_S_PILL};background:#422006;color:#fb923c">⚠️ {_done_noise} ESPN noise</span>'
-            _causes_row = f'<div style="{_S_ROW}"><span style="{_S_KEY}">Causes</span><span>{_c}</span></div>'
+        # Card 2 — Pass rate (green when 100%, amber when partial, red when 0%)
+        _pct_colour = "#4ade80" if _done_pct == 100 else ("#fb923c" if _done_pct >= 50 else "#f87171")
+        _pass_sub   = f"{_done_pass} passed"
+        if _done_fail: _pass_sub += f" · {_done_fail} failed"
+        if _done_err:  _pass_sub += f" · {_done_err} error{'s' if _done_err!=1 else ''}"
+        _c2 = f"""<div style="{_S_CARD}">
+  <div style="{_S_NUM};color:{_pct_colour}">{_done_pct}%</div>
+  <div style="{_S_LBL}">Pass rate</div>
+  <div style="{_S_SUB}">{_pass_sub}</div>
+</div>"""
 
-        st.markdown(f"""<div style="{_S_WRAP}">
-  <div style="{_S_ROW}"><span style="{_S_KEY}">Date range</span><span style="{_S_VAL}">{_done_start} → {_done_end}</span></div>
-  <div style="{_S_ROW}"><span style="{_S_KEY}">Games</span><span style="{_S_VAL}">{_done_total} game{"s" if _done_total!=1 else ""} · {len(_done_chunks)} chunk{"s" if len(_done_chunks)!=1 else ""}</span></div>
-  <div style="{_S_DIV}"></div>
-  <div style="{_S_ROW}"><span style="{_S_KEY}">Results</span><span>{_res_pills}</span></div>
-  {_causes_row}
-</div>""", unsafe_allow_html=True)
+        # Card 3 — Logic bugs + to review
+        _bug_colour = "#f87171" if _done_logic else "#4ade80"
+        _bug_sub    = f"{_done_review} to review" if _done_review else "none to review"
+        _c3 = f"""<div style="{_S_CARD}">
+  <div style="{_S_NUM};color:{_bug_colour}">{_done_logic}</div>
+  <div style="{_S_LBL}">Logic Bugs</div>
+  <div style="{_S_SUB}">{_bug_sub}</div>
+</div>"""
+
+        # Card 4 — ESPN noise
+        _noise_colour = "#fb923c" if _done_noise else "#4ade80"
+        _noise_sub    = f"{_done_err} error{'s' if _done_err!=1 else ''}" if _done_err else "all clean"
+        _c4 = f"""<div style="{_S_CARD}">
+  <div style="{_S_NUM};color:{_noise_colour}">{_done_noise}</div>
+  <div style="{_S_LBL}">ESPN Noise</div>
+  <div style="{_S_SUB}">{_noise_sub}</div>
+</div>"""
+
+        st.markdown(
+            f'<div style="{_S_GRID}">{_c1}{_c2}{_c3}{_c4}</div>',
+            unsafe_allow_html=True,
+        )
 
     # ── Build game ID list and kick off chunked processing ───────────────────
     if _run_recon:
