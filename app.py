@@ -3105,7 +3105,7 @@ elif st.session_state.view == "reconcile":
         _done_noise   = sum(1 for row in _all_cause_rows if row.get("Cause","") == "⚠️ ESPN gap")
 
         # Inline style constants — no CSS classes, guaranteed on Streamlit Cloud
-        _S_GRID = "display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:6px"
+        _S_GRID = "display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:6px"
         _S_CARD = "background:#1e2129;border:1px solid #2d3139;border-radius:6px;padding:10px 12px"
         _S_NUM  = "font-size:20px;font-weight:700;margin:0 0 2px;line-height:1.2"
         _S_LBL  = "font-size:11px;color:#6b7280;margin:0"
@@ -3118,7 +3118,7 @@ elif st.session_state.view == "reconcile":
   <div style="{_S_SUB}">{len(_done_chunks)} chunk{"s" if len(_done_chunks)!=1 else ""} · {_done_start} → {_done_end}</div>
 </div>"""
 
-        # Card 2 — Pass rate (green when 100%, amber when partial, red when 0%)
+        # Card 2 — Pass rate
         _pct_colour = "#4ade80" if _done_pct == 100 else ("#fb923c" if _done_pct >= 50 else "#f87171")
         _pass_sub   = f"{_done_pass} passed"
         if _done_fail: _pass_sub += f" · {_done_fail} failed"
@@ -3129,26 +3129,35 @@ elif st.session_state.view == "reconcile":
   <div style="{_S_SUB}">{_pass_sub}</div>
 </div>"""
 
-        # Card 3 — Logic bugs + to review
+        # Card 3 — Logic Bugs (own number, own card)
         _bug_colour = "#f87171" if _done_logic else "#4ade80"
-        _bug_sub    = f"{_done_review} to review" if _done_review else "none to review"
+        _bug_sub    = "fix needed" if _done_logic else "✓ none"
         _c3 = f"""<div style="{_S_CARD}">
   <div style="{_S_NUM};color:{_bug_colour}">{_done_logic}</div>
-  <div style="{_S_LBL}">Logic Bugs</div>
-  <div style="{_S_SUB}">{_bug_sub}</div>
+  <div style="{_S_LBL}">❗ Logic Bugs</div>
+  <div style="{_S_SUB};color:{_bug_colour}">{_bug_sub}</div>
 </div>"""
 
-        # Card 4 — ESPN noise
-        _noise_colour = "#fb923c" if _done_noise else "#4ade80"
-        _noise_sub    = f"{_done_err} error{'s' if _done_err!=1 else ''}" if _done_err else "all clean"
+        # Card 4 — To Review (own number, own card)
+        _rev_colour = "#fb923c" if _done_review else "#4ade80"
+        _rev_sub    = "borderline cases" if _done_review else "✓ none"
         _c4 = f"""<div style="{_S_CARD}">
+  <div style="{_S_NUM};color:{_rev_colour}">{_done_review}</div>
+  <div style="{_S_LBL}">🔍 To Review</div>
+  <div style="{_S_SUB};color:{_rev_colour}">{_rev_sub}</div>
+</div>"""
+
+        # Card 5 — ESPN Noise (own number, own card)
+        _noise_colour = "#fb923c" if _done_noise else "#4ade80"
+        _noise_sub    = "measurement diff" if _done_noise else "✓ none"
+        _c5 = f"""<div style="{_S_CARD}">
   <div style="{_S_NUM};color:{_noise_colour}">{_done_noise}</div>
-  <div style="{_S_LBL}">ESPN Noise</div>
-  <div style="{_S_SUB}">{_noise_sub}</div>
+  <div style="{_S_LBL}">⚠️ ESPN Noise</div>
+  <div style="{_S_SUB};color:{_noise_colour}">{_noise_sub}</div>
 </div>"""
 
         st.markdown(
-            f'<div style="{_S_GRID}">{_c1}{_c2}{_c3}{_c4}</div>',
+            f'<div style="{_S_GRID}">{_c1}{_c2}{_c3}{_c4}{_c5}</div>',
             unsafe_allow_html=True,
         )
 
@@ -3206,8 +3215,7 @@ elif st.session_state.view == "reconcile":
         _has_mis = _has_dbg = False
 
     st.divider()
-    # Change 1: both buttons same size, side by side, left-aligned
-    _pdl1, _pdl2, _pdl3 = st.columns([2, 2, 3])
+    _pdl1, _pdl2 = st.columns(2)
     with _pdl1:
         st.download_button("📥 Download Mismatches CSV",
                            data=pd.DataFrame(_pre_rows).to_csv(index=False) if _has_mis else "",
