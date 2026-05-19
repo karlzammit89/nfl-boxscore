@@ -894,65 +894,14 @@ elif st.session_state.view == "boxscore":
     with tabs[2]: show_period_df("receiving", "YDS")
     with tabs[3]:
         if period_filter == "Full Game":
-            show_df(data["defense"], period_filter, "TOT", drop_cols=["Pos"])
+            show_df(data["defense"], period_filter, "TOT", drop_cols=["Pos", "athlete_id", "Team Full"])
         else:
             st.info("ℹ️ Defensive stats are only available for Full Game. Per-quarter/half breakdowns are not provided in this view.")
     with tabs[4]:
         if period_filter == "Full Game":
-            show_df(data["kicking"], period_filter, drop_cols=["Pos"])
+            show_df(data["kicking"], period_filter, drop_cols=["Pos", "athlete_id", "Team Full"])
         else:
             st.info("ℹ️ Kicking stats are only available for Full Game. Per-quarter/half breakdowns are not provided in this view.")
-
-    # ── Prop Checker ──────────────────────────────────────────────────────────
-    with st.expander("🎯 Prop Checker by Quarter", expanded=False):
-        st.caption(
-            "Set a minimum threshold. Each player shows their stat per quarter "
-            "with ✅ (hit) or ❌ (missed). The final column shows if they hit it in ALL quarters."
-        )
-        # Determine active group: passing=1, rushing=2, receiving=3, none=0
-        _q_pass_on = bool(st.session_state.get("thr_pass_yds",0) or st.session_state.get("thr_pass_td",0))
-        _q_rush_on = bool(st.session_state.get("thr_rush_yds",0) or st.session_state.get("thr_rush_td",0))
-        _q_recv_on = bool(st.session_state.get("thr_recv_rec",0) or st.session_state.get("thr_recv_yds",0) or st.session_state.get("thr_recv_td",0))
-        _q_dis_pass = _q_rush_on or _q_recv_on
-        _q_dis_rush = _q_pass_on or _q_recv_on
-        _q_dis_recv = _q_pass_on or _q_rush_on
-        pc1, pc2, pc3, pc4, pc5, pc6, pc7 = st.columns(7)
-        with pc1:
-            thr_pass_yds = st.number_input("Pass YDS ≥",   min_value=0, value=0, step=1, key="thr_pass_yds", disabled=_q_dis_pass)
-            if thr_pass_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_pass_yds}</div>", unsafe_allow_html=True)
-        with pc2:
-            thr_pass_td  = st.number_input("Pass TD ≥",    min_value=0, value=0, step=1, key="thr_pass_td",  disabled=_q_dis_pass)
-            if thr_pass_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_pass_td}</div>", unsafe_allow_html=True)
-        with pc3:
-            thr_rush_yds = st.number_input("Rush YDS ≥",   min_value=0, value=0, step=1, key="thr_rush_yds", disabled=_q_dis_rush)
-            if thr_rush_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_rush_yds}</div>", unsafe_allow_html=True)
-        with pc4:
-            thr_rush_td  = st.number_input("Rush TD ≥",    min_value=0, value=0, step=1, key="thr_rush_td",  disabled=_q_dis_rush)
-            if thr_rush_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_rush_td}</div>", unsafe_allow_html=True)
-        with pc5:
-            thr_recv_rec = st.number_input("Receptions ≥", min_value=0, value=0, step=1, key="thr_recv_rec", disabled=_q_dis_recv)
-            if thr_recv_rec > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_recv_rec}</div>", unsafe_allow_html=True)
-        with pc6:
-            thr_recv_yds = st.number_input("Rec YDS ≥",    min_value=0, value=0, step=1, key="thr_recv_yds", disabled=_q_dis_recv)
-            if thr_recv_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_recv_yds}</div>", unsafe_allow_html=True)
-        with pc7:
-            thr_recv_td  = st.number_input("Rec TD ≥",     min_value=0, value=0, step=1, key="thr_recv_td",  disabled=_q_dis_recv)
-            if thr_recv_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_recv_td}</div>", unsafe_allow_html=True)
-
-        # Results — shown inside this expander when any threshold is active
-        _qtr_active = any([
-            thr_pass_yds, thr_pass_td,
-            thr_rush_yds, thr_rush_td,
-            thr_recv_rec, thr_recv_yds, thr_recv_td,
-        ])
-        if _qtr_active:
-            st.divider()
-            if _q_pass_on:
-                show_prop_or_stats("passing", "YDS")
-            elif _q_rush_on:
-                show_prop_or_stats("rushing", "YDS")
-            elif _q_recv_on:
-                show_prop_or_stats("receiving", "YDS")
 
     def build_prop_table(category: str) -> pd.DataFrame | None:
         """
@@ -1060,35 +1009,6 @@ elif st.session_state.view == "boxscore":
         df = df.sort_values(["_sort", "Player"]).drop(columns=["_sort"]).reset_index(drop=True)
         return df
 
-    def _render_prop_df_html(df):
-        """Render prop checker df as HTML with logos in Team column."""
-        cols = list(df.columns)
-        # Header row
-        ths = "".join(
-            f"<th style='text-align:left;padding:6px 10px;font-size:12px;opacity:0.5;font-weight:500'>{c}</th>"
-            for c in cols
-        )
-        rows_html = ""
-        for _, r in df.iterrows():
-            cells = ""
-            for c in cols:
-                val = str(r[c])
-                if c == "Team":
-                    logo = _logo_map.get(val.upper(), "")
-                    cell = f"<td style='padding:5px 10px;text-align:center'><img src='{logo}' style='width:22px;height:22px;object-fit:contain' title='{val}'></td>" if logo else f"<td style='padding:5px 10px'>{val}</td>"
-                elif val.startswith("✅"):
-                    cell = f"<td style='padding:5px 10px;color:#22c55e;font-weight:700;font-size:12px'>{val}</td>"
-                elif val.startswith("❌"):
-                    cell = f"<td style='padding:5px 10px;color:#ef4444;font-weight:700;font-size:12px'>{val}</td>"
-                else:
-                    cell = f"<td style='padding:5px 10px;font-size:12px'>{val}</td>"
-                cells += cell
-            rows_html += f"<tr style='border-bottom:0.5px solid rgba(128,128,128,0.15)'>{cells}</tr>"
-        return f"""<div style='overflow-x:auto;width:100%'>
-        <table style='border-collapse:collapse;width:100%;font-size:12px'>
-          <thead><tr style='border-bottom:1px solid rgba(128,128,128,0.2)'>{ths}</tr></thead>
-          <tbody>{rows_html}</tbody>
-        </table></div>"""
 
     def show_prop_or_stats(category: str, sort="YDS"):
         """Show prop table if thresholds set, else show normal stat table."""
@@ -1164,6 +1084,7 @@ elif st.session_state.view == "boxscore":
                 show_half_prop_or_stats("rushing", "YDS")
             elif _h_recv_on:
                 show_half_prop_or_stats("receiving", "YDS")
+
 
     def build_half_prop_table(category: str) -> pd.DataFrame | None:
         halves = ["1H", "2H"]
@@ -1255,6 +1176,7 @@ elif st.session_state.view == "boxscore":
         df["_sort"] = df["Both Halves"].apply(lambda x: 0 if "Won" in x else 1)
         return df.sort_values(["_sort","Player"]).drop(columns=["_sort"]).reset_index(drop=True)
 
+
     def show_half_prop_or_stats(category: str, sort="YDS"):
         prop_df = build_half_prop_table(category)
         if prop_df is not None:
@@ -1280,6 +1202,88 @@ elif st.session_state.view == "boxscore":
 
     # Half prop results — only shown when thresholds are active
     st.divider()
+
+
+    # ── Prop Checker ──────────────────────────────────────────────────────────
+    with st.expander("🎯 Prop Checker by Quarter", expanded=False):
+        st.caption(
+            "Set a minimum threshold. Each player shows their stat per quarter "
+            "with ✅ (hit) or ❌ (missed). The final column shows if they hit it in ALL quarters."
+        )
+        # Determine active group: passing=1, rushing=2, receiving=3, none=0
+        _q_pass_on = bool(st.session_state.get("thr_pass_yds",0) or st.session_state.get("thr_pass_td",0))
+        _q_rush_on = bool(st.session_state.get("thr_rush_yds",0) or st.session_state.get("thr_rush_td",0))
+        _q_recv_on = bool(st.session_state.get("thr_recv_rec",0) or st.session_state.get("thr_recv_yds",0) or st.session_state.get("thr_recv_td",0))
+        _q_dis_pass = _q_rush_on or _q_recv_on
+        _q_dis_rush = _q_pass_on or _q_recv_on
+        _q_dis_recv = _q_pass_on or _q_rush_on
+        pc1, pc2, pc3, pc4, pc5, pc6, pc7 = st.columns(7)
+        with pc1:
+            thr_pass_yds = st.number_input("Pass YDS ≥",   min_value=0, value=0, step=1, key="thr_pass_yds", disabled=_q_dis_pass)
+            if thr_pass_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_pass_yds}</div>", unsafe_allow_html=True)
+        with pc2:
+            thr_pass_td  = st.number_input("Pass TD ≥",    min_value=0, value=0, step=1, key="thr_pass_td",  disabled=_q_dis_pass)
+            if thr_pass_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_pass_td}</div>", unsafe_allow_html=True)
+        with pc3:
+            thr_rush_yds = st.number_input("Rush YDS ≥",   min_value=0, value=0, step=1, key="thr_rush_yds", disabled=_q_dis_rush)
+            if thr_rush_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_rush_yds}</div>", unsafe_allow_html=True)
+        with pc4:
+            thr_rush_td  = st.number_input("Rush TD ≥",    min_value=0, value=0, step=1, key="thr_rush_td",  disabled=_q_dis_rush)
+            if thr_rush_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_rush_td}</div>", unsafe_allow_html=True)
+        with pc5:
+            thr_recv_rec = st.number_input("Receptions ≥", min_value=0, value=0, step=1, key="thr_recv_rec", disabled=_q_dis_recv)
+            if thr_recv_rec > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_recv_rec}</div>", unsafe_allow_html=True)
+        with pc6:
+            thr_recv_yds = st.number_input("Rec YDS ≥",    min_value=0, value=0, step=1, key="thr_recv_yds", disabled=_q_dis_recv)
+            if thr_recv_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_recv_yds}</div>", unsafe_allow_html=True)
+        with pc7:
+            thr_recv_td  = st.number_input("Rec TD ≥",     min_value=0, value=0, step=1, key="thr_recv_td",  disabled=_q_dis_recv)
+            if thr_recv_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_recv_td}</div>", unsafe_allow_html=True)
+
+        # Results — shown inside this expander when any threshold is active
+        _qtr_active = any([
+            thr_pass_yds, thr_pass_td,
+            thr_rush_yds, thr_rush_td,
+            thr_recv_rec, thr_recv_yds, thr_recv_td,
+        ])
+        if _qtr_active:
+            st.divider()
+            if _q_pass_on:
+                show_prop_or_stats("passing", "YDS")
+            elif _q_rush_on:
+                show_prop_or_stats("rushing", "YDS")
+            elif _q_recv_on:
+                show_prop_or_stats("receiving", "YDS")
+
+    def _render_prop_df_html(df):
+        """Render prop checker df as HTML with logos in Team column."""
+        cols = list(df.columns)
+        # Header row
+        ths = "".join(
+            f"<th style='text-align:left;padding:6px 10px;font-size:12px;opacity:0.5;font-weight:500'>{c}</th>"
+            for c in cols
+        )
+        rows_html = ""
+        for _, r in df.iterrows():
+            cells = ""
+            for c in cols:
+                val = str(r[c])
+                if c == "Team":
+                    logo = _logo_map.get(val.upper(), "")
+                    cell = f"<td style='padding:5px 10px;text-align:center'><img src='{logo}' style='width:22px;height:22px;object-fit:contain' title='{val}'></td>" if logo else f"<td style='padding:5px 10px'>{val}</td>"
+                elif val.startswith("✅"):
+                    cell = f"<td style='padding:5px 10px;color:#22c55e;font-weight:700;font-size:12px'>{val}</td>"
+                elif val.startswith("❌"):
+                    cell = f"<td style='padding:5px 10px;color:#ef4444;font-weight:700;font-size:12px'>{val}</td>"
+                else:
+                    cell = f"<td style='padding:5px 10px;font-size:12px'>{val}</td>"
+                cells += cell
+            rows_html += f"<tr style='border-bottom:0.5px solid rgba(128,128,128,0.15)'>{cells}</tr>"
+        return f"""<div style='overflow-x:auto;width:100%'>
+        <table style='border-collapse:collapse;width:100%;font-size:12px'>
+          <thead><tr style='border-bottom:1px solid rgba(128,128,128,0.2)'>{ths}</tr></thead>
+          <tbody>{rows_html}</tbody>
+        </table></div>"""
 
     # ── Prop Text Grader ──────────────────────────────────────────────────────
     st.markdown("<div class='sec-div'>🎯 Prop Grader — Enter Props as Text</div>",
@@ -2954,13 +2958,8 @@ elif st.session_state.view == "boxscore":
 
 *Other*
 - `[Team] to Beat the [Team] in Overtime`
-- `[Team] to record a Successful 2pt Conversion`
-- `[Team] to have a Successful 2pt Conversion`
-- `Successful 2pt Conversion`
-- `Successful 2 point Conversion`
-- `Successful two point Conversion`
-- `Successful two pt Conversion`
-- `Succesful 2pt Conversion`
+- `[Team] to record a Successful 2pt Conversion` / `[Team] to have a Successful 2pt Conversion`
+- `Successful 2pt Conversion` / `Successful 2 point Conversion` / `Successful two point Conversion` / `Successful two pt Conversion` / `Succesful 2pt Conversion`
 
 ---
 
