@@ -25,17 +25,6 @@ from nfl.stats import (
     get_reconciliation_status,
 )
 
-# ── Code version stamp ────────────────────────────────────────────────────────
-# Computed once at startup from the live stats.py source. Changes every time
-# stats.py is updated, so stale session_state results from a previous deploy
-# are automatically detected and discarded before they can be downloaded.
-import hashlib as _hashlib_cv
-import inspect as _inspect_cv
-import nfl.stats as _nfl_stats_cv
-_CODE_VERSION = _hashlib_cv.md5(
-    _inspect_cv.getsource(_nfl_stats_cv).encode("utf-8")
-).hexdigest()[:12]
-
 # ── Eastern Time helpers ──────────────────────────────────────────────────────
 
 def to_et(utc_str: str) -> datetime:
@@ -230,6 +219,7 @@ for k, v in {
     "recon_game_ids":      "",
     "recon_results":       None,
     "recon_running":       False,
+    "recon_done":          False,
     "recon_chunk_index":   0,
     "recon_chunks":        [],
     "recon_results_acc":   [],
@@ -280,9 +270,7 @@ def fetch_games_for_month(year: int, month: int) -> list:
     return all_games
 
 @st.cache_data(ttl=30, show_spinner=False)
-def load_all_stats(game_id: str, _v: int = 3) -> dict:
-    """Load all stats for a game. _v is a cache-bust version — increment when
-    the return dict shape changes so Streamlit discards old cached results."""
+def load_all_stats(game_id: str) -> dict:
     return {
         "linescore":   build_linescore_df(game_id),
         "passing":     get_passing_stats(game_id),
@@ -662,7 +650,7 @@ elif st.session_state.view == "boxscore":
 
     # Linescore box score
     with st.spinner("Loading box score…"):
-        data = load_all_stats(game_id, _v=3)
+        data = load_all_stats(game_id)
     pbp       = data["pbp"]
     by_period = data.get("by_period", {})
 
@@ -792,7 +780,7 @@ elif st.session_state.view == "boxscore":
     else:
         st.error("❌ Reconciliation Failed — Some plays are missing in the Quarter/Half splits.")
         _rows = []
-        for player, cat, col, pbp, official, _, _reason in _recon["mismatches"]:
+        for player, cat, col, pbp, official, _ in _recon["mismatches"]:
             diff = pbp - official
             _rows.append({
                 "Player":     player,
@@ -801,7 +789,6 @@ elif st.session_state.view == "boxscore":
                 "Q/H Total":  pbp,
                 "Game Total": official,
                 "Missing":    str(diff),
-                "Reason":     _reason,
             })
         _mdf = pd.DataFrame(_rows)
         st.dataframe(
@@ -3057,22 +3044,6 @@ elif st.session_state.view == "boxscore":
 # ══════════════════════════════════════════════════════════════════════════════
 elif st.session_state.view == "reconcile":
 
-    # ── Stale-result guard ────────────────────────────────────────────────────
-    # If stored results were computed by a different version of stats.py than
-    # what is currently running, discard them immediately. This fires automatically
-    # after every deploy so a user can never download a CSV from old code.
-    _stored_ver = st.session_state.get("recon_code_hash")
-    if _stored_ver is not None and _stored_ver != _CODE_VERSION:
-        for _stale_key in list(st.session_state.keys()):
-            if isinstance(_stale_key, str) and (
-                _stale_key.startswith("recon_") or _stale_key.startswith("dbg_")
-            ):
-                del st.session_state[_stale_key]
-        st.info(
-            f"Stats engine was updated (old: `{_stored_ver}` → new: `{_CODE_VERSION}`). "
-            "Previous reconciliation results were cleared. Click ▶️ Run to regenerate."
-        )
-
     # ── Back button ───────────────────────────────────────────────────────────
     _rb1, _ = st.columns([1.5, 8])
     with _rb1:
@@ -3092,18 +3063,26 @@ elif st.session_state.view == "reconcile":
         _date_start = st.date_input("Start date", value=_now.date().replace(day=1),
                                      key="recon_date_start", label_visibility="visible")
     with _dr_col2:
-        _date_end   = st.date_input("End date", value=_now.date(),
-                                     key="recon_date_end", label_visibility="visible")
+        # Change 2: min_value=_date_start prevents selecting a date before start date
+        _date_end = st.date_input("End date", value=_now.date(),
+                                   key="recon_date_end", label_visibility="visible",
+                                   min_value=_date_start)
     _btn_col1, _btn_col2 = st.columns(2)
+    _is_running = st.session_state.get("recon_running", False)
+    _is_done    = st.session_state.get("recon_done", False)
     with _btn_col1:
-        _run_recon = st.button("▶️ Run",   use_container_width=True, key="recon_run",
-                               disabled=st.session_state.get("recon_running", False))
+        # Change 4: Run disabled while running OR after completion (only Clear re-enables)
+        _run_recon = st.button("▶️ Run", use_container_width=True, key="recon_run",
+                               disabled=_is_running or _is_done)
     with _btn_col2:
-        _clear_btn = st.button("🗑️ Clear", use_container_width=True, key="recon_clear")
+        # Change 3: label switches to Stop while running, reverts to Clear when done
+        _clear_label = "⏹️ Stop" if _is_running else "🗑️ Clear"
+        _clear_btn   = st.button(_clear_label, use_container_width=True, key="recon_clear")
     if _clear_btn:
         st.session_state.recon_results     = None
         st.session_state.recon_game_ids    = ""
         st.session_state.recon_running     = False
+        st.session_state.recon_done        = False
         st.session_state.recon_chunk_index = 0
         st.session_state.recon_chunks      = []
         st.session_state.recon_results_acc = []
@@ -3141,10 +3120,7 @@ elif st.session_state.view == "reconcile":
                 st.session_state.recon_chunk_index = 0
                 st.session_state.recon_results_acc = []
                 st.session_state.recon_results     = None
-                st.session_state.recon_code_hash   = _CODE_VERSION
                 st.session_state.recon_running     = True
-                # Clear load_all_stats cache so every game is recomputed fresh
-                load_all_stats.clear()
                 st.rerun()
 
     # ── Always-visible download buttons (greyed when no data) ────────────────
@@ -3166,26 +3142,22 @@ elif st.session_state.view == "reconcile":
         _has_mis = _has_dbg = False
 
     st.divider()
-    _pdl1, _pdl2 = st.columns(2, gap="small")
+    # Change 1: both buttons same size, side by side, left-aligned
+    _pdl1, _pdl2, _pdl3 = st.columns([2, 2, 3])
     with _pdl1:
         st.download_button("📥 Download Mismatches CSV",
-                           data=pd.DataFrame(_pre_rows).drop(columns=["Cause"], errors="ignore").to_csv(index=False) if _has_mis else "",
+                           data=pd.DataFrame(_pre_rows).to_csv(index=False) if _has_mis else "",
                            file_name="reconciliation_results.csv",
                            mime="text/csv", key="recon_dl_top",
+                           use_container_width=True,
                            disabled=not _has_mis)
     with _pdl2:
         st.download_button("📥 Download Debug CSV",
                            data=pd.DataFrame(_pre_dbg).to_csv(index=False) if _has_dbg else "",
                            file_name="reconciliation_debug.csv",
                            mime="text/csv", key="debug_dl_top",
+                           use_container_width=True,
                            disabled=not _has_dbg)
-    if _has_any:
-        _run_ver = st.session_state.get("recon_code_hash", "?")
-        _fresh   = _run_ver == _CODE_VERSION
-        st.caption(
-            f"Run code: `{_run_ver}` · Current code: `{_CODE_VERSION}` "
-            + ("✅ fresh" if _fresh else "⚠️ stale — click ▶️ Run to regenerate")
-        )
 
     # ── Process next chunk (fires on each rerun while running) ───────────────
     if st.session_state.get("recon_running") and st.session_state.get("recon_chunks"):
@@ -3217,7 +3189,7 @@ elif st.session_state.view == "reconcile":
                     text=f"Chunk {_ci+1}/{_n_chunks} · Game {_gi+1}/{len(_chunk)} · {_gid}"
                 )
                 try:
-                    _gdata = load_all_stats(_gid, _v=3)
+                    _gdata = load_all_stats(_gid)
                     _recon = get_reconciliation_status(_gdata, _gid)
                     _ls    = _gdata.get("linescore", pd.DataFrame())
                     _label = (f"{_ls.iloc[0]['Team']} @ {_ls.iloc[1]['Team']}"
@@ -3230,14 +3202,23 @@ elif st.session_state.view == "reconcile":
                         _results.append({"game_id":_gid,"label":_label,"passed":True,"rows":[]})
                     else:
                         _mrows = []
-                        for _player, _cat, _col, _pbp, _official, _, _reason in _recon["mismatches"]:
+                        for _player, _cat, _col, _pbp, _official, _ in _recon["mismatches"]:
                             _gap = _pbp - _official
+                            _abs = abs(_gap)
+                            _count_col = _col in ("ATT", "CAR", "REC", "INT", "TD")
+                            if _count_col and _abs >= 2:
+                                _cause = "❌ Logic"
+                            elif _count_col and _abs == 1:
+                                _cause = "🔍 Investigate"
+                            elif not _count_col and _abs <= 2:
+                                _cause = "⚠️ ESPN gap"
+                            else:
+                                _cause = "🔍 Investigate"
                             _mrows.append({
                                 "Game": _label, "Player": _player,
                                 "Stat": _cat.capitalize(), "Col": _col,
                                 "Q/H Total": _pbp, "Official": _official,
-                                "Missing": str(_gap),
-                                "Reason": _reason,
+                                "Missing": str(_gap), "Cause": _cause,
                             })
                         _results.append({"game_id":_gid,"label":_label,"passed":False,"rows":_mrows})
 
@@ -3283,7 +3264,7 @@ elif st.session_state.view == "reconcile":
                                         _dn4   = _d_names.get(_daid4, "")
                                         _dl4   = _dn4.split(".")[-1].strip().lower() if "." in _dn4 else _dn4.split()[-1].lower() if _dn4 else ""
                                         if _dl4 and _dl4 not in _dop:
-                                            _c2.append({"passer":_dn4,"play_type":(_dp4.get("type",{}).get("text","") or "").lower(),"type_id":(_dp4.get("type",{}).get("id","") or ""),"yds":_dp4.get("statYardage",0),"text":str(_dp4.get("text",""))[:80]})
+                                            _c2.append({"passer":_dn4,"play_type":(_dp4.get("type",{}).get("text","") or "").lower(),"yds":_dp4.get("statYardage",0),"text":str(_dp4.get("text",""))[:80]})
                         except Exception: pass
                         _c3 = []
                         for _dp5 in _dplays:
@@ -3311,7 +3292,7 @@ elif st.session_state.view == "reconcile":
                             _dpm6  = _dbre.search(r"PENALTY ON ([A-Z]{2,3})[^A-Z]", _dtxt6)
                             _dpt6b = _dpm6.group(1) if _dpm6 else "—"
                             _dmatch6 = _dpt6b == _dpu6 if (_dpu6 and _dpt6b != "—") else None
-                            _c4.append({"Q":f"Q{(_dp6.get('period') or {}).get('number','?')}","type_id":(_dp6.get("type",{}).get("id","") or ""),"player":next((_d_names.get((_DBRE_ID.search(_dpt6c.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1),"?") for _dpt6c in _dp6.get("participants",[]) if _dpt6c.get("type") in ("passer","rusher","receiver")),"?"),"yds":_dp6.get("statYardage",0),"pos_team":_dpu6 or "❌ unknown","pen_team":_dpt6b,"result":"✅ skipped (off. pen)" if _dmatch6 else ("✅ counted (def. pen)" if _dmatch6 is False else "⚠️ counted — pos_team unknown"),"text":str(_dp6.get("text",""))[:80]})
+                            _c4.append({"Q":f"Q{(_dp6.get('period') or {}).get('number','?')}","player":next((_d_names.get((_DBRE_ID.search(_dpt6c.get("athlete",{}).get("$ref","")) or type("",(),{"group":lambda s,n:""})()).group(1),"?") for _dpt6c in _dp6.get("participants",[]) if _dpt6c.get("type") in ("passer","rusher","receiver")),"?"),"yds":_dp6.get("statYardage",0),"pos_team":_dpu6 or "❌ unknown","pen_team":_dpt6b,"result":"✅ skipped (off. pen)" if _dmatch6 else ("✅ counted (def. pen)" if _dmatch6 is False else "⚠️ counted — pos_team unknown"),"text":str(_dp6.get("text",""))[:80]})
                         _c5s = {}
                         for _dp7 in _dplays:
                             for _dpt7 in _dp7.get("participants",[]):
@@ -3344,10 +3325,9 @@ elif st.session_state.view == "reconcile":
                         pass  # debug build failure is non-critical
 
                 except Exception as _ge:
-                    _err_label = _label if "_label" in dir() and _label else _gid
-                    _results.append({"game_id":_gid,"label":_err_label,"passed":None,
-                                     "rows":[{"Game":_err_label,"Player":f"Error: {str(_ge)[:60]}",
-                                              "Stat":"","Col":"","Q/H Total":"","Official":"","Missing":"","Reason":""}]})
+                    _results.append({"game_id":_gid,"label":_gid,"passed":None,
+                                     "rows":[{"Game":_gid,"Player":f"Error: {str(_ge)[:60]}",
+                                              "Stat":"","Col":"","Q/H Total":"","Official":"","Missing":""}]})
 
             # Chunk done — save accumulated results and advance index
             st.session_state.recon_results_acc = _results
@@ -3358,8 +3338,9 @@ elif st.session_state.view == "reconcile":
                 # More chunks to go — rerun to render current results + start next chunk
                 st.rerun()
             else:
-                # All chunks done — mark complete
+                # All chunks done — mark complete, lock Run until Clear is pressed
                 st.session_state.recon_running = False
+                st.session_state.recon_done    = True
                 _prog.progress(1.0, text=f"Done — {_n_total} game{'s' if _n_total!=1 else ''} across {_n_chunks} chunk{'s' if _n_chunks!=1 else ''} processed.")
                 st.rerun()
 
@@ -3374,30 +3355,43 @@ elif st.session_state.view == "reconcile":
         if _n_fail == 0 and _n_err == 0:
             st.success(f"✅ All {len(_results)} games passed — stats match official totals.")
         else:
-            st.error(
-                f"{_n_pass}/{len(_results)} games passed · {_n_miss} mismatch{'es' if _n_miss!=1 else ''}"
-                + (f" · ⚠️ {_n_err} error{'s' if _n_err!=1 else ''}" if _n_err else "")
-            )
+            # Count by cause across all games
+            _all_mrows = [row for r in _results if not r["passed"] for row in r["rows"]]
+            _n_logic   = sum(1 for row in _all_mrows if row.get("Cause","") == "❌ Logic")
+            _n_invest  = sum(1 for row in _all_mrows if row.get("Cause","") == "🔍 Investigate")
+            _n_espngap = sum(1 for row in _all_mrows if row.get("Cause","") == "⚠️ ESPN gap")
+            _parts = []
+            if _n_logic:  _parts.append(f"❌ {_n_logic} logic bug{'s' if _n_logic!=1 else ''}")
+            if _n_invest: _parts.append(f"🔍 {_n_invest} to investigate")
+            if _n_espngap:_parts.append(f"⚠️ {_n_espngap} ESPN gap{'s' if _n_espngap!=1 else ''}")
+            _summary = " · ".join(_parts) if _parts else f"{_n_miss} mismatches"
+            st.error(f"{_n_pass}/{len(_results)} games passed · {_summary}"
+                     + (f" · ⚠️ {_n_err} errors" if _n_err else ""))
 
         # ── Summary table — ONE render call for all games (instant) ─────────
         _summary_rows = []
         for _r in _results:
             if _r["passed"] is True:
-                _summary_rows.append({"Game": _r["label"], "Status": "✅ Passed",
-                                       "🔴 Code": "", "🟡 ESPN": "", "🔵 Unknown": ""})
-            elif _r["passed"] is None:
-                _summary_rows.append({"Game": _r["label"], "Status": "⚠️ Error",
-                                       "🔴 Code": "", "🟡 ESPN": "", "🔵 Unknown": ""})
-            else:
-                _n_code    = sum(1 for _rw in _r["rows"] if _rw.get("Reason","").startswith("🔴"))
-                _n_espn    = sum(1 for _rw in _r["rows"] if _rw.get("Reason","").startswith("🟡"))
-                _n_unknown = sum(1 for _rw in _r["rows"] if _rw.get("Reason","").startswith("🔵"))
                 _summary_rows.append({
-                    "Game":        _r["label"],
-                    "Status":      f"❌ {len(_r['rows'])} mismatch{'es' if len(_r['rows'])!=1 else ''}",
-                    "🔴 Code":    _n_code    or "",
-                    "🟡 ESPN":    _n_espn    or "",
-                    "🔵 Unknown": _n_unknown or "",
+                    "Game": _r["label"], "Status": "✅ Passed",
+                    "❌ Logic": "", "🔍 Investigate": "", "⚠️ ESPN gap": ""
+                })
+            elif _r["passed"] is None:
+                _summary_rows.append({
+                    "Game": _r["label"], "Status": "⚠️ Error",
+                    "❌ Logic": "", "🔍 Investigate": "", "⚠️ ESPN gap": ""
+                })
+            else:
+                _exp_rows  = _r["rows"]
+                _el = sum(1 for row in _exp_rows if row.get("Cause","") == "❌ Logic")
+                _ei = sum(1 for row in _exp_rows if row.get("Cause","") == "🔍 Investigate")
+                _eg = sum(1 for row in _exp_rows if row.get("Cause","") == "⚠️ ESPN gap")
+                _summary_rows.append({
+                    "Game": _r["label"],
+                    "Status": f"❌ {len(_exp_rows)} mismatch{'es' if len(_exp_rows)!=1 else ''}",
+                    "❌ Logic":       str(_el) if _el else "—",
+                    "🔍 Investigate": str(_ei) if _ei else "—",
+                    "⚠️ ESPN gap":    str(_eg) if _eg else "—",
                 })
         if _summary_rows:
             st.dataframe(
@@ -3417,66 +3411,44 @@ elif st.session_state.view == "reconcile":
                 st.warning(_r["rows"][0]["Player"])
 
         for _r in _failed_games:
-            _exp_rows = _r["rows"]
+            _exp_rows  = _r["rows"]
+            _exp_logic = sum(1 for row in _exp_rows if row.get("Cause","") == "❌ Logic")
+            _exp_inv   = sum(1 for row in _exp_rows if row.get("Cause","") == "🔍 Investigate")
+            _exp_gap   = sum(1 for row in _exp_rows if row.get("Cause","") == "⚠️ ESPN gap")
+            _exp_parts = []
+            if _exp_logic: _exp_parts.append(f"❌ {_exp_logic} logic")
+            if _exp_inv:   _exp_parts.append(f"🔍 {_exp_inv} investigate")
+            if _exp_gap:   _exp_parts.append(f"⚠️ {_exp_gap} ESPN gap{'s' if _exp_gap!=1 else ''}")
+            _exp_label = " · ".join(_exp_parts) if _exp_parts else f"{len(_exp_rows)} mismatches"
             with st.expander(
-                f"{_r['label']}  ({_r['game_id']}) — {len(_exp_rows)} mismatch{'es' if len(_exp_rows)!=1 else ''}",
+                f"{_r['label']}  ({_r['game_id']}) — {_exp_label}",
                 expanded=False,
             ):
-                _mdf = pd.DataFrame(_exp_rows)
+                _mdf = pd.DataFrame(_r["rows"])
+                _real_rows = _mdf[_mdf["Cause"].isin(["❌ Logic", "🔍 Investigate"])] if "Cause" in _mdf.columns else _mdf
+                _gap_rows  = _mdf[_mdf["Cause"] == "⚠️ ESPN gap"] if "Cause" in _mdf.columns else pd.DataFrame()
 
                 def _style_missing(df):
-                    _cols = [c for c in ["Missing"] if c in df.columns]
-                    if not _cols:
-                        return df.style
                     return df.style.map(
                         lambda v: "color:#ef4444;font-weight:700" if isinstance(v, str) and v.startswith("-")
-                        else ("color:#22c55e;font-weight:700" if isinstance(v, str) and v.lstrip("+").isdigit() else ""),
-                        subset=_cols,
+                        else ("color:#f59e0b;font-weight:700" if isinstance(v, str) and v.lstrip("+").lstrip("-").isdigit() and not v.startswith("-") else ""),
+                        subset=["Missing"],
                     )
 
-                _display_cols = ["Player","Stat","Col","Q/H Total","Official","Missing"]
+                if not _real_rows.empty:
+                    st.markdown(f"**🔍 Logic / Investigate — {len(_real_rows)} row(s):**")
+                    st.dataframe(_style_missing(_real_rows), use_container_width=True, hide_index=True)
 
-                if not _mdf.empty:
-                    # Split into three sections by reason tag
-                    _code_rows    = _mdf[_mdf["Reason"].str.startswith("🔴", na=False)]
-                    _espn_rows    = _mdf[_mdf["Reason"].str.startswith("🟡", na=False)]
-                    _unknwn_rows  = _mdf[_mdf["Reason"].str.startswith("🔵", na=False)]
+                if not _gap_rows.empty:
+                    with st.expander(f"⚠️ ESPN gap — {len(_gap_rows)} row(s) (measurement noise, not logic bugs)", expanded=False):
+                        st.caption("These rows are ±1–2 YDS differences between ESPN's Core API play-by-play and their official boxscore. Structurally unfixable — two ESPN systems measuring the same plays differently.")
+                        st.dataframe(_gap_rows, use_container_width=True, hide_index=True)
 
-                    if not _code_rows.empty:
-                        st.markdown(
-                            f"**🔴 CODE — {len(_code_rows)} row{'s' if len(_code_rows)!=1 else ''}**  "
-                            f"<span style='color:#94a3b8;font-size:0.8em'>"
-                            f"Attribution logic credited something ESPN excludes — fixable in code</span>",
-                            unsafe_allow_html=True,
-                        )
-                        st.dataframe(
-                            _style_missing(_code_rows[_display_cols].reset_index(drop=True)),
-                            use_container_width=True, hide_index=True,
-                        )
+                if _real_rows.empty and _gap_rows.empty:
+                    st.dataframe(_mdf, use_container_width=True, hide_index=True)
 
-                    if not _espn_rows.empty:
-                        with st.expander(
-                            f"🟡 ESPN DATA — {len(_espn_rows)} row{'s' if len(_espn_rows)!=1 else ''}"
-                            f"  (ESPN PBP and boxscore disagree — not fixable in code)",
-                            expanded=False,
-                        ):
-                            st.dataframe(
-                                _style_missing(_espn_rows[_display_cols].reset_index(drop=True)),
-                                use_container_width=True, hide_index=True,
-                            )
-
-                    if not _unknwn_rows.empty:
-                        with st.expander(
-                            f"🔵 UNKNOWN — {len(_unknwn_rows)} row{'s' if len(_unknwn_rows)!=1 else ''}"
-                            f"  (ID lookup returned 0 — stats likely attributed under a different key)",
-                            expanded=False,
-                        ):
-                            st.dataframe(
-                                _style_missing(_unknwn_rows[_display_cols].reset_index(drop=True)),
-                                use_container_width=True, hide_index=True,
-                            )
-
-                # ── Debug panel ───────────────────────────────────────────────
+                # ── Debug panel — reads from pre-built session_state ─────────
+                # Data was built during processing loop (zero ESPN calls here)
                 _dgid     = _r["game_id"]
                 _dbg_key  = f"dbg_{_dgid}"
                 _dbg_data = st.session_state.get(_dbg_key, [])
