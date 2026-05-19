@@ -97,8 +97,8 @@ def get_game_boxscore(game_id: str) -> Optional[dict]:
     return summary.get("boxscore") if summary else None
 
 
-def get_scoring_plays(game_id: str) -> list[dict]:
-    summary = get_game_summary(game_id)
+def get_scoring_plays(game_id: str, summary: dict = None) -> list[dict]:
+    summary = summary if summary is not None else get_game_summary(game_id)
     if not summary:
         return []
     plays = []
@@ -119,8 +119,8 @@ def get_scoring_plays(game_id: str) -> list[dict]:
     return plays
 
 
-def get_linescore(game_id: str) -> dict:
-    summary = get_game_summary(game_id)
+def get_linescore(game_id: str, summary: dict = None) -> dict:
+    summary = summary if summary is not None else get_game_summary(game_id)
     if not summary:
         return {}
     header       = summary.get("header", {})
