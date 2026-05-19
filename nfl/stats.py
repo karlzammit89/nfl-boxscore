@@ -50,6 +50,12 @@ Change log:
          (zeroing yards caused -16 gap for Sanders).
 """
 
+# ── Version string ────────────────────────────────────────────────────────────
+# Bump whenever a bug-fix or behavioural change is deployed.
+# Format: YYYY-MM-DD.N  (N = patch number within the day, starting at 1)
+# Exposed as stats.STATS_VERSION so app.py can read it.
+STATS_VERSION = "2025-05-19.1"
+
 import pandas as pd
 from typing import Optional
 import sys as _sys, os as _os
