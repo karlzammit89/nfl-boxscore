@@ -54,7 +54,7 @@ Change log:
 # Bump whenever a bug-fix or behavioural change is deployed.
 # Format: YYYY-MM-DD.N  (N = patch number within the day, starting at 1)
 # Exposed as stats.STATS_VERSION so app.py can read it.
-STATS_VERSION = "2025-05-19.1"
+STATS_VERSION = "2025-05-19.2"
 
 import pandas as pd
 from typing import Optional
@@ -895,6 +895,25 @@ def get_player_stats_by_period(game_id: str) -> dict:
             pass
         return -1
 
+    # Pre-compute the maximum GENUINE period for this game.
+    # This is NOT simply max(raw ESPN periods): ESPN sometimes tags a Q1 play as
+    # period=5 (wrong tag), which would inflate the max and defeat the guard.
+    #
+    # A genuine OT period has a clock of at least 9:00 (540s) — regular season OT
+    # is 10 minutes, playoff OT is 15 minutes.  A wrongly-tagged play (e.g. Jefferson
+    # Q1 at 1:28 tagged period=5) has clock far below that threshold.
+    #
+    # Rule: start at 4 (minimum NFL game length).  For each play with period≥5,
+    # only count it as genuine if its clock is ≥ 9:00 (540s).
+    _max_valid_period = 4
+    for _mvp in core_plays:
+        _mvp_p = _pbp_period(_mvp)
+        if _mvp_p <= 4:
+            continue
+        _mvp_c = _clock_to_secs((_mvp.get("clock") or {}).get("displayValue", ""))
+        if _mvp_c >= 540:                    # 9:00+ clock → genuine OT period
+            _max_valid_period = max(_max_valid_period, _mvp_p)
+
     _corrected_periods = {}   # play_id → corrected period number
     _prev_clock_secs   = -1
     _prev_period       = -1
@@ -918,7 +937,13 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 # correction set prev_period=4 incorrectly, we don't propagate
                 # that error to all subsequent plays.
                 _adjacent = abs(_cp_raw - _prev_period) <= 1
-                _corrected_periods[_cp_id] = _prev_period if _adjacent else _cp_raw
+                # Also cap: if raw period exceeds max valid (e.g. Q1 play wrongly
+                # tagged period=5 in a non-OT game with no boundary), use prev_period
+                # regardless of adjacency — the raw tag is clearly wrong.
+                if _cp_raw > _max_valid_period:
+                    _corrected_periods[_cp_id] = _prev_period
+                else:
+                    _corrected_periods[_cp_id] = _prev_period if _adjacent else _cp_raw
             elif _cp_raw == _prev_period and _boundary:
                 # Clock reset but period tag did not increment → missed boundary.
                 # Guard: only fire when the reset is large enough to be a genuine
@@ -927,10 +952,27 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 # (new > 9:00 = 540s, covering 10-min regular-season OT).
                 # This blocks ESPN clock drift (e.g. 14:56→15:00 = +4s) which
                 # would incorrectly bump a late-game play into the next period.
-                _genuine_reset = _prev_clock_secs < 300 and _cp_clock > 540
+                # Also guard: don't bump past the highest period that actually exists
+                # in this game.  This blocks the cascade where a wrong-tagged play
+                # sets prev_clock low, making Adams' Q4 15:00 play look like a genuine
+                # reset and bumping it into OT (period=5) in a non-OT game.
+                _genuine_reset = (
+                    _prev_clock_secs < 300
+                    and _cp_clock > 540
+                    and _prev_period + 1 <= _max_valid_period
+                )
                 _corrected_periods[_cp_id] = _prev_period + 1 if _genuine_reset else _cp_raw
             else:
-                _corrected_periods[_cp_id] = _cp_raw
+                # Period changed AND clock reset — normal quarter/OT transition.
+                # Accept the raw ESPN period UNLESS it exceeds the maximum valid
+                # period for this game.  If ESPN has wrongly tagged a Q1 play as
+                # period=5 in a non-OT game, using the raw tag puts it in OT and
+                # the reporter misses it.  Fall back to prev_period in that case.
+                # Example: Jefferson ATL@MIN Q1 play at 1:28 tagged period=5 by ESPN.
+                if _cp_raw > _max_valid_period:
+                    _corrected_periods[_cp_id] = _prev_period
+                else:
+                    _corrected_periods[_cp_id] = _cp_raw
         _prev_clock_secs = _cp_clock
         _prev_period     = _corrected_periods[_cp_id]
 
