@@ -3059,14 +3059,11 @@ elif st.session_state.view == "reconcile":
     _now = et_now()
     st.caption("Select a start and end date to reconcile all games in that range.")
     _dr_col1, _dr_col2 = st.columns(2)
-    # Read current end date from session state to use as max_value for start date
-    _end_val = st.session_state.get("recon_date_end", _now.date())
     with _dr_col1:
         _date_start = st.date_input("Start date", value=_now.date().replace(day=1),
-                                     key="recon_date_start", label_visibility="visible",
-                                     max_value=_end_val)
+                                     key="recon_date_start", label_visibility="visible")
     with _dr_col2:
-        # Change 2: min_value=_date_start prevents selecting a date before start date
+        # min_value=_date_start prevents selecting a date before start date
         _date_end = st.date_input("End date", value=_now.date(),
                                    key="recon_date_end", label_visibility="visible",
                                    min_value=_date_start)
