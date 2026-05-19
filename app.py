@@ -883,9 +883,9 @@ elif st.session_state.view == "boxscore":
                 df = tmp.sort_values(sort, ascending=False)
             except Exception:
                 pass
-        # Remove Pos column if present
-        if isinstance(df, pd.DataFrame) and "Pos" in df.columns:
-            df = df.drop(columns=["Pos"])
+        # Remove display-only / internal columns
+        if isinstance(df, pd.DataFrame):
+            df = df.drop(columns=[c for c in ("Pos", "athlete_id", "Team Full") if c in df.columns])
         st.markdown(_render_stats_df_html(df), unsafe_allow_html=True)
 
     tabs = st.tabs(["Passing","Rushing","Receiving","Defense","Kicking"])
@@ -938,6 +938,21 @@ elif st.session_state.view == "boxscore":
         with pc7:
             thr_recv_td  = st.number_input("Rec TD ≥",     min_value=0, value=0, step=1, key="thr_recv_td",  disabled=_q_dis_recv)
             if thr_recv_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_recv_td}</div>", unsafe_allow_html=True)
+
+        # Results — shown inside this expander when any threshold is active
+        _qtr_active = any([
+            thr_pass_yds, thr_pass_td,
+            thr_rush_yds, thr_rush_td,
+            thr_recv_rec, thr_recv_yds, thr_recv_td,
+        ])
+        if _qtr_active:
+            st.divider()
+            if _q_pass_on:
+                show_prop_or_stats("passing", "YDS")
+            elif _q_rush_on:
+                show_prop_or_stats("rushing", "YDS")
+            elif _q_recv_on:
+                show_prop_or_stats("receiving", "YDS")
 
     def build_prop_table(category: str) -> pd.DataFrame | None:
         """
@@ -1101,22 +1116,6 @@ elif st.session_state.view == "boxscore":
                     pass
             st.dataframe(df, use_container_width=True, hide_index=True)
 
-    # Quarter prop results — only shown when thresholds are active
-    qtr_active = any([
-        thr_pass_yds, thr_pass_td,
-        thr_rush_yds, thr_rush_td,
-        thr_recv_rec, thr_recv_yds, thr_recv_td,
-    ])
-    if qtr_active:
-        st.markdown("<div class='sec-div' style='margin-top:8px'>Prop Checker by Quarter — Results</div>",
-                    unsafe_allow_html=True)
-        if _q_pass_on:
-            show_prop_or_stats("passing", "YDS")
-        elif _q_rush_on:
-            show_prop_or_stats("rushing", "YDS")
-        elif _q_recv_on:
-            show_prop_or_stats("receiving", "YDS")
-
     with st.expander("📊 Prop Checker by Half", expanded=False):
         st.caption(
             "Set a minimum threshold. Each player shows their stat per half "
@@ -1150,6 +1149,21 @@ elif st.session_state.view == "boxscore":
         with ph7:
             thr_h_recv_td  = st.number_input("Rec TD ≥",     min_value=0, value=0, step=1, key="thr_h_recv_td",  disabled=_h_dis_recv)
             if thr_h_recv_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_recv_td}</div>", unsafe_allow_html=True)
+
+        # Results — shown inside this expander when any threshold is active
+        _half_active = any([
+            thr_h_pass_yds, thr_h_pass_td,
+            thr_h_rush_yds, thr_h_rush_td,
+            thr_h_recv_rec, thr_h_recv_yds, thr_h_recv_td,
+        ])
+        if _half_active:
+            st.divider()
+            if _h_pass_on:
+                show_half_prop_or_stats("passing", "YDS")
+            elif _h_rush_on:
+                show_half_prop_or_stats("rushing", "YDS")
+            elif _h_recv_on:
+                show_half_prop_or_stats("receiving", "YDS")
 
     def build_half_prop_table(category: str) -> pd.DataFrame | None:
         halves = ["1H", "2H"]
@@ -1265,21 +1279,6 @@ elif st.session_state.view == "boxscore":
             st.dataframe(df, use_container_width=True, hide_index=True)
 
     # Half prop results — only shown when thresholds are active
-    half_active = any([
-        thr_h_pass_yds, thr_h_pass_td,
-        thr_h_rush_yds, thr_h_rush_td,
-        thr_h_recv_rec, thr_h_recv_yds, thr_h_recv_td,
-    ])
-    if half_active:
-        st.markdown("<div class='sec-div' style='margin-top:8px'>Prop Checker by Half — Results</div>",
-                    unsafe_allow_html=True)
-        if _h_pass_on:
-            show_half_prop_or_stats("passing", "YDS")
-        elif _h_rush_on:
-            show_half_prop_or_stats("rushing", "YDS")
-        elif _h_recv_on:
-            show_half_prop_or_stats("receiving", "YDS")
-
     st.divider()
 
     # ── Prop Text Grader ──────────────────────────────────────────────────────
@@ -2955,8 +2954,13 @@ elif st.session_state.view == "boxscore":
 
 *Other*
 - `[Team] to Beat the [Team] in Overtime`
-- `[Team] to record/have Successful 2pt Conversion`
-- `Successful 2pt Conversion` / `Successful 2 point Conversion` / `Successful two point Conversion` / `Successful two pt Conversion` / `Succesful 2pt Conversion` *(typo-tolerant)*
+- `[Team] to record a Successful 2pt Conversion`
+- `[Team] to have a Successful 2pt Conversion`
+- `Successful 2pt Conversion`
+- `Successful 2 point Conversion`
+- `Successful two point Conversion`
+- `Successful two pt Conversion`
+- `Succesful 2pt Conversion`
 
 ---
 
