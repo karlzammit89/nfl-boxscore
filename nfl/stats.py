@@ -114,12 +114,12 @@ def _quarter_label(period: int) -> str:
 
 # ── Linescore ─────────────────────────────────────────────────────────────────
 
-def build_linescore_df(game_id: str) -> pd.DataFrame:
+def build_linescore_df(game_id: str, summary: dict = None) -> pd.DataFrame:
     """
     Quarter-by-quarter score table.
     Returns DataFrame with columns: Team | Q1 | Q2 | 1H | Q3 | Q4 | 2H | OT... | Total
     """
-    ls = get_linescore(game_id)
+    ls = get_linescore(game_id, summary=summary)
     if not ls:
         return pd.DataFrame()
 
@@ -233,8 +233,8 @@ def _make_df(rows: list, drop_cols: list = None) -> pd.DataFrame:
     return df
 
 
-def get_passing_stats(game_id: str) -> pd.DataFrame:
-    summary = get_game_summary(game_id)
+def get_passing_stats(game_id: str, summary: dict = None) -> pd.DataFrame:
+    summary = summary if summary is not None else get_game_summary(game_id)
     if not summary:
         return pd.DataFrame()
     boxscore = summary.get("boxscore", {})
@@ -242,8 +242,8 @@ def get_passing_stats(game_id: str) -> pd.DataFrame:
     return _make_df(rows, drop_cols=["Team Full"])
 
 
-def get_rushing_stats(game_id: str) -> pd.DataFrame:
-    summary = get_game_summary(game_id)
+def get_rushing_stats(game_id: str, summary: dict = None) -> pd.DataFrame:
+    summary = summary if summary is not None else get_game_summary(game_id)
     if not summary:
         return pd.DataFrame()
     boxscore = summary.get("boxscore", {})
@@ -251,8 +251,8 @@ def get_rushing_stats(game_id: str) -> pd.DataFrame:
     return _make_df(rows, drop_cols=["Team Full"])
 
 
-def get_receiving_stats(game_id: str) -> pd.DataFrame:
-    summary = get_game_summary(game_id)
+def get_receiving_stats(game_id: str, summary: dict = None) -> pd.DataFrame:
+    summary = summary if summary is not None else get_game_summary(game_id)
     if not summary:
         return pd.DataFrame()
     boxscore = summary.get("boxscore", {})
@@ -260,8 +260,8 @@ def get_receiving_stats(game_id: str) -> pd.DataFrame:
     return _make_df(rows, drop_cols=["Team Full"])
 
 
-def get_defensive_stats(game_id: str) -> pd.DataFrame:
-    summary = get_game_summary(game_id)
+def get_defensive_stats(game_id: str, summary: dict = None) -> pd.DataFrame:
+    summary = summary if summary is not None else get_game_summary(game_id)
     if not summary:
         return pd.DataFrame()
     boxscore = summary.get("boxscore", {})
@@ -297,8 +297,8 @@ def get_defensive_stats(game_id: str) -> pd.DataFrame:
     return df
 
 
-def get_kicking_stats(game_id: str) -> pd.DataFrame:
-    summary = get_game_summary(game_id)
+def get_kicking_stats(game_id: str, summary: dict = None) -> pd.DataFrame:
+    summary = summary if summary is not None else get_game_summary(game_id)
     if not summary:
         return pd.DataFrame()
     boxscore = summary.get("boxscore", {})
@@ -306,8 +306,8 @@ def get_kicking_stats(game_id: str) -> pd.DataFrame:
     return _make_df(rows, drop_cols=["Team Full"])
 
 
-def get_returning_stats(game_id: str) -> pd.DataFrame:
-    summary = get_game_summary(game_id)
+def get_returning_stats(game_id: str, summary: dict = None) -> pd.DataFrame:
+    summary = summary if summary is not None else get_game_summary(game_id)
     if not summary:
         return pd.DataFrame()
     boxscore = summary.get("boxscore", {})
@@ -317,8 +317,8 @@ def get_returning_stats(game_id: str) -> pd.DataFrame:
 
 # ── Team Totals ───────────────────────────────────────────────────────────────
 
-def get_team_stats(game_id: str) -> pd.DataFrame:
-    summary = get_game_summary(game_id)
+def get_team_stats(game_id: str, summary: dict = None) -> pd.DataFrame:
+    summary = summary if summary is not None else get_game_summary(game_id)
     if not summary:
         return pd.DataFrame()
 
@@ -343,8 +343,8 @@ def get_team_stats(game_id: str) -> pd.DataFrame:
 
 # ── Scoring Summary ───────────────────────────────────────────────────────────
 
-def get_scoring_summary(game_id: str) -> pd.DataFrame:
-    plays = get_scoring_plays(game_id)
+def get_scoring_summary(game_id: str, summary: dict = None) -> pd.DataFrame:
+    plays = get_scoring_plays(game_id, summary=summary)
     if not plays:
         return pd.DataFrame()
 
@@ -370,8 +370,8 @@ def get_scoring_summary(game_id: str) -> pd.DataFrame:
 
 # ── Quarter Split from Play-by-Play ──────────────────────────────────────────
 
-def get_pbp_by_quarter(game_id: str) -> dict[str, pd.DataFrame]:
-    summary = get_game_summary(game_id)
+def get_pbp_by_quarter(game_id: str, summary: dict = None) -> dict[str, pd.DataFrame]:
+    summary = summary if summary is not None else get_game_summary(game_id)
     if not summary:
         return {}
 
@@ -496,7 +496,7 @@ _SACK_RE = _re.compile(
 )
 
 
-def get_player_stats_by_period(game_id: str) -> dict:
+def get_player_stats_by_period(game_id: str, core_plays: list = None, summary: dict = None) -> dict:
     """
     Build per-quarter and per-half player stat tables.
 
@@ -523,7 +523,7 @@ def get_player_stats_by_period(game_id: str) -> dict:
     import re as _re
     from collections import defaultdict
 
-    summary = get_game_summary(game_id)
+    summary = summary if summary is not None else get_game_summary(game_id)
     if not summary:
         return {}
 
@@ -538,7 +538,7 @@ def get_player_stats_by_period(game_id: str) -> dict:
         pass
 
     # ── Fetch plays ───────────────────────────────────────────────────────────
-    core_plays = get_core_plays(game_id)
+    core_plays = core_plays if core_plays is not None else get_core_plays(game_id)
     if not core_plays:
         return {}
 
