@@ -247,13 +247,11 @@ st.divider()
 # ── Data loaders ──────────────────────────────────────────────────────────────
 
 
-@st.cache_data(ttl=25, show_spinner=False)
 def _get_game_summary(game_id: str):
-    """Cached wrapper for ESPN game summary. TTL=25s < load_all_stats TTL=30s,
-    so this always expires before load_all_stats, guaranteeing fresh data on
-    every load_all_stats re-run. st.cache_data.clear() (Refresh button) clears
-    this too, so live game data is always fresh after a manual refresh."""
+    """Plain wrapper — summary fetched once in load_all_stats and passed through.
+    Not cached separately; load_all_stats (ttl=45s) handles all deduplication."""
     return _raw_get_game_summary(game_id)
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _fetch_week(week: int, season_type: int) -> list:
     try:
