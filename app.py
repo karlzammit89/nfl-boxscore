@@ -23,6 +23,7 @@ from nfl.stats import (
     get_scoring_summary,
     get_pbp_by_quarter,
     get_reconciliation_status,
+    STATS_VERSION,
 )
 
 # ── Eastern Time helpers ──────────────────────────────────────────────────────
@@ -780,7 +781,7 @@ elif st.session_state.view == "boxscore":
     else:
         st.error("❌ Reconciliation Failed — Some plays are missing in the Quarter/Half splits.")
         _rows = []
-        for player, cat, col, pbp, official, _ in _recon["mismatches"]:
+        for player, cat, col, pbp, official, *_ in _recon["mismatches"]:
             diff = pbp - official
             _rows.append({
                 "Player":     player,
@@ -3431,6 +3432,9 @@ elif st.session_state.view == "reconcile":
 
     # ── Display results ───────────────────────────────────────────────────────
     if st.session_state.recon_results:
+        # Version badge — lets you confirm exactly which stats.py is running.
+        st.caption(f"🔖 stats.py version: `{STATS_VERSION}`")
+
         _results  = st.session_state.recon_results
         _n_pass   = sum(1 for r in _results if r["passed"] is True)
         _n_fail   = sum(1 for r in _results if r["passed"] is False)
