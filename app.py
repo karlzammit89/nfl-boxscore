@@ -3059,9 +3059,12 @@ elif st.session_state.view == "reconcile":
     _now = et_now()
     st.caption("Select a start and end date to reconcile all games in that range.")
     _dr_col1, _dr_col2 = st.columns(2)
+    # Read current end date from session state to use as max_value for start date
+    _end_val = st.session_state.get("recon_date_end", _now.date())
     with _dr_col1:
         _date_start = st.date_input("Start date", value=_now.date().replace(day=1),
-                                     key="recon_date_start", label_visibility="visible")
+                                     key="recon_date_start", label_visibility="visible",
+                                     max_value=_end_val)
     with _dr_col2:
         # Change 2: min_value=_date_start prevents selecting a date before start date
         _date_end = st.date_input("End date", value=_now.date(),
@@ -3076,7 +3079,7 @@ elif st.session_state.view == "reconcile":
                                disabled=_is_running or _is_done)
     with _btn_col2:
         # Change 3: label switches to Stop while running, reverts to Clear when done
-        _clear_label = "⏹️ Stop" if _is_running else "🗑️ Clear"
+        _clear_label = "🛑 Stop" if _is_running else "🗑️ Clear"
         _clear_btn   = st.button(_clear_label, use_container_width=True, key="recon_clear")
     if _clear_btn:
         st.session_state.recon_results     = None
@@ -3087,6 +3090,8 @@ elif st.session_state.view == "reconcile":
         st.session_state.recon_chunks      = []
         st.session_state.recon_results_acc = []
         st.rerun()
+    if _is_done:
+        st.caption("✅ Run complete — press **Clear** to reset before starting a new run.")
 
     # ── Build game ID list and kick off chunked processing ───────────────────
     if _run_recon:
@@ -3197,12 +3202,16 @@ elif st.session_state.view == "reconcile":
                               and "Team" in _ls.columns and len(_ls) >= 2
                               else _gid)
 
-                    # Mismatch rows
+                    # Mismatch rows — defensive unpack handles unexpected tuple lengths
                     if _recon["passed"]:
                         _results.append({"game_id":_gid,"label":_label,"passed":True,"rows":[]})
                     else:
                         _mrows = []
-                        for _player, _cat, _col, _pbp, _official, _ in _recon["mismatches"]:
+                        for _mismatch in _recon["mismatches"]:
+                            try:
+                                _player, _cat, _col, _pbp, _official = _mismatch[:5]
+                            except (ValueError, TypeError):
+                                continue  # skip malformed tuple silently
                             _gap = _pbp - _official
                             _abs = abs(_gap)
                             _count_col = _col in ("ATT", "CAR", "REC", "INT", "TD")
@@ -3325,8 +3334,13 @@ elif st.session_state.view == "reconcile":
                         pass  # debug build failure is non-critical
 
                 except Exception as _ge:
-                    _results.append({"game_id":_gid,"label":_gid,"passed":None,
-                                     "rows":[{"Game":_gid,"Player":f"Error: {str(_ge)[:60]}",
+                    # Bug 1 fix: use _label if already resolved, fall back to _gid
+                    _err_label = _label if '_label' in dir() and _label != _gid else _gid
+                    # Bug 2 fix: surface error detail in the Status-compatible row
+                    _err_short = str(_ge)[:50]
+                    _results.append({"game_id":_gid,"label":_err_label,"passed":None,
+                                     "rows":[{"Game":_err_label,
+                                              "Player":f"⚠️ Processing error: {_err_short}",
                                               "Stat":"","Col":"","Q/H Total":"","Official":"","Missing":""}]})
 
             # Chunk done — save accumulated results and advance index
@@ -3377,8 +3391,10 @@ elif st.session_state.view == "reconcile":
                     "❌ Logic": "", "🔍 Investigate": "", "⚠️ ESPN gap": ""
                 })
             elif _r["passed"] is None:
+                _err_msg = _r["rows"][0]["Player"] if _r["rows"] else "Unknown error"
+                _err_short = _err_msg.replace("⚠️ Processing error: ","")[:40]
                 _summary_rows.append({
-                    "Game": _r["label"], "Status": "⚠️ Error",
+                    "Game": _r["label"], "Status": f"⚠️ Error — {_err_short}",
                     "❌ Logic": "", "🔍 Investigate": "", "⚠️ ESPN gap": ""
                 })
             else:
@@ -3408,7 +3424,9 @@ elif st.session_state.view == "reconcile":
 
         for _r in _error_games:
             with st.expander(f"⚠️ {_r['label']}  ({_r['game_id']})", expanded=False):
-                st.warning(_r["rows"][0]["Player"])
+                _err_detail = _r["rows"][0]["Player"] if _r["rows"] else "Unknown error"
+                st.warning(_err_detail)
+                st.caption("This game could not be reconciled. It may be a special game type (e.g. international series) or have unexpected data. The game ID is preserved for reference.")
 
         for _r in _failed_games:
             _exp_rows  = _r["rows"]
