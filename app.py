@@ -3104,51 +3104,39 @@ elif st.session_state.view == "reconcile":
         _done_review  = sum(1 for row in _all_cause_rows if row.get("Cause","") == "🔍 Investigate")
         _done_noise   = sum(1 for row in _all_cause_rows if row.get("Cause","") == "⚠️ ESPN gap")
 
-        # Build result pills
-        _res_pills = f'<span class="_pill _pill-pass">✅ {_done_pass} passed ({_done_pct}%)</span>'
-        if _done_fail:
-            _res_pills += f' <span class="_pill _pill-fail">❌ {_done_fail} failed</span>'
-        if _done_err:
-            _res_pills += f' <span class="_pill _pill-warn">⚠️ {_done_err} error{"s" if _done_err!=1 else ""}</span>'
+        # Inline style constants — no CSS classes, guaranteed to render on Streamlit Cloud
+        _S_WRAP  = "background:#1e2129;border:1px solid #2d3139;border-radius:6px;padding:10px 14px;display:flex;flex-direction:column;gap:4px;font-size:12px;margin-top:4px;line-height:1.5"
+        _S_ROW   = "display:flex;align-items:center;gap:8px"
+        _S_KEY   = "color:#6b7280;font-size:11px;min-width:90px;flex-shrink:0"
+        _S_VAL   = "color:#e5e7eb"
+        _S_DIV   = "height:1px;background:#2d3139;margin:3px 0"
+        _S_PILL  = "display:inline-block;padding:1px 8px;border-radius:20px;font-size:11px;font-weight:500;margin-right:3px"
 
-        # Build causes pills — only if any mismatches exist
+        # Result pills
+        _res_pills = f'<span style="{_S_PILL};background:#14532d;color:#4ade80">✅ {_done_pass} passed ({_done_pct}%)</span>'
+        if _done_fail:
+            _res_pills += f'<span style="{_S_PILL};background:#450a0a;color:#f87171">❌ {_done_fail} failed</span>'
+        if _done_err:
+            _res_pills += f'<span style="{_S_PILL};background:#422006;color:#fb923c">⚠️ {_done_err} error{"s" if _done_err!=1 else ""}</span>'
+
+        # Causes pills — only non-zero counts, row hidden if nothing to show
         _causes_row = ""
         if _done_logic or _done_review or _done_noise:
-            _c = f'<span class="_pill _pill-fail">❗ {_done_logic} logic bug{"s" if _done_logic!=1 else ""}</span>'
-            _c += f' <span class="_pill _pill-neu">🔍 {_done_review} to review</span>'
-            _c += f' <span class="_pill _pill-warn">⚠️ {_done_noise} ESPN noise</span>'
-            _causes_row = f"""
-              <div class="_sl-row">
-                <span class="_sl-key">🔎 Causes</span>
-                <span>{_c}</span>
-              </div>"""
+            _c = ""
+            if _done_logic:
+                _c += f'<span style="{_S_PILL};background:#450a0a;color:#f87171">❗ {_done_logic} logic bug{"s" if _done_logic!=1 else ""}</span>'
+            if _done_review:
+                _c += f'<span style="{_S_PILL};background:#1e293b;color:#94a3b8">🔍 {_done_review} to review</span>'
+            if _done_noise:
+                _c += f'<span style="{_S_PILL};background:#422006;color:#fb923c">⚠️ {_done_noise} ESPN noise</span>'
+            _causes_row = f'<div style="{_S_ROW}"><span style="{_S_KEY}">Causes</span><span>{_c}</span></div>'
 
-        st.markdown(f"""
-<style>
-._summary-wrap{{background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:10px 14px;display:flex;flex-direction:column;gap:5px;font-size:12px;margin-top:4px}}
-._sl-row{{display:flex;align-items:baseline;gap:8px}}
-._sl-key{{color:var(--color-text-tertiary);font-size:11px;min-width:90px}}
-._divline{{height:0.5px;background:var(--color-border-tertiary);margin:3px 0}}
-._pill{{display:inline-block;padding:1px 8px;border-radius:20px;font-size:11px;font-weight:500;margin-right:3px}}
-._pill-pass{{background:rgba(34,197,94,.15);color:var(--color-text-success)}}
-._pill-fail{{background:rgba(239,68,68,.15);color:var(--color-text-danger)}}
-._pill-warn{{background:rgba(245,158,11,.15);color:var(--color-text-warning)}}
-._pill-neu{{background:var(--color-background-tertiary);color:var(--color-text-secondary)}}
-</style>
-<div class="_summary-wrap">
-  <div class="_sl-row">
-    <span class="_sl-key">📅 Date range</span>
-    <span style="color:var(--color-text-primary)">{_done_start} → {_done_end}</span>
-  </div>
-  <div class="_sl-row">
-    <span class="_sl-key">🏈 Games</span>
-    <span style="color:var(--color-text-primary)">{_done_total} game{"s" if _done_total!=1 else ""} · {len(_done_chunks)} chunk{"s" if len(_done_chunks)!=1 else ""}</span>
-  </div>
-  <div class="_divline"></div>
-  <div class="_sl-row">
-    <span class="_sl-key">📊 Results</span>
-    <span>{_res_pills}</span>
-  </div>{_causes_row}
+        st.markdown(f"""<div style="{_S_WRAP}">
+  <div style="{_S_ROW}"><span style="{_S_KEY}">Date range</span><span style="{_S_VAL}">{_done_start} → {_done_end}</span></div>
+  <div style="{_S_ROW}"><span style="{_S_KEY}">Games</span><span style="{_S_VAL}">{_done_total} game{"s" if _done_total!=1 else ""} · {len(_done_chunks)} chunk{"s" if len(_done_chunks)!=1 else ""}</span></div>
+  <div style="{_S_DIV}"></div>
+  <div style="{_S_ROW}"><span style="{_S_KEY}">Results</span><span>{_res_pills}</span></div>
+  {_causes_row}
 </div>""", unsafe_allow_html=True)
 
     # ── Build game ID list and kick off chunked processing ───────────────────
