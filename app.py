@@ -10,6 +10,7 @@ import calendar as cal_mod
 
 from nfl.api import get_live_games
 from nfl.api import get_core_plays as _get_core_plays_for_debug
+from nfl.api import get_game_summary as _raw_get_game_summary
 from nfl.stats import (
     build_linescore_df,
     get_player_stats_by_period,
@@ -246,6 +247,13 @@ st.divider()
 # ── Data loaders ──────────────────────────────────────────────────────────────
 
 
+@st.cache_data(ttl=25, show_spinner=False)
+def _get_game_summary(game_id: str):
+    """Cached wrapper for ESPN game summary. TTL=25s < load_all_stats TTL=30s,
+    so this always expires before load_all_stats, guaranteeing fresh data on
+    every load_all_stats re-run. st.cache_data.clear() (Refresh button) clears
+    this too, so live game data is always fresh after a manual refresh."""
+    return _raw_get_game_summary(game_id)
 @st.cache_data(ttl=300, show_spinner=False)
 def _fetch_week(week: int, season_type: int) -> list:
     try:
@@ -256,35 +264,54 @@ def _fetch_week(week: int, season_type: int) -> list:
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_games_for_month(year: int, month: int) -> list:
     all_games, seen_ids = [], set()
-    for season_type, weeks in [(2, range(1,23)), (3, range(1,6)), (1, range(0,5))]:
+    for season_type, weeks in [(2, range(1, 23)), (3, range(1, 6)), (1, range(0, 5))]:
+        _seen_target_or_before = False  # have we passed through the target month yet?
         for week in weeks:
-            for g in _fetch_week(int(week), season_type):
+            week_games = _fetch_week(int(week), season_type)
+            if not week_games:
+                continue
+            # Classify each game in this week relative to the target month
+            _all_after = True   # assume all games are past target until proven otherwise
+            for g in week_games:
                 if g["id"] in seen_ids:
                     continue
                 try:
                     gd = et_date(g["date"])
-                    if gd.year == year and gd.month == month:
+                    _game_after  = (gd.year, gd.month) > (year, month)
+                    _game_target = gd.year == year and gd.month == month
+                    if not _game_after:
+                        _all_after = False          # at least one game is in or before target
+                    if _game_target:
+                        _seen_target_or_before = True
                         all_games.append(g)
                         seen_ids.add(g["id"])
+                    elif not _game_after:
+                        _seen_target_or_before = True   # before target — flag we've started
                 except Exception:
-                    pass
+                    _all_after = False              # unparseable date — stay safe, don't exit
+            # Early exit: if every game in this week is past the target month
+            # and we've already encountered the target month, no later week can help.
+            if _all_after and _seen_target_or_before:
+                break
     return all_games
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=45, show_spinner=False)
 def load_all_stats(game_id: str) -> dict:
+    _summary    = _get_game_summary(game_id)          # fetched once via cached wrapper (ttl=25s)
+    _core_plays = _get_core_plays_for_debug(game_id)  # fetched once; shared with by_period
     return {
-        "linescore":   build_linescore_df(game_id),
-        "passing":     get_passing_stats(game_id),
-        "rushing":     get_rushing_stats(game_id),
-        "receiving":   get_receiving_stats(game_id),
-        "defense":     get_defensive_stats(game_id),
-        "kicking":     get_kicking_stats(game_id),
-        "returning":   get_returning_stats(game_id),
-        "team":        get_team_stats(game_id),
-        "scoring":     get_scoring_summary(game_id),
-        "pbp":         get_pbp_by_quarter(game_id),
-        "by_period":   get_player_stats_by_period(game_id),
-        "core_plays":  _get_core_plays_for_debug(game_id),  # reused for debug CSV
+        "linescore":   build_linescore_df(game_id, summary=_summary),
+        "passing":     get_passing_stats(game_id,   summary=_summary),
+        "rushing":     get_rushing_stats(game_id,   summary=_summary),
+        "receiving":   get_receiving_stats(game_id, summary=_summary),
+        "defense":     get_defensive_stats(game_id, summary=_summary),
+        "kicking":     get_kicking_stats(game_id,   summary=_summary),
+        "returning":   get_returning_stats(game_id, summary=_summary),
+        "team":        get_team_stats(game_id,      summary=_summary),
+        "scoring":     get_scoring_summary(game_id, summary=_summary),
+        "pbp":         get_pbp_by_quarter(game_id,  summary=_summary),
+        "by_period":   get_player_stats_by_period(game_id, core_plays=_core_plays, summary=_summary),
+        "core_plays":  _core_plays,
     }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -595,6 +622,20 @@ elif st.session_state.view == "boxscore":
     with b3:
         if st.button("🔄 Refresh", use_container_width=True):
             st.cache_data.clear()
+            # Re-fetch the current day's games so the score banner reflects
+            # fresh data (score, clock, period, status_state) after cache clear.
+            _sel_date = st.session_state.get("selected_date", "")
+            _cal_year  = st.session_state.get("cal_year",  et_now().year)
+            _cal_month = st.session_state.get("cal_month", et_now().month)
+            _fresh_month = fetch_games_for_month(_cal_year, _cal_month)
+            _fresh_day   = [g for g in _fresh_month
+                            if et_date_str(g["date"]) == _sel_date]
+            st.session_state.selected_date_games = _fresh_day
+            _gid = st.session_state.get("selected_game_id")
+            if _gid:
+                _match = next((g for g in _fresh_day if g["id"] == _gid), None)
+                if _match:
+                    st.session_state.selected_game = _match
             st.rerun()
 
     away  = game["away"]; home = game["home"]
@@ -802,523 +843,529 @@ elif st.session_state.view == "boxscore":
         )
 
 
-    # Period filter
-    st.markdown("<div class='sec-div' style='margin-top:18px'>Player Stats</div>",
-                unsafe_allow_html=True)
+    # ── Stats + Prop Checker section (fragment for fast period switching) ──────
+    # @st.fragment isolates this section so switching Q1/Q2/etc only reruns
+    # this block, not the full page. Falls back to a plain function if the
+    # installed Streamlit version predates fragment support (< 1.37).
+    _fragment = getattr(st, "fragment", lambda f: f)
 
-    # Standard periods only — no OT
-    # Include OT option only when OT data exists in this game
-    _has_ot_data = bool(by_period.get("OT"))
-    available = ["Full Game", "Q1", "Q2", "Q3", "Q4", "H1", "H2"]
-    if _has_ot_data:
-        available.append("OT")
+    @_fragment
+    def _show_stats_section(by_period, pbp, _logo_map):
+        # Period filter
+        st.markdown("<div class='sec-div' style='margin-top:18px'>Player Stats</div>",
+                    unsafe_allow_html=True)
 
-    period_filter = st.radio("Period:", options=available,
-                             horizontal=True, label_visibility="collapsed")
+        # Standard periods only — no OT
+        # Include OT option only when OT data exists in this game
+        _has_ot_data = bool(by_period.get("OT"))
+        available = ["Full Game", "Q1", "Q2", "Q3", "Q4", "H1", "H2"]
+        if _has_ot_data:
+            available.append("OT")
 
-    def get_pbp_key(pf):
-        return {"H1": "H1", "H2": "H2"}.get(pf, pf)
+        period_filter = st.radio("Period:", options=available,
+                                 horizontal=True, label_visibility="collapsed")
 
-    def show_df(df, pf, sort=None, drop_cols=None):
-        if df is None or df.empty:
-            st.info("No data available.")
-            return
-        if drop_cols:
-            df = df.drop(columns=[c for c in drop_cols if c in df.columns])
-        if sort and sort in df.columns:
-            try:
-                tmp = df.copy()
-                tmp[sort] = pd.to_numeric(tmp[sort], errors="coerce")
-                df = tmp.sort_values(sort, ascending=False)
-            except Exception:
-                pass
-        st.markdown(_render_stats_df_html(df), unsafe_allow_html=True)
+        def get_pbp_key(pf):
+            return {"H1": "H1", "H2": "H2"}.get(pf, pf)
 
-    # Key map: display label → internal key used in by_period
-    _PERIOD_KEY = {"H1": "1H", "H2": "2H", "OT": "OT"}
+        def show_df(df, pf, sort=None, drop_cols=None):
+            if df is None or df.empty:
+                st.info("No data available.")
+                return
+            if drop_cols:
+                df = df.drop(columns=[c for c in drop_cols if c in df.columns])
+            if sort and sort in df.columns:
+                try:
+                    tmp = df.copy()
+                    tmp[sort] = pd.to_numeric(tmp[sort], errors="coerce")
+                    df = tmp.sort_values(sort, ascending=False)
+                except Exception:
+                    pass
+            st.markdown(_render_stats_df_html(df), unsafe_allow_html=True)
 
-    def _render_stats_df_html(df):
-        """Render stats df as HTML with logos in Team column."""
-        cols = list(df.columns)
-        ths = "".join(
-            f"<th style='text-align:{'left' if c in ('Player','Team') else 'center'};padding:6px 10px;font-size:12px;opacity:0.5;font-weight:500'>{c}</th>"
-            for c in cols
-        )
-        rows_html = ""
-        for _, r in df.iterrows():
-            cells = ""
-            for c in cols:
-                val = str(r[c]) if pd.notna(r[c]) else ""
-                if c == "Team":
-                    logo = _logo_map.get(val.upper(), "")
-                    cell = f"<td style='padding:5px 10px;text-align:center'><img src='{logo}' style='width:22px;height:22px;object-fit:contain' title='{val}'></td>" if logo else f"<td style='padding:5px 10px;text-align:center;font-size:12px'>{val}</td>"
-                elif c == "Player":
-                    cell = f"<td style='padding:5px 10px;font-size:12px;font-weight:500'>{val}</td>"
-                else:
-                    cell = f"<td style='padding:5px 10px;text-align:center;font-size:12px'>{val}</td>"
-                cells += cell
-            rows_html += f"<tr style='border-bottom:0.5px solid rgba(128,128,128,0.15)'>{cells}</tr>"
-        return f"""<div style='overflow-x:auto;width:100%'>
-        <table style='border-collapse:collapse;width:100%;font-size:12px'>
-          <thead><tr style='border-bottom:1px solid rgba(128,128,128,0.2)'>{ths}</tr></thead>
-          <tbody>{rows_html}</tbody>
-        </table></div>"""
+        # Key map: display label → internal key used in by_period
+        _PERIOD_KEY = {"H1": "1H", "H2": "2H", "OT": "OT"}
 
-    def show_period_df(category: str, sort="YDS"):
-        """Show per-period offensive stat.
-        Full Game uses ESPN boxscore (accurate); periods use play-by-play."""
-        stats_key = _PERIOD_KEY.get(period_filter, period_filter)
-        if stats_key == "Full Game":
-            df = data.get(category)
-        else:
-            period_data = by_period.get(stats_key, {})
-            df = period_data.get(category)
-        if df is None or (hasattr(df, "empty") and df.empty):
-            st.info(f"No {category} data available for {period_filter}.")
-            return
-        if sort and sort in df.columns:
-            try:
-                tmp = df.copy()
-                tmp[sort] = pd.to_numeric(tmp[sort], errors="coerce")
-                df = tmp.sort_values(sort, ascending=False)
-            except Exception:
-                pass
-        # Remove display-only / internal columns
-        if isinstance(df, pd.DataFrame):
-            df = df.drop(columns=[c for c in ("Pos", "athlete_id", "Team Full") if c in df.columns])
-        st.markdown(_render_stats_df_html(df), unsafe_allow_html=True)
+        def _render_stats_df_html(df):
+            """Render stats df as HTML with logos in Team column."""
+            cols = list(df.columns)
+            ths = "".join(
+                f"<th style='text-align:{'left' if c in ('Player','Team') else 'center'};padding:6px 10px;font-size:12px;opacity:0.5;font-weight:500'>{c}</th>"
+                for c in cols
+            )
+            rows_html = ""
+            for _, r in df.iterrows():
+                cells = ""
+                for c in cols:
+                    val = str(r[c]) if pd.notna(r[c]) else ""
+                    if c == "Team":
+                        logo = _logo_map.get(val.upper(), "")
+                        cell = f"<td style='padding:5px 10px;text-align:center'><img src='{logo}' style='width:22px;height:22px;object-fit:contain' title='{val}'></td>" if logo else f"<td style='padding:5px 10px;text-align:center;font-size:12px'>{val}</td>"
+                    elif c == "Player":
+                        cell = f"<td style='padding:5px 10px;font-size:12px;font-weight:500'>{val}</td>"
+                    else:
+                        cell = f"<td style='padding:5px 10px;text-align:center;font-size:12px'>{val}</td>"
+                    cells += cell
+                rows_html += f"<tr style='border-bottom:0.5px solid rgba(128,128,128,0.15)'>{cells}</tr>"
+            return f"""<div style='overflow-x:auto;width:100%'>
+            <table style='border-collapse:collapse;width:100%;font-size:12px'>
+              <thead><tr style='border-bottom:1px solid rgba(128,128,128,0.2)'>{ths}</tr></thead>
+              <tbody>{rows_html}</tbody>
+            </table></div>"""
 
-    tabs = st.tabs(["Passing","Rushing","Receiving","Defense","Kicking"])
-    with tabs[0]: show_period_df("passing",   "YDS")
-    with tabs[1]: show_period_df("rushing",   "YDS")
-    with tabs[2]: show_period_df("receiving", "YDS")
-    with tabs[3]:
-        if period_filter == "Full Game":
-            show_df(data["defense"], period_filter, "TOT", drop_cols=["Pos", "athlete_id", "Team Full"])
-        else:
-            st.info("ℹ️ Defensive stats are only available for Full Game. Per-quarter/half breakdowns are not provided in this view.")
-    with tabs[4]:
-        if period_filter == "Full Game":
-            show_df(data["kicking"], period_filter, drop_cols=["Pos", "athlete_id", "Team Full"])
-        else:
-            st.info("ℹ️ Kicking stats are only available for Full Game. Per-quarter/half breakdowns are not provided in this view.")
+        def show_period_df(category: str, sort="YDS"):
+            """Show per-period offensive stat.
+            Full Game uses ESPN boxscore (accurate); periods use play-by-play."""
+            stats_key = _PERIOD_KEY.get(period_filter, period_filter)
+            if stats_key == "Full Game":
+                df = data.get(category)
+            else:
+                period_data = by_period.get(stats_key, {})
+                df = period_data.get(category)
+            if df is None or (hasattr(df, "empty") and df.empty):
+                st.info(f"No {category} data available for {period_filter}.")
+                return
+            if sort and sort in df.columns:
+                try:
+                    tmp = df.copy()
+                    tmp[sort] = pd.to_numeric(tmp[sort], errors="coerce")
+                    df = tmp.sort_values(sort, ascending=False)
+                except Exception:
+                    pass
+            # Remove display-only / internal columns
+            if isinstance(df, pd.DataFrame):
+                df = df.drop(columns=[c for c in ("Pos", "athlete_id", "Team Full") if c in df.columns])
+            st.markdown(_render_stats_df_html(df), unsafe_allow_html=True)
 
-    def _render_prop_df_html(df):
-        """Render prop checker df as HTML with logos in Team column."""
-        cols = list(df.columns)
-        # Header row
-        ths = "".join(
-            f"<th style='text-align:left;padding:6px 10px;font-size:12px;opacity:0.5;font-weight:500'>{c}</th>"
-            for c in cols
-        )
-        rows_html = ""
-        for _, r in df.iterrows():
-            cells = ""
-            for c in cols:
-                val = str(r[c])
-                if c == "Team":
-                    logo = _logo_map.get(val.upper(), "")
-                    cell = f"<td style='padding:5px 10px;text-align:center'><img src='{logo}' style='width:22px;height:22px;object-fit:contain' title='{val}'></td>" if logo else f"<td style='padding:5px 10px'>{val}</td>"
-                elif val.startswith("✅"):
-                    cell = f"<td style='padding:5px 10px;color:#22c55e;font-weight:700;font-size:12px'>{val}</td>"
-                elif val.startswith("❌"):
-                    cell = f"<td style='padding:5px 10px;color:#ef4444;font-weight:700;font-size:12px'>{val}</td>"
-                else:
-                    cell = f"<td style='padding:5px 10px;font-size:12px'>{val}</td>"
-                cells += cell
-            rows_html += f"<tr style='border-bottom:0.5px solid rgba(128,128,128,0.15)'>{cells}</tr>"
-        return f"""<div style='overflow-x:auto;width:100%'>
-        <table style='border-collapse:collapse;width:100%;font-size:12px'>
-          <thead><tr style='border-bottom:1px solid rgba(128,128,128,0.2)'>{ths}</tr></thead>
-          <tbody>{rows_html}</tbody>
-        </table></div>"""
+        tabs = st.tabs(["Passing","Rushing","Receiving","Defense","Kicking"])
+        with tabs[0]: show_period_df("passing",   "YDS")
+        with tabs[1]: show_period_df("rushing",   "YDS")
+        with tabs[2]: show_period_df("receiving", "YDS")
+        with tabs[3]:
+            if period_filter == "Full Game":
+                show_df(data["defense"], period_filter, "TOT", drop_cols=["Pos", "athlete_id", "Team Full"])
+            else:
+                st.info("ℹ️ Defensive stats are only available for Full Game. Per-quarter/half breakdowns are not provided in this view.")
+        with tabs[4]:
+            if period_filter == "Full Game":
+                show_df(data["kicking"], period_filter, drop_cols=["Pos", "athlete_id", "Team Full"])
+            else:
+                st.info("ℹ️ Kicking stats are only available for Full Game. Per-quarter/half breakdowns are not provided in this view.")
+
+        def _render_prop_df_html(df):
+            """Render prop checker df as HTML with logos in Team column."""
+            cols = list(df.columns)
+            # Header row
+            ths = "".join(
+                f"<th style='text-align:left;padding:6px 10px;font-size:12px;opacity:0.5;font-weight:500'>{c}</th>"
+                for c in cols
+            )
+            rows_html = ""
+            for _, r in df.iterrows():
+                cells = ""
+                for c in cols:
+                    val = str(r[c])
+                    if c == "Team":
+                        logo = _logo_map.get(val.upper(), "")
+                        cell = f"<td style='padding:5px 10px;text-align:center'><img src='{logo}' style='width:22px;height:22px;object-fit:contain' title='{val}'></td>" if logo else f"<td style='padding:5px 10px'>{val}</td>"
+                    elif val.startswith("✅"):
+                        cell = f"<td style='padding:5px 10px;color:#22c55e;font-weight:700;font-size:12px'>{val}</td>"
+                    elif val.startswith("❌"):
+                        cell = f"<td style='padding:5px 10px;color:#ef4444;font-weight:700;font-size:12px'>{val}</td>"
+                    else:
+                        cell = f"<td style='padding:5px 10px;font-size:12px'>{val}</td>"
+                    cells += cell
+                rows_html += f"<tr style='border-bottom:0.5px solid rgba(128,128,128,0.15)'>{cells}</tr>"
+            return f"""<div style='overflow-x:auto;width:100%'>
+            <table style='border-collapse:collapse;width:100%;font-size:12px'>
+              <thead><tr style='border-bottom:1px solid rgba(128,128,128,0.2)'>{ths}</tr></thead>
+              <tbody>{rows_html}</tbody>
+            </table></div>"""
 
 
-    def build_prop_table(
-        category: str,
-        thr_pass_yds: int = 0, thr_pass_td: int = 0,
-        thr_rush_yds: int = 0, thr_rush_td: int = 0,
-        thr_recv_yds: int = 0, thr_recv_td: int = 0, thr_recv_rec: int = 0,
-    ) -> pd.DataFrame | None:
-        """
-        Build a per-player, per-quarter prop result table.
-        Columns: Player | Team | Q1 | Q2 | Q3 | Q4 | All Quarters
-        Each Qx cell shows the raw stat value + ✅/❌ vs threshold.
-        All Quarters = ✅ only if every quarter hit the threshold.
-        Returns None if no active threshold for this category.
-        """
-        quarters = ["Q1", "Q2", "Q3", "Q4"]
+        def build_prop_table(
+            category: str,
+            thr_pass_yds: int = 0, thr_pass_td: int = 0,
+            thr_rush_yds: int = 0, thr_rush_td: int = 0,
+            thr_recv_yds: int = 0, thr_recv_td: int = 0, thr_recv_rec: int = 0,
+        ) -> pd.DataFrame | None:
+            """
+            Build a per-player, per-quarter prop result table.
+            Columns: Player | Team | Q1 | Q2 | Q3 | Q4 | All Quarters
+            Each Qx cell shows the raw stat value + ✅/❌ vs threshold.
+            All Quarters = ✅ only if every quarter hit the threshold.
+            Returns None if no active threshold for this category.
+            """
+            quarters = ["Q1", "Q2", "Q3", "Q4"]
 
-        # Determine active thresholds and stat column for this category
-        if category == "passing":
-            thr_yds, thr_td = thr_pass_yds, thr_pass_td
-            if thr_yds == 0 and thr_td == 0:
+            # Determine active thresholds and stat column for this category
+            if category == "passing":
+                thr_yds, thr_td = thr_pass_yds, thr_pass_td
+                if thr_yds == 0 and thr_td == 0:
+                    return None
+                stat_col = "YDS"
+                td_col   = "TD"
+            elif category == "rushing":
+                thr_yds, thr_td = thr_rush_yds, thr_rush_td
+                if thr_yds == 0 and thr_td == 0:
+                    return None
+                stat_col = "YDS"
+                td_col   = "TD"
+            elif category == "receiving":
+                thr_yds, thr_td = thr_recv_yds, thr_recv_td
+                thr_rec = thr_recv_rec
+                if thr_yds == 0 and thr_td == 0 and thr_rec == 0:
+                    return None
+                stat_col = "YDS"
+                td_col   = "TD"
+            else:
                 return None
-            stat_col = "YDS"
-            td_col   = "TD"
-        elif category == "rushing":
-            thr_yds, thr_td = thr_rush_yds, thr_rush_td
-            if thr_yds == 0 and thr_td == 0:
-                return None
-            stat_col = "YDS"
-            td_col   = "TD"
-        elif category == "receiving":
-            thr_yds, thr_td = thr_recv_yds, thr_recv_td
-            thr_rec = thr_recv_rec
-            if thr_yds == 0 and thr_td == 0 and thr_rec == 0:
-                return None
-            stat_col = "YDS"
-            td_col   = "TD"
-        else:
-            return None
 
-        # Collect all unique players across all quarters
-        all_players: dict = {}   # player_name → {"Team": str}
-        for q in quarters:
-            qdf = by_period.get(q, {}).get(category)
-            if qdf is not None and not qdf.empty:
-                for _, row in qdf.iterrows():
-                    name = row.get("Player", "")
-                    if name and name not in all_players:
-                        all_players[name] = {"Team": row.get("Team", "")}
-
-        if not all_players:
-            return pd.DataFrame()
-
-        rows = []
-        for player, meta in all_players.items():
-            row = {"Player": player, "Team": meta["Team"]}
-            all_hit = True
+            # Collect all unique players across all quarters
+            all_players: dict = {}   # player_name → {"Team": str}
             for q in quarters:
                 qdf = by_period.get(q, {}).get(category)
-                # Get this player's stats in this quarter
-                yds_val = 0
-                td_val  = 0
-                if qdf is not None and not qdf.empty and "Player" in qdf.columns:
-                    pmatch = qdf[qdf["Player"] == player]
-                    if not pmatch.empty:
-                        yds_val = int(pmatch.iloc[0].get(stat_col, 0))
-                        td_val  = int(pmatch.iloc[0].get(td_col,  0))
+                if qdf is not None and not qdf.empty:
+                    for _, row in qdf.iterrows():
+                        name = row.get("Player", "")
+                        if name and name not in all_players:
+                            all_players[name] = {"Team": row.get("Team", "")}
 
-                if category == "receiving":
-                    rec_val = 0
+            if not all_players:
+                return pd.DataFrame()
+
+            rows = []
+            for player, meta in all_players.items():
+                row = {"Player": player, "Team": meta["Team"]}
+                all_hit = True
+                for q in quarters:
+                    qdf = by_period.get(q, {}).get(category)
+                    # Get this player's stats in this quarter
+                    yds_val = 0
+                    td_val  = 0
                     if qdf is not None and not qdf.empty and "Player" in qdf.columns:
-                        pmatch2 = qdf[qdf["Player"] == player]
-                        if not pmatch2.empty:
-                            rec_val = int(pmatch2.iloc[0].get("REC", 0))
-                    yds_ok = (yds_val >= thr_yds) if thr_yds > 0 else True
-                    td_ok  = (td_val  >= thr_td)  if thr_td  > 0 else True
-                    rec_ok = (rec_val >= thr_rec) if thr_rec > 0 else True
-                    hit    = yds_ok and td_ok and rec_ok
-                else:
-                    yds_ok = (yds_val >= thr_yds) if thr_yds > 0 else True
-                    td_ok  = (td_val  >= thr_td)  if thr_td  > 0 else True
-                    hit    = yds_ok and td_ok
-                if not hit:
-                    all_hit = False
+                        pmatch = qdf[qdf["Player"] == player]
+                        if not pmatch.empty:
+                            yds_val = int(pmatch.iloc[0].get(stat_col, 0))
+                            td_val  = int(pmatch.iloc[0].get(td_col,  0))
 
-                # Format cell: show value + icon
-                icon = '✅' if hit else '❌'
-                if category == "receiving":
-                    parts = []
-                    if thr_rec > 0: parts.append(f"{rec_val}rec")
-                    if thr_yds > 0:     parts.append(f"{yds_val}yds")
-                    if thr_td > 0:      parts.append(f"{td_val}td")
-                    cell = f"{icon} {' / '.join(parts)}" if parts else icon
-                elif thr_yds > 0 and thr_td > 0:
-                    cell = f"{icon} {yds_val}yds / {td_val}td"
-                elif thr_yds > 0:
-                    cell = f"{icon} {yds_val}yds"
-                else:
-                    cell = f"{icon} {td_val}td"
-                row[q] = cell
+                    if category == "receiving":
+                        rec_val = 0
+                        if qdf is not None and not qdf.empty and "Player" in qdf.columns:
+                            pmatch2 = qdf[qdf["Player"] == player]
+                            if not pmatch2.empty:
+                                rec_val = int(pmatch2.iloc[0].get("REC", 0))
+                        yds_ok = (yds_val >= thr_yds) if thr_yds > 0 else True
+                        td_ok  = (td_val  >= thr_td)  if thr_td  > 0 else True
+                        rec_ok = (rec_val >= thr_rec) if thr_rec > 0 else True
+                        hit    = yds_ok and td_ok and rec_ok
+                    else:
+                        yds_ok = (yds_val >= thr_yds) if thr_yds > 0 else True
+                        td_ok  = (td_val  >= thr_td)  if thr_td  > 0 else True
+                        hit    = yds_ok and td_ok
+                    if not hit:
+                        all_hit = False
 
-            row["All Quarters"] = "✅ Won" if all_hit else "❌ Lost"
-            rows.append(row)
+                    # Format cell: show value + icon
+                    icon = '✅' if hit else '❌'
+                    if category == "receiving":
+                        parts = []
+                        if thr_rec > 0: parts.append(f"{rec_val}rec")
+                        if thr_yds > 0:     parts.append(f"{yds_val}yds")
+                        if thr_td > 0:      parts.append(f"{td_val}td")
+                        cell = f"{icon} {' / '.join(parts)}" if parts else icon
+                    elif thr_yds > 0 and thr_td > 0:
+                        cell = f"{icon} {yds_val}yds / {td_val}td"
+                    elif thr_yds > 0:
+                        cell = f"{icon} {yds_val}yds"
+                    else:
+                        cell = f"{icon} {td_val}td"
+                    row[q] = cell
 
-        if not rows:
-            return pd.DataFrame()
+                row["All Quarters"] = "✅ Won" if all_hit else "❌ Lost"
+                rows.append(row)
 
-        df = pd.DataFrame(rows)
-        # Sort: Won first, then by player name
-        df["_sort"] = df["All Quarters"].apply(lambda x: 0 if "Won" in x else 1)
-        df = df.sort_values(["_sort", "Player"]).drop(columns=["_sort"]).reset_index(drop=True)
-        return df
+            if not rows:
+                return pd.DataFrame()
 
-
-
-    def show_prop_or_stats(
-        category: str, sort="YDS",
-        thr_pass_yds: int = 0, thr_pass_td: int = 0,
-        thr_rush_yds: int = 0, thr_rush_td: int = 0,
-        thr_recv_yds: int = 0, thr_recv_td: int = 0, thr_recv_rec: int = 0,
-    ):
-        """Show prop table if thresholds set, else show normal stat table."""
-        prop_df = build_prop_table(
-            category,
-            thr_pass_yds=thr_pass_yds, thr_pass_td=thr_pass_td,
-            thr_rush_yds=thr_rush_yds, thr_rush_td=thr_rush_td,
-            thr_recv_yds=thr_recv_yds, thr_recv_td=thr_recv_td, thr_recv_rec=thr_recv_rec,
-        )
-        if prop_df is not None:
-            # Prop mode
-            if prop_df.empty:
-                st.info(f"No {category} data available.")
-                return
-            st.markdown(_render_prop_df_html(prop_df), unsafe_allow_html=True)
-        else:
-            # Normal mode — show selected period stats
-            stats_key   = _PERIOD_KEY.get(period_filter, period_filter)
-            period_data = by_period.get(stats_key, {})
-            df = period_data.get(category)
-            if df is None or (hasattr(df, "empty") and df.empty):
-                st.info(f"No {category} data available for {period_filter}.")
-                return
-            if sort and sort in df.columns:
-                try:
-                    tmp = df.copy()
-                    tmp[sort] = pd.to_numeric(tmp[sort], errors="coerce")
-                    df = tmp.sort_values(sort, ascending=False)
-                except Exception:
-                    pass
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            df = pd.DataFrame(rows)
+            # Sort: Won first, then by player name
+            df["_sort"] = df["All Quarters"].apply(lambda x: 0 if "Won" in x else 1)
+            df = df.sort_values(["_sort", "Player"]).drop(columns=["_sort"]).reset_index(drop=True)
+            return df
 
 
-    def build_half_prop_table(
-        category: str,
-        thr_h_pass_yds: int = 0, thr_h_pass_td: int = 0,
-        thr_h_rush_yds: int = 0, thr_h_rush_td: int = 0,
-        thr_h_recv_yds: int = 0, thr_h_recv_td: int = 0, thr_h_recv_rec: int = 0,
-    ) -> pd.DataFrame | None:
-        halves = ["1H", "2H"]
-        half_labels = {"1H": "H1", "2H": "H2"}
 
-        if category == "passing":
-            thr_yds, thr_td = thr_h_pass_yds, thr_h_pass_td
-            if thr_yds == 0 and thr_td == 0:
+        def show_prop_or_stats(
+            category: str, sort="YDS",
+            thr_pass_yds: int = 0, thr_pass_td: int = 0,
+            thr_rush_yds: int = 0, thr_rush_td: int = 0,
+            thr_recv_yds: int = 0, thr_recv_td: int = 0, thr_recv_rec: int = 0,
+        ):
+            """Show prop table if thresholds set, else show normal stat table."""
+            prop_df = build_prop_table(
+                category,
+                thr_pass_yds=thr_pass_yds, thr_pass_td=thr_pass_td,
+                thr_rush_yds=thr_rush_yds, thr_rush_td=thr_rush_td,
+                thr_recv_yds=thr_recv_yds, thr_recv_td=thr_recv_td, thr_recv_rec=thr_recv_rec,
+            )
+            if prop_df is not None:
+                # Prop mode
+                if prop_df.empty:
+                    st.info(f"No {category} data available.")
+                    return
+                st.markdown(_render_prop_df_html(prop_df), unsafe_allow_html=True)
+            else:
+                # Normal mode — show selected period stats
+                stats_key   = _PERIOD_KEY.get(period_filter, period_filter)
+                period_data = by_period.get(stats_key, {})
+                df = period_data.get(category)
+                if df is None or (hasattr(df, "empty") and df.empty):
+                    st.info(f"No {category} data available for {period_filter}.")
+                    return
+                if sort and sort in df.columns:
+                    try:
+                        tmp = df.copy()
+                        tmp[sort] = pd.to_numeric(tmp[sort], errors="coerce")
+                        df = tmp.sort_values(sort, ascending=False)
+                    except Exception:
+                        pass
+                st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+        def build_half_prop_table(
+            category: str,
+            thr_h_pass_yds: int = 0, thr_h_pass_td: int = 0,
+            thr_h_rush_yds: int = 0, thr_h_rush_td: int = 0,
+            thr_h_recv_yds: int = 0, thr_h_recv_td: int = 0, thr_h_recv_rec: int = 0,
+        ) -> pd.DataFrame | None:
+            halves = ["1H", "2H"]
+            half_labels = {"1H": "H1", "2H": "H2"}
+
+            if category == "passing":
+                thr_yds, thr_td = thr_h_pass_yds, thr_h_pass_td
+                if thr_yds == 0 and thr_td == 0:
+                    return None
+                stat_col, td_col = "YDS", "TD"
+            elif category == "rushing":
+                thr_yds, thr_td = thr_h_rush_yds, thr_h_rush_td
+                if thr_yds == 0 and thr_td == 0:
+                    return None
+                stat_col, td_col = "YDS", "TD"
+            elif category == "receiving":
+                thr_yds  = thr_h_recv_yds
+                thr_td   = thr_h_recv_td
+                thr_rec  = thr_h_recv_rec
+                if thr_yds == 0 and thr_td == 0 and thr_rec == 0:
+                    return None
+                stat_col, td_col = "YDS", "TD"
+            else:
                 return None
-            stat_col, td_col = "YDS", "TD"
-        elif category == "rushing":
-            thr_yds, thr_td = thr_h_rush_yds, thr_h_rush_td
-            if thr_yds == 0 and thr_td == 0:
-                return None
-            stat_col, td_col = "YDS", "TD"
-        elif category == "receiving":
-            thr_yds  = thr_h_recv_yds
-            thr_td   = thr_h_recv_td
-            thr_rec  = thr_h_recv_rec
-            if thr_yds == 0 and thr_td == 0 and thr_rec == 0:
-                return None
-            stat_col, td_col = "YDS", "TD"
-        else:
-            return None
 
-        all_players: dict = {}
-        for h in halves:
-            hdf = by_period.get(h, {}).get(category)
-            if hdf is not None and not hdf.empty:
-                for _, row in hdf.iterrows():
-                    name = row.get("Player", "")
-                    if name and name not in all_players:
-                        all_players[name] = {"Team": row.get("Team", "")}
-
-        if not all_players:
-            return pd.DataFrame()
-
-        rows = []
-        for player, meta in all_players.items():
-            row = {"Player": player, "Team": meta["Team"]}
-            all_hit = True
+            all_players: dict = {}
             for h in halves:
                 hdf = by_period.get(h, {}).get(category)
-                yds_val, td_val, rec_val = 0, 0, 0
-                if hdf is not None and not hdf.empty and "Player" in hdf.columns:
-                    pmatch = hdf[hdf["Player"] == player]
-                    if not pmatch.empty:
-                        yds_val = int(pmatch.iloc[0].get(stat_col, 0))
-                        td_val  = int(pmatch.iloc[0].get(td_col, 0))
-                        if category == "receiving":
-                            rec_val = int(pmatch.iloc[0].get("REC", 0))
+                if hdf is not None and not hdf.empty:
+                    for _, row in hdf.iterrows():
+                        name = row.get("Player", "")
+                        if name and name not in all_players:
+                            all_players[name] = {"Team": row.get("Team", "")}
 
-                if category == "receiving":
-                    yds_ok = (yds_val >= thr_yds) if thr_yds > 0 else True
-                    td_ok  = (td_val  >= thr_td)  if thr_td  > 0 else True
-                    rec_ok = (rec_val >= thr_rec)  if thr_rec > 0 else True
-                    hit    = yds_ok and td_ok and rec_ok
-                else:
-                    yds_ok = (yds_val >= thr_yds) if thr_yds > 0 else True
-                    td_ok  = (td_val  >= thr_td)  if thr_td  > 0 else True
-                    hit    = yds_ok and td_ok
+            if not all_players:
+                return pd.DataFrame()
 
-                if not hit:
-                    all_hit = False
+            rows = []
+            for player, meta in all_players.items():
+                row = {"Player": player, "Team": meta["Team"]}
+                all_hit = True
+                for h in halves:
+                    hdf = by_period.get(h, {}).get(category)
+                    yds_val, td_val, rec_val = 0, 0, 0
+                    if hdf is not None and not hdf.empty and "Player" in hdf.columns:
+                        pmatch = hdf[hdf["Player"] == player]
+                        if not pmatch.empty:
+                            yds_val = int(pmatch.iloc[0].get(stat_col, 0))
+                            td_val  = int(pmatch.iloc[0].get(td_col, 0))
+                            if category == "receiving":
+                                rec_val = int(pmatch.iloc[0].get("REC", 0))
 
-                icon = "✅" if hit else "❌"
-                if category == "receiving":
-                    parts = []
-                    if thr_rec > 0:  parts.append(f"{rec_val}rec")
-                    if thr_yds > 0:  parts.append(f"{yds_val}yds")
-                    if thr_td > 0:   parts.append(f"{td_val}td")
-                    cell = f"{icon} {' / '.join(parts)}" if parts else icon
-                elif thr_yds > 0 and thr_td > 0:
-                    cell = f"{icon} {yds_val}yds / {td_val}td"
-                elif thr_yds > 0:
-                    cell = f"{icon} {yds_val}yds"
-                else:
-                    cell = f"{icon} {td_val}td"
+                    if category == "receiving":
+                        yds_ok = (yds_val >= thr_yds) if thr_yds > 0 else True
+                        td_ok  = (td_val  >= thr_td)  if thr_td  > 0 else True
+                        rec_ok = (rec_val >= thr_rec)  if thr_rec > 0 else True
+                        hit    = yds_ok and td_ok and rec_ok
+                    else:
+                        yds_ok = (yds_val >= thr_yds) if thr_yds > 0 else True
+                        td_ok  = (td_val  >= thr_td)  if thr_td  > 0 else True
+                        hit    = yds_ok and td_ok
 
-                row[half_labels[h]] = cell
+                    if not hit:
+                        all_hit = False
 
-            row["Both Halves"] = "✅ Won" if all_hit else "❌ Lost"
-            rows.append(row)
+                    icon = "✅" if hit else "❌"
+                    if category == "receiving":
+                        parts = []
+                        if thr_rec > 0:  parts.append(f"{rec_val}rec")
+                        if thr_yds > 0:  parts.append(f"{yds_val}yds")
+                        if thr_td > 0:   parts.append(f"{td_val}td")
+                        cell = f"{icon} {' / '.join(parts)}" if parts else icon
+                    elif thr_yds > 0 and thr_td > 0:
+                        cell = f"{icon} {yds_val}yds / {td_val}td"
+                    elif thr_yds > 0:
+                        cell = f"{icon} {yds_val}yds"
+                    else:
+                        cell = f"{icon} {td_val}td"
 
-        if not rows:
-            return pd.DataFrame()
+                    row[half_labels[h]] = cell
 
-        df = pd.DataFrame(rows)
-        df["_sort"] = df["Both Halves"].apply(lambda x: 0 if "Won" in x else 1)
-        return df.sort_values(["_sort","Player"]).drop(columns=["_sort"]).reset_index(drop=True)
+                row["Both Halves"] = "✅ Won" if all_hit else "❌ Lost"
+                rows.append(row)
 
+            if not rows:
+                return pd.DataFrame()
 
-
-    def show_half_prop_or_stats(
-        category: str, sort="YDS",
-        thr_h_pass_yds: int = 0, thr_h_pass_td: int = 0,
-        thr_h_rush_yds: int = 0, thr_h_rush_td: int = 0,
-        thr_h_recv_yds: int = 0, thr_h_recv_td: int = 0, thr_h_recv_rec: int = 0,
-    ):
-        prop_df = build_half_prop_table(
-            category,
-            thr_h_pass_yds=thr_h_pass_yds, thr_h_pass_td=thr_h_pass_td,
-            thr_h_rush_yds=thr_h_rush_yds, thr_h_rush_td=thr_h_rush_td,
-            thr_h_recv_yds=thr_h_recv_yds, thr_h_recv_td=thr_h_recv_td, thr_h_recv_rec=thr_h_recv_rec,
-        )
-        if prop_df is not None:
-            if prop_df.empty:
-                st.info(f"No {category} data available.")
-                return
-            st.markdown(_render_prop_df_html(prop_df), unsafe_allow_html=True)
-        else:
-            stats_key   = _PERIOD_KEY.get(period_filter, period_filter)
-            period_data = by_period.get(stats_key, {})
-            df = period_data.get(category)
-            if df is None or (hasattr(df, "empty") and df.empty):
-                st.info(f"No {category} data available for {period_filter}.")
-                return
-            if sort and sort in df.columns:
-                try:
-                    tmp = df.copy()
-                    tmp[sort] = pd.to_numeric(tmp[sort], errors="coerce")
-                    df = tmp.sort_values(sort, ascending=False)
-                except Exception:
-                    pass
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            df = pd.DataFrame(rows)
+            df["_sort"] = df["Both Halves"].apply(lambda x: 0 if "Won" in x else 1)
+            return df.sort_values(["_sort","Player"]).drop(columns=["_sort"]).reset_index(drop=True)
 
 
-    with st.expander("🎯 Prop Checker by Quarter", expanded=False):
-        st.caption(
-            "Set a minimum threshold. Each player shows their stat per quarter "
-            "with ✅ (hit) or ❌ (missed). The final column shows if they hit it in ALL quarters."
-        )
-        # Determine active group: passing=1, rushing=2, receiving=3, none=0
-        _q_pass_on = bool(st.session_state.get("thr_pass_yds",0) or st.session_state.get("thr_pass_td",0))
-        _q_rush_on = bool(st.session_state.get("thr_rush_yds",0) or st.session_state.get("thr_rush_td",0))
-        _q_recv_on = bool(st.session_state.get("thr_recv_rec",0) or st.session_state.get("thr_recv_yds",0) or st.session_state.get("thr_recv_td",0))
-        _q_dis_pass = _q_rush_on or _q_recv_on
-        _q_dis_rush = _q_pass_on or _q_recv_on
-        _q_dis_recv = _q_pass_on or _q_rush_on
-        pc1, pc2, pc3, pc4, pc5, pc6, pc7 = st.columns(7)
-        with pc1:
-            thr_pass_yds = st.number_input("Pass YDS ≥",   min_value=0, value=0, step=1, key="thr_pass_yds", disabled=_q_dis_pass)
-            if thr_pass_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_pass_yds}</div>", unsafe_allow_html=True)
-        with pc2:
-            thr_pass_td  = st.number_input("Pass TD ≥",    min_value=0, value=0, step=1, key="thr_pass_td",  disabled=_q_dis_pass)
-            if thr_pass_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_pass_td}</div>", unsafe_allow_html=True)
-        with pc3:
-            thr_rush_yds = st.number_input("Rush YDS ≥",   min_value=0, value=0, step=1, key="thr_rush_yds", disabled=_q_dis_rush)
-            if thr_rush_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_rush_yds}</div>", unsafe_allow_html=True)
-        with pc4:
-            thr_rush_td  = st.number_input("Rush TD ≥",    min_value=0, value=0, step=1, key="thr_rush_td",  disabled=_q_dis_rush)
-            if thr_rush_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_rush_td}</div>", unsafe_allow_html=True)
-        with pc5:
-            thr_recv_rec = st.number_input("Receptions ≥", min_value=0, value=0, step=1, key="thr_recv_rec", disabled=_q_dis_recv)
-            if thr_recv_rec > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_recv_rec}</div>", unsafe_allow_html=True)
-        with pc6:
-            thr_recv_yds = st.number_input("Rec YDS ≥",    min_value=0, value=0, step=1, key="thr_recv_yds", disabled=_q_dis_recv)
-            if thr_recv_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_recv_yds}</div>", unsafe_allow_html=True)
-        with pc7:
-            thr_recv_td  = st.number_input("Rec TD ≥",     min_value=0, value=0, step=1, key="thr_recv_td",  disabled=_q_dis_recv)
-            if thr_recv_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_recv_td}</div>", unsafe_allow_html=True)
 
-        # Results — shown inside this expander when any threshold is active
-        _qtr_active = any([
-            thr_pass_yds, thr_pass_td,
-            thr_rush_yds, thr_rush_td,
-            thr_recv_rec, thr_recv_yds, thr_recv_td,
-        ])
-        if _qtr_active:
-            st.divider()
-            if _q_pass_on:
-                show_prop_or_stats("passing", "YDS", thr_pass_yds=thr_pass_yds, thr_pass_td=thr_pass_td, thr_rush_yds=thr_rush_yds, thr_rush_td=thr_rush_td, thr_recv_yds=thr_recv_yds, thr_recv_td=thr_recv_td, thr_recv_rec=thr_recv_rec)
-            elif _q_rush_on:
-                show_prop_or_stats("rushing", "YDS", thr_pass_yds=thr_pass_yds, thr_pass_td=thr_pass_td, thr_rush_yds=thr_rush_yds, thr_rush_td=thr_rush_td, thr_recv_yds=thr_recv_yds, thr_recv_td=thr_recv_td, thr_recv_rec=thr_recv_rec)
-            elif _q_recv_on:
-                show_prop_or_stats("receiving", "YDS", thr_pass_yds=thr_pass_yds, thr_pass_td=thr_pass_td, thr_rush_yds=thr_rush_yds, thr_rush_td=thr_rush_td, thr_recv_yds=thr_recv_yds, thr_recv_td=thr_recv_td, thr_recv_rec=thr_recv_rec)
-
-    # Half prop results — only shown when thresholds are active
-    st.divider()
+        def show_half_prop_or_stats(
+            category: str, sort="YDS",
+            thr_h_pass_yds: int = 0, thr_h_pass_td: int = 0,
+            thr_h_rush_yds: int = 0, thr_h_rush_td: int = 0,
+            thr_h_recv_yds: int = 0, thr_h_recv_td: int = 0, thr_h_recv_rec: int = 0,
+        ):
+            prop_df = build_half_prop_table(
+                category,
+                thr_h_pass_yds=thr_h_pass_yds, thr_h_pass_td=thr_h_pass_td,
+                thr_h_rush_yds=thr_h_rush_yds, thr_h_rush_td=thr_h_rush_td,
+                thr_h_recv_yds=thr_h_recv_yds, thr_h_recv_td=thr_h_recv_td, thr_h_recv_rec=thr_h_recv_rec,
+            )
+            if prop_df is not None:
+                if prop_df.empty:
+                    st.info(f"No {category} data available.")
+                    return
+                st.markdown(_render_prop_df_html(prop_df), unsafe_allow_html=True)
+            else:
+                stats_key   = _PERIOD_KEY.get(period_filter, period_filter)
+                period_data = by_period.get(stats_key, {})
+                df = period_data.get(category)
+                if df is None or (hasattr(df, "empty") and df.empty):
+                    st.info(f"No {category} data available for {period_filter}.")
+                    return
+                if sort and sort in df.columns:
+                    try:
+                        tmp = df.copy()
+                        tmp[sort] = pd.to_numeric(tmp[sort], errors="coerce")
+                        df = tmp.sort_values(sort, ascending=False)
+                    except Exception:
+                        pass
+                st.dataframe(df, use_container_width=True, hide_index=True)
 
 
-    # ── Prop Checker ──────────────────────────────────────────────────────────
-    with st.expander("📊 Prop Checker by Half", expanded=False):
-        st.caption(
-            "Set a minimum threshold. Each player shows their stat per half "
-            "with ✅ (hit) or ❌ (missed). The final column shows if they hit it in BOTH halves."
-        )
-        _h_pass_on = bool(st.session_state.get("thr_h_pass_yds",0) or st.session_state.get("thr_h_pass_td",0))
-        _h_rush_on = bool(st.session_state.get("thr_h_rush_yds",0) or st.session_state.get("thr_h_rush_td",0))
-        _h_recv_on = bool(st.session_state.get("thr_h_recv_rec",0) or st.session_state.get("thr_h_recv_yds",0) or st.session_state.get("thr_h_recv_td",0))
-        _h_dis_pass = _h_rush_on or _h_recv_on
-        _h_dis_rush = _h_pass_on or _h_recv_on
-        _h_dis_recv = _h_pass_on or _h_rush_on
-        ph1, ph2, ph3, ph4, ph5, ph6, ph7 = st.columns(7)
-        with ph1:
-            thr_h_pass_yds = st.number_input("Pass YDS ≥",   min_value=0, value=0, step=1, key="thr_h_pass_yds", disabled=_h_dis_pass)
-            if thr_h_pass_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_pass_yds}</div>", unsafe_allow_html=True)
-        with ph2:
-            thr_h_pass_td  = st.number_input("Pass TD ≥",    min_value=0, value=0, step=1, key="thr_h_pass_td",  disabled=_h_dis_pass)
-            if thr_h_pass_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_pass_td}</div>", unsafe_allow_html=True)
-        with ph3:
-            thr_h_rush_yds = st.number_input("Rush YDS ≥",   min_value=0, value=0, step=1, key="thr_h_rush_yds", disabled=_h_dis_rush)
-            if thr_h_rush_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_rush_yds}</div>", unsafe_allow_html=True)
-        with ph4:
-            thr_h_rush_td  = st.number_input("Rush TD ≥",    min_value=0, value=0, step=1, key="thr_h_rush_td",  disabled=_h_dis_rush)
-            if thr_h_rush_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_rush_td}</div>", unsafe_allow_html=True)
-        with ph5:
-            thr_h_recv_rec = st.number_input("Receptions ≥", min_value=0, value=0, step=1, key="thr_h_recv_rec", disabled=_h_dis_recv)
-            if thr_h_recv_rec > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_recv_rec}</div>", unsafe_allow_html=True)
-        with ph6:
-            thr_h_recv_yds = st.number_input("Rec YDS ≥",    min_value=0, value=0, step=1, key="thr_h_recv_yds", disabled=_h_dis_recv)
-            if thr_h_recv_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_recv_yds}</div>", unsafe_allow_html=True)
-        with ph7:
-            thr_h_recv_td  = st.number_input("Rec TD ≥",     min_value=0, value=0, step=1, key="thr_h_recv_td",  disabled=_h_dis_recv)
-            if thr_h_recv_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_recv_td}</div>", unsafe_allow_html=True)
+        with st.expander("🎯 Prop Checker by Quarter", expanded=False):
+            st.caption(
+                "Set a minimum threshold. Each player shows their stat per quarter "
+                "with ✅ (hit) or ❌ (missed). The final column shows if they hit it in ALL quarters."
+            )
+            # Determine active group: passing=1, rushing=2, receiving=3, none=0
+            _q_pass_on = bool(st.session_state.get("thr_pass_yds",0) or st.session_state.get("thr_pass_td",0))
+            _q_rush_on = bool(st.session_state.get("thr_rush_yds",0) or st.session_state.get("thr_rush_td",0))
+            _q_recv_on = bool(st.session_state.get("thr_recv_rec",0) or st.session_state.get("thr_recv_yds",0) or st.session_state.get("thr_recv_td",0))
+            _q_dis_pass = _q_rush_on or _q_recv_on
+            _q_dis_rush = _q_pass_on or _q_recv_on
+            _q_dis_recv = _q_pass_on or _q_rush_on
+            pc1, pc2, pc3, pc4, pc5, pc6, pc7 = st.columns(7)
+            with pc1:
+                thr_pass_yds = st.number_input("Pass YDS ≥",   min_value=0, value=0, step=1, key="thr_pass_yds", disabled=_q_dis_pass)
+                if thr_pass_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_pass_yds}</div>", unsafe_allow_html=True)
+            with pc2:
+                thr_pass_td  = st.number_input("Pass TD ≥",    min_value=0, value=0, step=1, key="thr_pass_td",  disabled=_q_dis_pass)
+                if thr_pass_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_pass_td}</div>", unsafe_allow_html=True)
+            with pc3:
+                thr_rush_yds = st.number_input("Rush YDS ≥",   min_value=0, value=0, step=1, key="thr_rush_yds", disabled=_q_dis_rush)
+                if thr_rush_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_rush_yds}</div>", unsafe_allow_html=True)
+            with pc4:
+                thr_rush_td  = st.number_input("Rush TD ≥",    min_value=0, value=0, step=1, key="thr_rush_td",  disabled=_q_dis_rush)
+                if thr_rush_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_rush_td}</div>", unsafe_allow_html=True)
+            with pc5:
+                thr_recv_rec = st.number_input("Receptions ≥", min_value=0, value=0, step=1, key="thr_recv_rec", disabled=_q_dis_recv)
+                if thr_recv_rec > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_recv_rec}</div>", unsafe_allow_html=True)
+            with pc6:
+                thr_recv_yds = st.number_input("Rec YDS ≥",    min_value=0, value=0, step=1, key="thr_recv_yds", disabled=_q_dis_recv)
+                if thr_recv_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_recv_yds}</div>", unsafe_allow_html=True)
+            with pc7:
+                thr_recv_td  = st.number_input("Rec TD ≥",     min_value=0, value=0, step=1, key="thr_recv_td",  disabled=_q_dis_recv)
+                if thr_recv_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_recv_td}</div>", unsafe_allow_html=True)
 
-        # Results — shown inside this expander when any threshold is active
-        _half_active = any([
-            thr_h_pass_yds, thr_h_pass_td,
-            thr_h_rush_yds, thr_h_rush_td,
-            thr_h_recv_rec, thr_h_recv_yds, thr_h_recv_td,
-        ])
-        if _half_active:
-            st.divider()
-            if _h_pass_on:
-                show_half_prop_or_stats("passing", "YDS", thr_h_pass_yds=thr_h_pass_yds, thr_h_pass_td=thr_h_pass_td, thr_h_rush_yds=thr_h_rush_yds, thr_h_rush_td=thr_h_rush_td, thr_h_recv_yds=thr_h_recv_yds, thr_h_recv_td=thr_h_recv_td, thr_h_recv_rec=thr_h_recv_rec)
-            elif _h_rush_on:
-                show_half_prop_or_stats("rushing", "YDS", thr_h_pass_yds=thr_h_pass_yds, thr_h_pass_td=thr_h_pass_td, thr_h_rush_yds=thr_h_rush_yds, thr_h_rush_td=thr_h_rush_td, thr_h_recv_yds=thr_h_recv_yds, thr_h_recv_td=thr_h_recv_td, thr_h_recv_rec=thr_h_recv_rec)
-            elif _h_recv_on:
-                show_half_prop_or_stats("receiving", "YDS", thr_h_pass_yds=thr_h_pass_yds, thr_h_pass_td=thr_h_pass_td, thr_h_rush_yds=thr_h_rush_yds, thr_h_rush_td=thr_h_rush_td, thr_h_recv_yds=thr_h_recv_yds, thr_h_recv_td=thr_h_recv_td, thr_h_recv_rec=thr_h_recv_rec)
+            # Results — shown inside this expander when any threshold is active
+            _qtr_active = any([
+                thr_pass_yds, thr_pass_td,
+                thr_rush_yds, thr_rush_td,
+                thr_recv_rec, thr_recv_yds, thr_recv_td,
+            ])
+            if _qtr_active:
+                st.divider()
+                if _q_pass_on:
+                    show_prop_or_stats("passing", "YDS", thr_pass_yds=thr_pass_yds, thr_pass_td=thr_pass_td, thr_rush_yds=thr_rush_yds, thr_rush_td=thr_rush_td, thr_recv_yds=thr_recv_yds, thr_recv_td=thr_recv_td, thr_recv_rec=thr_recv_rec)
+                elif _q_rush_on:
+                    show_prop_or_stats("rushing", "YDS", thr_pass_yds=thr_pass_yds, thr_pass_td=thr_pass_td, thr_rush_yds=thr_rush_yds, thr_rush_td=thr_rush_td, thr_recv_yds=thr_recv_yds, thr_recv_td=thr_recv_td, thr_recv_rec=thr_recv_rec)
+                elif _q_recv_on:
+                    show_prop_or_stats("receiving", "YDS", thr_pass_yds=thr_pass_yds, thr_pass_td=thr_pass_td, thr_rush_yds=thr_rush_yds, thr_rush_td=thr_rush_td, thr_recv_yds=thr_recv_yds, thr_recv_td=thr_recv_td, thr_recv_rec=thr_recv_rec)
 
+        with st.expander("📊 Prop Checker by Half", expanded=False):
+            st.caption(
+                "Set a minimum threshold. Each player shows their stat per half "
+                "with ✅ (hit) or ❌ (missed). The final column shows if they hit it in BOTH halves."
+            )
+            _h_pass_on = bool(st.session_state.get("thr_h_pass_yds",0) or st.session_state.get("thr_h_pass_td",0))
+            _h_rush_on = bool(st.session_state.get("thr_h_rush_yds",0) or st.session_state.get("thr_h_rush_td",0))
+            _h_recv_on = bool(st.session_state.get("thr_h_recv_rec",0) or st.session_state.get("thr_h_recv_yds",0) or st.session_state.get("thr_h_recv_td",0))
+            _h_dis_pass = _h_rush_on or _h_recv_on
+            _h_dis_rush = _h_pass_on or _h_recv_on
+            _h_dis_recv = _h_pass_on or _h_rush_on
+            ph1, ph2, ph3, ph4, ph5, ph6, ph7 = st.columns(7)
+            with ph1:
+                thr_h_pass_yds = st.number_input("Pass YDS ≥",   min_value=0, value=0, step=1, key="thr_h_pass_yds", disabled=_h_dis_pass)
+                if thr_h_pass_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_pass_yds}</div>", unsafe_allow_html=True)
+            with ph2:
+                thr_h_pass_td  = st.number_input("Pass TD ≥",    min_value=0, value=0, step=1, key="thr_h_pass_td",  disabled=_h_dis_pass)
+                if thr_h_pass_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_pass_td}</div>", unsafe_allow_html=True)
+            with ph3:
+                thr_h_rush_yds = st.number_input("Rush YDS ≥",   min_value=0, value=0, step=1, key="thr_h_rush_yds", disabled=_h_dis_rush)
+                if thr_h_rush_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_rush_yds}</div>", unsafe_allow_html=True)
+            with ph4:
+                thr_h_rush_td  = st.number_input("Rush TD ≥",    min_value=0, value=0, step=1, key="thr_h_rush_td",  disabled=_h_dis_rush)
+                if thr_h_rush_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_rush_td}</div>", unsafe_allow_html=True)
+            with ph5:
+                thr_h_recv_rec = st.number_input("Receptions ≥", min_value=0, value=0, step=1, key="thr_h_recv_rec", disabled=_h_dis_recv)
+                if thr_h_recv_rec > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_recv_rec}</div>", unsafe_allow_html=True)
+            with ph6:
+                thr_h_recv_yds = st.number_input("Rec YDS ≥",    min_value=0, value=0, step=1, key="thr_h_recv_yds", disabled=_h_dis_recv)
+                if thr_h_recv_yds > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_recv_yds}</div>", unsafe_allow_html=True)
+            with ph7:
+                thr_h_recv_td  = st.number_input("Rec TD ≥",     min_value=0, value=0, step=1, key="thr_h_recv_td",  disabled=_h_dis_recv)
+                if thr_h_recv_td  > 0: st.markdown(f"<div style='color:#22c55e;font-size:0.7rem;font-weight:700;margin-top:-12px'>● Active: ≥{thr_h_recv_td}</div>", unsafe_allow_html=True)
+
+            # Results — shown inside this expander when any threshold is active
+            _half_active = any([
+                thr_h_pass_yds, thr_h_pass_td,
+                thr_h_rush_yds, thr_h_rush_td,
+                thr_h_recv_rec, thr_h_recv_yds, thr_h_recv_td,
+            ])
+            if _half_active:
+                st.divider()
+                if _h_pass_on:
+                    show_half_prop_or_stats("passing", "YDS", thr_h_pass_yds=thr_h_pass_yds, thr_h_pass_td=thr_h_pass_td, thr_h_rush_yds=thr_h_rush_yds, thr_h_rush_td=thr_h_rush_td, thr_h_recv_yds=thr_h_recv_yds, thr_h_recv_td=thr_h_recv_td, thr_h_recv_rec=thr_h_recv_rec)
+                elif _h_rush_on:
+                    show_half_prop_or_stats("rushing", "YDS", thr_h_pass_yds=thr_h_pass_yds, thr_h_pass_td=thr_h_pass_td, thr_h_rush_yds=thr_h_rush_yds, thr_h_rush_td=thr_h_rush_td, thr_h_recv_yds=thr_h_recv_yds, thr_h_recv_td=thr_h_recv_td, thr_h_recv_rec=thr_h_recv_rec)
+                elif _h_recv_on:
+                    show_half_prop_or_stats("receiving", "YDS", thr_h_pass_yds=thr_h_pass_yds, thr_h_pass_td=thr_h_pass_td, thr_h_rush_yds=thr_h_rush_yds, thr_h_rush_td=thr_h_rush_td, thr_h_recv_yds=thr_h_recv_yds, thr_h_recv_td=thr_h_recv_td, thr_h_recv_rec=thr_h_recv_rec)
+
+
+        st.divider()
+    _show_stats_section(by_period, pbp, _logo_map)
 
     # ── Prop Text Grader ──────────────────────────────────────────────────────
     st.markdown("<div class='sec-div'>🎯 Prop Grader — Enter Props as Text</div>",
@@ -1631,8 +1678,8 @@ elif st.session_state.view == "boxscore":
         _game_players:   dict = {}   # abbr → team (kept for _find_player)
 
         try:
-            from nfl.api import get_game_summary as _gsum
-            _summary = _gsum(game_id)
+            # use the cached wrapper so Refresh button clears this too
+            _summary = _get_game_summary(game_id)
             if _summary:
                 for _tdata in _summary.get('boxscore', {}).get('players', []):
                     _team_abbr = _tdata.get('team', {}).get('abbreviation', '').upper()
