@@ -908,8 +908,15 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 # Period tag changed but no clock reset → wrong tag
                 _corrected_periods[_cp_id] = _prev_period
             elif _cp_raw == _prev_period and _boundary:
-                # Clock reset but period tag did not increment → missed boundary
-                _corrected_periods[_cp_id] = _prev_period + 1
+                # Clock reset but period tag did not increment → missed boundary.
+                # Guard: only fire when the reset is large enough to be a genuine
+                # quarter or OT boundary. A real boundary jumps from near
+                # end-of-quarter (prev < 5:00 = 300s) to near start-of-quarter
+                # (new > 9:00 = 540s, covering 10-min regular-season OT).
+                # This blocks ESPN clock drift (e.g. 14:56→15:00 = +4s) which
+                # would incorrectly bump a late-game play into the next period.
+                _genuine_reset = _prev_clock_secs < 300 and _cp_clock > 540
+                _corrected_periods[_cp_id] = _prev_period + 1 if _genuine_reset else _cp_raw
             else:
                 _corrected_periods[_cp_id] = _cp_raw
         _prev_clock_secs = _cp_clock
@@ -982,7 +989,8 @@ def get_player_stats_by_period(game_id: str) -> dict:
         # ── Layer 2: route each play type to correct accumulator ──────────────
 
         # ── Pass Reception (type_id=24) ───────────────────────────────────────
-        if type_id == "24":
+        # ptype fallback covers Jan 2026+ games where ESPN removed numeric type_id.
+        if type_id == "24" or ptype == "pass reception":
             if not psr:
                 continue
             if play_is_off_pen:
@@ -1079,7 +1087,8 @@ def get_player_stats_by_period(game_id: str) -> dict:
             _play_log[(psr, "passing")].append((eff_period, 0, text_str, False))
 
         # ── Passing Touchdown (type_id=67) ────────────────────────────────────
-        elif type_id == "67":
+        # ptype fallback covers Jan 2026+ games where ESPN removed numeric type_id.
+        elif type_id == "67" or ptype == "passing touchdown":
             if not psr:
                 continue
             if play_is_off_pen:
@@ -1427,6 +1436,45 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 return p
         return 1   # last resort
 
+
+    # ── Supplementary scan: text-parsed receivers with no official stats ────────
+    # F-CAT-NEW-A (in the Layer 4 loop above) zeros receiving credits when
+    # official_totals[aid]["receiving"]["rec"]==0 AND ["yds"]==0.  That gate
+    # requires an athlete_id to key into official_totals.  Players attributed
+    # via text parsing (receiver=NaN in ESPN PBP → no participant $ref → no aid)
+    # bypass that loop entirely.  This scan catches them using _name_to_aid,
+    # which is built from ESPN's official boxscore displayNames — a player ESPN
+    # officially credits with 0 receiving will be in _name_to_aid with rec=0.
+    #
+    # Gate: text-parsed key (not "[ID:]") + official rec==0 AND yds==0.
+    # Any player with genuine official receiving stats has rec>0 → never touched.
+    for _p_period in list(receiving.keys()):
+        for _p_key in list(receiving[_p_period].keys()):
+            if _p_key.startswith("[ID:"):
+                continue  # has an aid — already handled by Layer 4 main loop
+            # Only act if this player has non-zero credits in the accumulator
+            _total_rec = sum(
+                receiving[_q].get(_p_key, {}).get("rec", 0)
+                for _q in receiving
+            )
+            _total_yds = sum(
+                receiving[_q].get(_p_key, {}).get("yds", 0)
+                for _q in receiving
+            )
+            if _total_rec == 0 and _total_yds == 0:
+                continue  # already zero — nothing to do
+            # Resolve this text-parsed name against the official boxscore
+            _supp_aid, _supp_off = _resolve_player_lookup(_p_key)
+            if not _supp_aid:
+                continue  # can't verify — leave untouched
+            _off_recv = _supp_off.get("receiving", {})
+            if _off_recv.get("rec", 0) == 0 and _off_recv.get("yds", 0) == 0:
+                # Official says 0 receptions AND 0 yards → zero all credits
+                for _q in list(receiving.keys()):
+                    if _p_key in receiving[_q]:
+                        for _zk in ("rec", "yds", "td"):
+                            receiving[_q][_p_key][_zk] = 0
+                break  # done with this key across all periods
 
     cat_specs = {
         "passing":   (passing,   ["att", "comp", "yds", "td", "int"]),
