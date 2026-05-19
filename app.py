@@ -3057,7 +3057,7 @@ elif st.session_state.view == "reconcile":
     # ── Date range picker ────────────────────────────────────────────────────
     import re as _re_rc
     _now = et_now()
-    st.caption("Select a start and end date to reconcile all games in that range.")
+    st.caption("Select a start/end date to reconcile all games in that range.")
     _dr_col1, _dr_col2 = st.columns(2)
     with _dr_col1:
         _date_start = st.date_input("Start date", value=_now.date().replace(day=1),
@@ -3089,6 +3089,36 @@ elif st.session_state.view == "reconcile":
         st.rerun()
     if _is_done:
         st.caption("✅ Run complete — press **Clear** to reset before starting a new run.")
+        # ── Run summary detail block ──────────────────────────────────────────
+        _done_res     = st.session_state.recon_results or []
+        _done_chunks  = st.session_state.recon_chunks or []
+        _done_total   = sum(len(c) for c in _done_chunks)
+        _done_pass    = sum(1 for r in _done_res if r["passed"] is True)
+        _done_fail    = sum(1 for r in _done_res if r["passed"] is False)
+        _done_err     = sum(1 for r in _done_res if r["passed"] is None)
+        _done_pct     = round(_done_pass / _done_total * 100) if _done_total else 0
+        _done_start   = st.session_state.get("recon_date_start", "")
+        _done_end     = st.session_state.get("recon_date_end", "")
+        _all_cause_rows = [row for r in _done_res for row in r.get("rows", [])]
+        _done_logic   = sum(1 for row in _all_cause_rows if row.get("Cause","") == "❌ Logic")
+        _done_review  = sum(1 for row in _all_cause_rows if row.get("Cause","") == "🔍 Investigate")
+        _done_noise   = sum(1 for row in _all_cause_rows if row.get("Cause","") == "⚠️ ESPN gap")
+        st.markdown(
+            f"| | |\n|---|---|\n"
+            f"| **Date range** | {_done_start} → {_done_end} |\n"
+            f"| **Games** | {_done_total} games · {len(_done_chunks)} chunk{'s' if len(_done_chunks)!=1 else ''} |\n"
+            f"| **Pass rate** | {_done_pass} passed ({_done_pct}%)"
+            + (f" · {_done_fail} mismatch{'es' if _done_fail!=1 else ''}" if _done_fail else "")
+            + (f" · {_done_err} error{'s' if _done_err!=1 else ''}" if _done_err else "") + " |\n"
+            f"| **Mismatch causes** | ❗ {_done_logic} logic bugs · 🔍 {_done_review} to review · ⚠️ {_done_noise} ESPN noise |"
+            if (_done_logic or _done_review or _done_noise) else
+            f"| | |\n|---|---|\n"
+            f"| **Date range** | {_done_start} → {_done_end} |\n"
+            f"| **Games** | {_done_total} games · {len(_done_chunks)} chunk{'s' if len(_done_chunks)!=1 else ''} |\n"
+            f"| **Pass rate** | {_done_pass} passed ({_done_pct}%)"
+            + (f" · {_done_fail} mismatch{'es' if _done_fail!=1 else ''}" if _done_fail else "")
+            + (f" · {_done_err} error{'s' if _done_err!=1 else ''}" if _done_err else "") + " |"
+        )
 
     # ── Build game ID list and kick off chunked processing ───────────────────
     if _run_recon:
@@ -3384,27 +3414,30 @@ elif st.session_state.view == "reconcile":
         for _r in _results:
             if _r["passed"] is True:
                 _summary_rows.append({
-                    "Game": _r["label"], "Status": "✅ Passed",
-                    "❌ Logic": "", "🔍 Investigate": "", "⚠️ ESPN gap": ""
+                    "Game": _r["label"], "Result": "✅ Passed",
+                    "Mismatches": "—", "❗ Logic Bugs": "—",
+                    "🔍 To Review": "—", "⚠️ ESPN Noise": "—",
                 })
             elif _r["passed"] is None:
-                _err_msg = _r["rows"][0]["Player"] if _r["rows"] else "Unknown error"
+                _err_msg   = _r["rows"][0]["Player"] if _r["rows"] else "Unknown error"
                 _err_short = _err_msg.replace("⚠️ Processing error: ","")[:40]
                 _summary_rows.append({
-                    "Game": _r["label"], "Status": f"⚠️ Error — {_err_short}",
-                    "❌ Logic": "", "🔍 Investigate": "", "⚠️ ESPN gap": ""
+                    "Game": _r["label"], "Result": f"⚠️ Error — {_err_short}",
+                    "Mismatches": "—", "❗ Logic Bugs": "—",
+                    "🔍 To Review": "—", "⚠️ ESPN Noise": "—",
                 })
             else:
-                _exp_rows  = _r["rows"]
+                _exp_rows = _r["rows"]
                 _el = sum(1 for row in _exp_rows if row.get("Cause","") == "❌ Logic")
                 _ei = sum(1 for row in _exp_rows if row.get("Cause","") == "🔍 Investigate")
                 _eg = sum(1 for row in _exp_rows if row.get("Cause","") == "⚠️ ESPN gap")
                 _summary_rows.append({
-                    "Game": _r["label"],
-                    "Status": f"❌ {len(_exp_rows)} mismatch{'es' if len(_exp_rows)!=1 else ''}",
-                    "❌ Logic":       str(_el) if _el else "—",
-                    "🔍 Investigate": str(_ei) if _ei else "—",
-                    "⚠️ ESPN gap":    str(_eg) if _eg else "—",
+                    "Game":          _r["label"],
+                    "Result":        "❌ Failed",
+                    "Mismatches":    str(len(_exp_rows)),
+                    "❗ Logic Bugs": str(_el) if _el else "—",
+                    "🔍 To Review":  str(_ei) if _ei else "—",
+                    "⚠️ ESPN Noise": str(_eg) if _eg else "—",
                 })
         if _summary_rows:
             st.dataframe(
