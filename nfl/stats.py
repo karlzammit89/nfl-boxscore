@@ -905,8 +905,14 @@ def get_player_stats_by_period(game_id: str) -> dict:
         else:
             _boundary = _cp_clock > _prev_clock_secs   # clock went UP = reset
             if _cp_raw != _prev_period and not _boundary:
-                # Period tag changed but no clock reset → wrong tag
-                _corrected_periods[_cp_id] = _prev_period
+                # Period tag changed but no clock reset → likely wrong ESPN tag.
+                # Use prev_period ONLY when it is adjacent (±1) to the raw tag —
+                # larger jumps suggest a cascade error, so accept the raw tag.
+                # This prevents wrong-tag corrections from cascading: if a prior
+                # correction set prev_period=4 incorrectly, we don't propagate
+                # that error to all subsequent plays.
+                _adjacent = abs(_cp_raw - _prev_period) <= 1
+                _corrected_periods[_cp_id] = _prev_period if _adjacent else _cp_raw
             elif _cp_raw == _prev_period and _boundary:
                 # Clock reset but period tag did not increment → missed boundary.
                 # Guard: only fire when the reset is large enough to be a genuine
@@ -997,7 +1003,42 @@ def get_player_stats_by_period(game_id: str) -> dict:
                 continue   # Fix 1: off-pen reception → no stat credit
             yds_to_credit, _ = _credited_yds_for_play(play, stat_yds)
             d = passing[eff_period][psr];  d["Team"] = team or d["Team"]
-            r = receiving[eff_period][rcv] if rcv else None
+            # Fix 2B: When receiver $ref is absent (rcv=None), attempt to
+            # resolve the receiver from play text.  ESPN API sometimes omits
+            # participant refs (Jan 2026+ format change, or missing $ref).
+            # Parse abbreviated name ("R.Davis") → look up full name in
+            # _name_to_aid (built from official boxscore displayNames).
+            # If a unique match is found, use the full name as the accumulator
+            # key so Layer 4 can resolve it to official_totals correctly.
+            # If not found, use the abbreviation — Fix 3 / F-CAT-NEW-A will
+            # zero it if ESPN's official boxscore shows 0 for that player.
+            _rcv_key = rcv   # normally the resolved Supabase/ESPN name
+            if rcv is None and "Lateral" not in text_str:
+                _recv_abbr_m = _re.search(
+                    r"pass\s+(?:short|deep|long|flat|screen)?"
+                    r"\s*(?:right|left|middle|behind)?\s*to\s+"
+                    r"([A-Z][a-z]?\.[A-Z][A-Za-z'\-]+)",
+                    text_str, _re.I
+                )
+                if _recv_abbr_m:
+                    _abbr = _recv_abbr_m.group(1)   # e.g. "R.Davis" or "T.Johnson"
+                    _abbr_parts = _abbr.split(".", 1)
+                    if len(_abbr_parts) == 2:
+                        _init, _last = _abbr_parts[0], _abbr_parts[1]
+                        # Search boxscore names for unique match: same initial + same last name
+                        _matches = [
+                            nm for nm in _name_to_aid
+                            if nm.split()[0][:1].upper() == _init.upper()
+                            and nm.split()[-1].lower() == _last.lower()
+                        ]
+                        if len(_matches) == 1:
+                            _rcv_key = _matches[0]   # unique full name resolved
+                        elif len(_matches) > 1:
+                            _rcv_key = _abbr          # ambiguous → use abbrev
+                        else:
+                            _rcv_key = _abbr          # not found → use abbrev
+
+            r = receiving[eff_period][_rcv_key] if _rcv_key else None
             d["att"]  += 1
             d["comp"] += 1
             d["yds"]  += yds_to_credit
@@ -1012,8 +1053,8 @@ def get_player_stats_by_period(game_id: str) -> dict:
                     r["td"] += 1
             _play_log[(psr, "passing")].append(
                 (eff_period, yds_to_credit, text_str, is_pen))
-            if rcv:
-                _play_log[(rcv, "receiving")].append(
+            if _rcv_key:
+                _play_log[(_rcv_key, "receiving")].append(
                     (eff_period, yds_to_credit, text_str, is_pen))
 
             # F-lateral: ESPN emits no participant for the lateral recipient
@@ -1476,6 +1517,58 @@ def get_player_stats_by_period(game_id: str) -> dict:
                             receiving[_q][_p_key][_zk] = 0
                 break  # done with this key across all periods
 
+    # ── Hutchinson diagnostic: accumulator-state snapshot ────────────────────
+    # Captures the exact state of all three accumulators for any player whose
+    # display name is in HUTCHINSON_DIAG_PLAYERS, immediately after the play
+    # loop and supplementary scan (before Layer 4 and before cat_specs DFs).
+    # Also captures Layer 4 residual decisions and final per-period values.
+    # Returned under result["_hutchinson_diag"] so app.py can surface it.
+    _HUTCHINSON_DIAG_AIDS = set()   # populated below from _name_to_aid
+    _HUTCHINSON_DIAG_NAMES = {      # names to watch — extend as needed
+        "Xavier Hutchinson", "X.Hutchinson",
+    }
+    for _hd_name in _HUTCHINSON_DIAG_NAMES:
+        if _hd_name in _name_to_aid:
+            _HUTCHINSON_DIAG_AIDS.add(_name_to_aid[_hd_name])
+
+    def _snap_player(player_key):
+        """Return per-period snapshot dict for a player key across all accumulators."""
+        snap = {}
+        for _cat_s, _acc_s in [("passing", passing), ("rushing", rushing), ("receiving", receiving)]:
+            snap[_cat_s] = {}
+            for _prd in sorted(_acc_s.keys()):
+                entry = _acc_s[_prd].get(player_key)
+                if entry:
+                    snap[_cat_s][f"P{_prd}"] = dict(entry)
+        return snap
+
+    _hutch_diag = {
+        "after_play_loop": {},
+        "official_totals": {},
+        "layer4_decisions": [],
+        "after_layer4":    {},
+    }
+    # Snapshot after play loop: gather all accumulator keys that could be Hutchinson
+    for _hd_aid in _HUTCHINSON_DIAG_AIDS:
+        _hd_boxname = _aid_to_name.get(_hd_aid, "")
+        _hd_resolved = ""
+        for nm, a in _resolved_name_to_aid.items():
+            if a == _hd_aid:
+                _hd_resolved = nm; break
+        _hd_keys_to_check = {
+            k for k in ([f"[ID:{_hd_aid}]", _hd_boxname, _hd_resolved] +
+                        list(_HUTCHINSON_DIAG_NAMES))
+            if k
+        }
+        _hutch_diag["after_play_loop"][_hd_aid] = {
+            "boxscore_name": _hd_boxname,
+            "resolved_name": _hd_resolved,
+            "keys_checked": list(_hd_keys_to_check),
+            "snapshots": {k: _snap_player(k) for k in _hd_keys_to_check},
+        }
+        if _hd_aid in official_totals:
+            _hutch_diag["official_totals"][_hd_aid] = dict(official_totals[_hd_aid])
+
     cat_specs = {
         "passing":   (passing,   ["att", "comp", "yds", "td", "int"]),
         "rushing":   (rushing,   ["car", "yds", "td"]),
@@ -1767,6 +1860,30 @@ def get_player_stats_by_period(game_id: str) -> dict:
         # could be identified as the source of the gap).
         result["residual_applied"] = residual_applied
 
+    # ── Hutchinson diagnostic: snapshot AFTER Layer 4 ─────────────────────
+    if _HUTCHINSON_DIAG_AIDS:
+        for _hd_aid in _HUTCHINSON_DIAG_AIDS:
+            _hd_boxname  = _aid_to_name.get(_hd_aid, "")
+            _hd_resolved = _hutch_diag["after_play_loop"].get(_hd_aid, {}).get("resolved_name", "")
+            _hd_keys2 = {
+                k for k in ([f"[ID:{_hd_aid}]", _hd_boxname, _hd_resolved] +
+                            list(_HUTCHINSON_DIAG_NAMES))
+                if k
+            }
+            _hutch_diag["after_layer4"][_hd_aid] = {
+                k: _snap_player(k) for k in _hd_keys2
+            }
+            # Layer 4 residual decisions for this player
+            for _cat_d in ("passing", "rushing", "receiving"):
+                for _hd_key in _hd_keys2:
+                    if _hd_key in residual_applied and _cat_d in residual_applied[_hd_key]:
+                        _hutch_diag["layer4_decisions"].append({
+                            "aid": _hd_aid, "cat": _cat_d, "key": _hd_key,
+                            "residual": dict(residual_applied[_hd_key][_cat_d]),
+                            "official": _hutch_diag["official_totals"].get(_hd_aid, {}).get(_cat_d, {}),
+                        })
+        result["_hutchinson_diag"] = _hutch_diag
+
     _reconcile(result, game_id)
     return result
 
@@ -2008,7 +2125,14 @@ def _build_reconciliation_report(result: dict, game_id: str) -> list:
                     return int(pd.to_numeric(nm_rows.iloc[0].get(col, 0), errors="coerce") or 0)
                 except Exception:
                     return 0
-        # 3. Fuzzy fallback (handles abbreviation mismatches, suffixes etc.)
+        # 3. Fuzzy fallback — ONLY when aid is unknown.
+        # When aid is present, exact-match failure means this player has no
+        # credits under their key; returning 0 is correct.  Using _match_player
+        # when aid is known risks cross-player contamination: e.g.
+        # 'Tez Johnson' (official=0) fuzzy-matching 'Ty Johnson' (has credits)
+        # via the last-name + first-initial rule, producing a false Q/H value.
+        if aid:
+            return 0
         return _get_col(df, display_name, col) if display_name else 0
 
     def _get_att_by_aid(df, aid, display_name):
